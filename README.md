@@ -85,17 +85,25 @@ permission added by mistake still cannot grant write access.
 ## Run it
 
 ```bash
-cp .env.example .env          # set SESSION_SECRET: openssl rand -base64 48
+cp .env.example .env          # set SESSION_SECRET (see command below)
 npm install
-docker compose up -d db       # Postgres 16 on :5432
-npm run db:migrate
-npm run db:seed               # demo data — skip for a real go-live
+
+# A PostgreSQL 16+ database, pointed at by DATABASE_URL in .env. Either:
+#   • a local install — this project's laptop uses native PostgreSQL 18 on :5432, or
+#   • Docker:  docker compose up -d db   # NOTE binds host port 5433 — set DATABASE_URL to :5433
+npm run db:migrate            # create / upgrade the schema
+npm run db:seed               # demo data + logins — SKIP for real data; it truncates first
+
 npm run dev                   # http://localhost:3000
 ```
 
-> **No Docker?** Point `DATABASE_URL` at any PostgreSQL 16 — a local install, or a free
-> [Neon](https://neon.tech) / [Supabase](https://supabase.com) database — and run the same
-> `db:migrate` / `db:seed` / `dev` steps. Nothing else changes.
+Generate `SESSION_SECRET` with:
+`node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"`
+
+> Already have a database with data (this laptop does — native PostgreSQL 18 on `:5432`, which
+> starts automatically)? Then day-to-day it's just `npm run dev`. Point `DATABASE_URL` at any
+> PostgreSQL 16+ — local, Docker, or a managed [Neon](https://neon.tech) /
+> [Supabase](https://supabase.com) — and nothing else changes.
 
 Demo logins — password `Maturity@2026`:
 

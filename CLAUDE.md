@@ -20,13 +20,18 @@ launcher for serving branches over the office LAN in Phase 1.
 
 **Locally (this laptop = the developer environment):**
 
+The database is **native Windows PostgreSQL 18 on `localhost:5432`** — already installed, service
+`postgresql-x64-18` set to start automatically, and holding the data. Day-to-day you only need:
+
 ```bash
-docker compose up -d db     # Postgres 16 on :5432
-npm install                 # first time only
-npm run db:migrate          # create / upgrade the schema
-npm run db:seed             # demo data + demo logins (SKIP for real data — it truncates first)
 npm run dev                 # http://localhost:3000
 ```
+
+Fresh machine with no local Postgres: `npm install`, create a Postgres 16+ database, point
+`DATABASE_URL` at it, then `npm run db:migrate` and — for a demo only — `npm run db:seed` (it
+truncates first, so never against real data). A Docker Postgres exists (`docker compose up -d db`)
+but binds host port **5433** to avoid clashing with the native one, and is intentionally left
+stopped; on this laptop the native `:5432` instance is the single source of truth.
 
 **To branch PCs over the LAN (Phase 1 "production"):** double-click `start-lan.bat` — it builds,
 prints the address branches type, and serves on port 3000. In `.env` set
