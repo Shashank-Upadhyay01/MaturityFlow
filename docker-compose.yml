@@ -1,0 +1,44 @@
+# Local, on-premises stack. `docker compose up -d` and the branch server is running.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: maturityflow-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: maturityflow
+      POSTGRES_PASSWORD: maturityflow
+      POSTGRES_DB: maturityflow
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    # Host 5433 so this does not fight Windows PostgreSQL 18 on 5432.
+    ports:
+      - "5433:5432"
+    volumes:
+      - mf_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maturityflow -d maturityflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    container_name: maturityflow-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://maturityflow:maturityflow@db:5432/maturityflow
+      SESSION_SECRET: ${SESSION_SECRET:-please-change-this-to-a-48-byte-random-string-before-prod}
+      NODE_ENV: production
+      APP_TIMEZONE: Asia/Kolkata
+      STORAGE_ROOT: /app/storage
+    ports:
+      - "3000:3000"
+    volumes:
+      - mf_storage:/app/storage
+    profiles: ["full"]
+
+volumes:
+  mf_pgdata:
+  mf_storage:

@@ -1,0 +1,539 @@
+@import 'tailwindcss';
+
+/* Tailwind v4 resolves `dark:` from prefers-color-scheme by default. This app switches
+   themes with a `.dark` class on <html>, so the variant must follow the class instead —
+   without this, every `dark:` utility silently ignores the theme toggle. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MaturityFlow — Liquid Glass design system
+   ---------------------------------------------------------------------------
+   Three layers stacked, always in this order:
+     1. FIELD   an animated colour field, far behind everything, never interactive
+     2. GLASS   translucent panels that blur + saturate what is behind them
+     3. LIGHT   a specular highlight on the top edge and a soft shadow below
+
+   That combination is what reads as "glass" rather than "transparent rectangle":
+   the panel bends light (blur + saturate), catches light (inset highlight), and
+   casts light (outer shadow). Remove any one and the illusion collapses.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@theme {
+  --font-sans: 'InterVariable', 'Inter', ui-sans-serif, system-ui, -apple-system,
+    'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+
+  /* Brand — a deep institutional indigo with a money-green accent */
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-200: #c7d2fe;
+  --color-brand-300: #a5b4fc;
+  --color-brand-400: #818cf8;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-brand-800: #3730a3;
+  --color-brand-900: #312e81;
+  --color-brand-950: #1e1b4b;
+
+  --color-money-400: #34d399;
+  --color-money-500: #10b981;
+  --color-money-600: #059669;
+  --color-money-700: #047857;
+
+  --color-warn-400: #fbbf24;
+  --color-warn-500: #f59e0b;
+  --color-warn-600: #d97706;
+
+  --color-danger-400: #fb7185;
+  --color-danger-500: #f43f5e;
+  --color-danger-600: #e11d48;
+
+  --color-info-400: #38bdf8;
+  --color-info-500: #0ea5e9;
+
+  --radius-glass: 22px;
+  --radius-glass-sm: 14px;
+  --radius-glass-lg: 30px;
+
+  /* Apple-ish springs. The overshoot is what makes motion feel physical. */
+  --ease-spring: linear(
+    0, 0.0088 1.1%, 0.0355 2.3%, 0.1408 4.8%, 0.5301 11.5%, 0.7156 14.9%, 0.8582 18.4%,
+    0.9165 20.4%, 0.9634 22.5%, 0.9989 24.8%, 1.0252 27.4%, 1.0431 30.4%, 1.0511 34%,
+    1.0466 40.1%, 1.0148 58.2%, 0.9981 74.4%, 1
+  );
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out-quint: cubic-bezier(0.83, 0, 0.17, 1);
+}
+
+/* ── Themed surface variables ──────────────────────────────────────────── */
+
+:root {
+  color-scheme: light;
+
+  --field-1: 220 90% 62%;
+  --field-2: 168 76% 48%;
+  --field-3: 262 78% 66%;
+  --field-4: 200 90% 60%;
+  --field-alpha: 0.16;
+
+  --page-bg: #eef1f8;
+  --page-fg: #0f172a;
+  --muted-fg: #5a6478;
+  --faint-fg: #8892a6;
+
+  --glass-bg: rgba(255, 255, 255, 0.62);
+  --glass-bg-strong: rgba(255, 255, 255, 0.8);
+  --glass-bg-subtle: rgba(255, 255, 255, 0.4);
+  --glass-border: rgba(255, 255, 255, 0.75);
+  --glass-border-quiet: rgba(15, 23, 42, 0.07);
+  --glass-highlight: rgba(255, 255, 255, 0.95);
+  --glass-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -6px rgba(15, 23, 42, 0.1),
+    0 24px 48px -20px rgba(15, 23, 42, 0.14);
+  --glass-shadow-lifted: 0 2px 4px rgba(15, 23, 42, 0.05),
+    0 16px 40px -8px rgba(15, 23, 42, 0.16), 0 40px 72px -28px rgba(15, 23, 42, 0.2);
+  --glass-blur: 22px;
+  --glass-saturate: 180%;
+
+  --hairline: rgba(15, 23, 42, 0.08);
+  --input-bg: rgba(255, 255, 255, 0.7);
+  --input-border: rgba(15, 23, 42, 0.12);
+  --ring: rgba(99, 102, 241, 0.45);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --field-1: 232 84% 58%;
+  --field-2: 168 78% 42%;
+  --field-3: 268 82% 60%;
+  --field-4: 199 89% 48%;
+  --field-alpha: 0.3;
+
+  --page-bg: #060911;
+  --page-fg: #eef2ff;
+  --muted-fg: #9aa6c0;
+  --faint-fg: #6b7794;
+
+  /* Three of the brand steps are used as *roles*, not as fixed colours:
+       50  — the faintest tint you can lay a panel or a table row in
+       100 — the same tint, one notch stronger, for hover
+       700 — a label that has to stay readable sitting on top of those tints
+     On a dark page the light values invert, so a figure printed in --page-fg over a
+     --color-brand-50 panel came out light-on-light and simply disappeared. The remaining
+     steps (200–600, 800, 900) are literal accents and stay as they are in both themes. */
+  --color-brand-50: #161a3c;
+  --color-brand-100: #21275a;
+  --color-brand-700: #a5b4fc;
+
+  --glass-bg: rgba(22, 28, 45, 0.55);
+  --glass-bg-strong: rgba(26, 33, 52, 0.78);
+  --glass-bg-subtle: rgba(22, 28, 45, 0.35);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-border-quiet: rgba(255, 255, 255, 0.06);
+  --glass-highlight: rgba(255, 255, 255, 0.24);
+  --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -8px rgba(0, 0, 0, 0.5),
+    0 28px 56px -24px rgba(0, 0, 0, 0.6);
+  --glass-shadow-lifted: 0 2px 6px rgba(0, 0, 0, 0.4), 0 20px 48px -10px rgba(0, 0, 0, 0.6),
+    0 48px 88px -30px rgba(0, 0, 0, 0.7);
+  --glass-blur: 26px;
+  --glass-saturate: 165%;
+
+  --hairline: rgba(255, 255, 255, 0.08);
+  --input-bg: rgba(255, 255, 255, 0.05);
+  --input-border: rgba(255, 255, 255, 0.12);
+  --ring: rgba(129, 140, 248, 0.55);
+}
+
+/* ── Base ──────────────────────────────────────────────────────────────── */
+
+* {
+  border-color: var(--hairline);
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--page-bg);
+  color: var(--page-fg);
+  font-family: var(--font-sans);
+  min-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+}
+
+/* Wide tables/sheets scroll inside their pane instead of being clipped. */
+.mf-hscroll {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+/* Tabular figures everywhere money appears — columns must line up. */
+.tnum,
+table td,
+table th {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-brand-500) 30%, transparent);
+}
+
+/* ── LAYER 1 · the animated colour field ───────────────────────────────── */
+
+.mf-field {
+  position: fixed;
+  inset: -20%;
+  z-index: -2;
+  pointer-events: none;
+  filter: blur(60px);
+}
+
+.mf-field span {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  opacity: var(--field-alpha);
+  will-change: transform;
+  transform: translateZ(0);
+}
+
+.mf-field span:nth-child(1) {
+  width: 46vw;
+  height: 46vw;
+  left: 4%;
+  top: 2%;
+  background: radial-gradient(circle at 30% 30%, hsl(var(--field-1)), transparent 65%);
+  animation: mf-drift-a 34s var(--ease-in-out-quint) infinite alternate;
+}
+.mf-field span:nth-child(2) {
+  width: 40vw;
+  height: 40vw;
+  right: 2%;
+  top: 10%;
+  background: radial-gradient(circle at 60% 40%, hsl(var(--field-2)), transparent 65%);
+  animation: mf-drift-b 42s var(--ease-in-out-quint) infinite alternate;
+}
+.mf-field span:nth-child(3) {
+  width: 52vw;
+  height: 52vw;
+  left: 18%;
+  bottom: -8%;
+  background: radial-gradient(circle at 40% 60%, hsl(var(--field-3)), transparent 65%);
+  animation: mf-drift-c 38s var(--ease-in-out-quint) infinite alternate;
+}
+.mf-field span:nth-child(4) {
+  width: 34vw;
+  height: 34vw;
+  right: 20%;
+  bottom: 4%;
+  background: radial-gradient(circle at 50% 50%, hsl(var(--field-4)), transparent 65%);
+  animation: mf-drift-d 30s var(--ease-in-out-quint) infinite alternate;
+}
+
+@keyframes mf-drift-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(9vw, 7vh, 0) scale(1.14); }
+}
+@keyframes mf-drift-b {
+  from { transform: translate3d(0, 0, 0) scale(1.08); }
+  to   { transform: translate3d(-11vw, 9vh, 0) scale(0.94); }
+}
+@keyframes mf-drift-c {
+  from { transform: translate3d(0, 0, 0) scale(0.96); }
+  to   { transform: translate3d(7vw, -8vh, 0) scale(1.12); }
+}
+@keyframes mf-drift-d {
+  from { transform: translate3d(0, 0, 0) scale(1.05); }
+  to   { transform: translate3d(-8vw, -6vh, 0) scale(0.92); }
+}
+
+/* A fine noise veil stops the big gradients from banding on cheap monitors. */
+.mf-grain {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.16;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+}
+
+/* ── LAYER 2+3 · glass surfaces ────────────────────────────────────────── */
+
+.glass {
+  position: relative;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-glass);
+  box-shadow: var(--glass-shadow);
+  isolation: isolate;
+}
+
+/* The specular edge — a 1px highlight along the top, exactly like a lit pane. */
+.glass::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    160deg,
+    var(--glass-highlight) 0%,
+    transparent 32%,
+    transparent 68%,
+    color-mix(in oklab, var(--glass-highlight) 45%, transparent) 100%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.glass-strong { background: var(--glass-bg-strong); }
+.glass-subtle { background: var(--glass-bg-subtle); box-shadow: none; }
+.glass-flat   { box-shadow: none; }
+
+.glass-interactive {
+  transition:
+    transform 420ms var(--ease-spring),
+    box-shadow 420ms var(--ease-out-quint),
+    background-color 260ms var(--ease-out-quint),
+    border-color 260ms var(--ease-out-quint);
+}
+.glass-interactive:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--glass-shadow-lifted);
+  background: var(--glass-bg-strong);
+}
+.glass-interactive:active {
+  transform: translateY(0) scale(0.994);
+  transition-duration: 90ms;
+}
+
+/* A moving sheen that crosses the panel on hover — the "wet" part of liquid glass. */
+.glass-sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    105deg,
+    transparent 32%,
+    color-mix(in oklab, var(--glass-highlight) 70%, transparent) 48%,
+    transparent 62%
+  );
+  transform: translateX(-120%);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+.glass-sheen:hover::after {
+  animation: mf-sheen 1100ms var(--ease-out-quint) forwards;
+}
+@keyframes mf-sheen {
+  0%   { transform: translateX(-120%); opacity: 0; }
+  16%  { opacity: 0.85; }
+  100% { transform: translateX(120%); opacity: 0; }
+}
+
+/* ── Focus ─────────────────────────────────────────────────────────────── */
+
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+
+/* ── Inputs ────────────────────────────────────────────────────────────── */
+
+.mf-input {
+  width: 100%;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 13px;
+  padding: 0.62rem 0.85rem;
+  color: var(--page-fg);
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  transition:
+    border-color 200ms var(--ease-out-quint),
+    box-shadow 240ms var(--ease-out-quint),
+    background-color 200ms var(--ease-out-quint);
+  backdrop-filter: blur(8px);
+}
+.mf-input::placeholder { color: var(--faint-fg); }
+.mf-input:hover:not(:disabled) { border-color: color-mix(in oklab, var(--ring) 45%, transparent); }
+.mf-input:focus {
+  outline: none;
+  border-color: color-mix(in oklab, var(--ring) 85%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--ring) 22%, transparent);
+  background: var(--glass-bg-strong);
+}
+.mf-input:disabled { opacity: 0.55; cursor: not-allowed; }
+.mf-input[aria-invalid='true'] {
+  border-color: var(--color-danger-500);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--color-danger-500) 18%, transparent);
+}
+
+/* Money inputs get large tabular figures — the number IS the interface here. */
+.mf-input-money {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  padding: 0.75rem 0.9rem;
+}
+
+/* ── Scrollbars ────────────────────────────────────────────────────────── */
+
+* { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--muted-fg) 35%, transparent) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--muted-fg) 28%, transparent);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: color-mix(in oklab, var(--muted-fg) 50%, transparent); background-clip: content-box; }
+
+/* ── Entrance choreography ─────────────────────────────────────────────── */
+
+@keyframes mf-rise {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); filter: blur(6px); }
+  to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+.mf-rise { animation: mf-rise 620ms var(--ease-out-quint) both; }
+
+@keyframes mf-fade { from { opacity: 0; } to { opacity: 1; } }
+.mf-fade { animation: mf-fade 420ms var(--ease-out-quint) both; }
+
+/* Stagger children so a grid of cards arrives like a hand of cards, not a slab. */
+.mf-stagger > * { animation: mf-rise 620ms var(--ease-out-quint) both; }
+.mf-stagger > *:nth-child(1) { animation-delay: 0ms; }
+.mf-stagger > *:nth-child(2) { animation-delay: 45ms; }
+.mf-stagger > *:nth-child(3) { animation-delay: 90ms; }
+.mf-stagger > *:nth-child(4) { animation-delay: 135ms; }
+.mf-stagger > *:nth-child(5) { animation-delay: 180ms; }
+.mf-stagger > *:nth-child(6) { animation-delay: 225ms; }
+.mf-stagger > *:nth-child(7) { animation-delay: 270ms; }
+.mf-stagger > *:nth-child(8) { animation-delay: 315ms; }
+.mf-stagger > *:nth-child(n + 9) { animation-delay: 360ms; }
+
+@keyframes mf-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.mf-skeleton {
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--muted-fg) 10%, transparent) 25%,
+    color-mix(in oklab, var(--muted-fg) 20%, transparent) 37%,
+    color-mix(in oklab, var(--muted-fg) 10%, transparent) 63%
+  );
+  background-size: 200% 100%;
+  animation: mf-shimmer 1.5s linear infinite;
+  border-radius: 10px;
+}
+
+@keyframes mf-pulse-ring {
+  0%   { box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-money-500) 45%, transparent); }
+  70%  { box-shadow: 0 0 0 12px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.mf-pulse { animation: mf-pulse-ring 2.2s var(--ease-out-quint) infinite; }
+
+/* Value changed — a brief highlight so the eye catches a recalculated number. */
+@keyframes mf-flash {
+  0%   { background-color: color-mix(in oklab, var(--color-brand-500) 26%, transparent); }
+  100% { background-color: transparent; }
+}
+.mf-flash { animation: mf-flash 720ms var(--ease-out-quint); border-radius: 8px; }
+
+/* Pinned table headers/footers need a near-opaque backing, otherwise the row
+   scrolling underneath shows through and the figures become unreadable. */
+.mf-sticky-surface {
+  background: color-mix(in oklab, var(--page-bg) 62%, white 38%);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+.dark .mf-sticky-surface {
+  background: color-mix(in oklab, var(--page-bg) 78%, white 10%);
+}
+
+/* ── Status colours ────────────────────────────────────────────────────── */
+
+.status-dot { width: 7px; height: 7px; border-radius: 999px; flex: none; }
+.status-draft      { background: #94a3b8; }
+.status-submitted  { background: var(--color-info-500); }
+.status-review     { background: var(--color-brand-400); }
+.status-returned   { background: var(--color-warn-500); }
+.status-approved   { background: var(--color-money-500); }
+.status-progress   { background: var(--color-brand-500); }
+.status-completed  { background: var(--color-money-600); }
+.status-rejected   { background: var(--color-danger-500); }
+.status-hold       { background: var(--color-warn-600); }
+.status-cancelled  { background: #64748b; }
+
+/* ── Print — registers and payout sheets go to paper at the branch ─────── */
+
+@media print {
+  html, body { height: auto !important; overflow: visible !important; }
+  .mf-hscroll { overflow: visible !important; max-height: none !important; }
+  .mf-field, .mf-grain, .no-print { display: none !important; }
+  body { background: #fff !important; color: #000 !important; }
+  .glass {
+    background: #fff !important;
+    box-shadow: none !important;
+    border: 1px solid #cbd5e1 !important;
+    backdrop-filter: none !important;
+    break-inside: avoid;
+  }
+  .glass::before { display: none !important; }
+}
+
+/* ── Reduced motion — an accessibility requirement, not a nicety ───────── */
+
+@media print {
+  aside, header, footer, .print\:hidden { display: none !important; }
+  main { max-width: none !important; padding: 0 !important; }
+  .glass { background: white !important; box-shadow: none !important; backdrop-filter: none !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .mf-field span { animation: none !important; }
+}
+
+/* Browsers without backdrop-filter (older Edge on branch PCs) still get a usable,
+   opaque surface rather than unreadable transparent text. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass { background: color-mix(in oklab, var(--page-bg) 82%, white); }
+  .dark .glass { background: color-mix(in oklab, var(--page-bg) 70%, white 6%); }
+}
+
+

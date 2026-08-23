@@ -1,0 +1,379 @@
+/**
+ * register-view.ts — the pure decision logic behind the Register sheet.
+ *
+ * Kept out of `register-sheet.tsx` for the same reason `storage-rules.ts` is kept out of
+ * `storage.ts`: these are the rules that decide what a branch owes today and in what order
+ * the clerk reads it, and rules about money need tests, not a browser.
+ *
+ * Nothing here touches the DOM, the clock, or the database.
+ */
+
+/** Every sortable column in the register. */
+export type SortKey =
+  | 'formTick'
+  | 'approved'
+  | 'account'
+  | 'customer'
+  | 'maturityDate'
+  | 'formDate'
+  | 'paymentDate'
+  | 'amount'
+  | 'paid'
+  | 'remaining'
+  | 'agent'
+  | 'days'
+  | 'perDay'
+  | 'today'
+  | 'cash'
+  | 'online'
+  | 'given';
+
+export type RegisterTab = 'due' | 'today' | 'all' | 'pending';
+export type DateField = 'payment' | 'form' | 'maturity';
+
+export const DATE_FIELD_LABEL: Record<DateField, string> = {
+  payment: 'Payment date',
+  form: 'Form in',
+  maturity: 'Maturity date',
+};
+
+export const TAB_LABEL: Record<RegisterTab, string> = {
+  due: 'Due today',
+  today: 'Live',
+  pending: 'Pending',
+  all: 'All',
+};
+
+/** Only what the view rules actually read — so tests need not build a whole row. */
+export interface RegisterViewRow {
+  paymentOn: string | null;
+  formSubmittedOn: string;
+  instrumentMaturityOn: string | null;
+  /** Paise, as a decimal string. */
+  todayPaise: string;
+  /** Paise, as a decimal string. */
+  remainingPaise: string;
+}
+
+export function rowOnDate(r: RegisterViewRow, field: DateField): string | null {
+  if (field === 'payment') return r.paymentOn;
+  if (field === 'form') return r.formSubmittedOn;
+  return r.instrumentMaturityOn;
+}
+
+/**
+ * A withdrawal is "due today" when Operations has approved an amount for today and the case
+ * still owes money.
+ *
+ * Both halves matter. An approved amount on a fully-paid case is a leftover, not an
+ * obligation — counting it would overstate the cash the branch has to open with, which is the
+ * one number this page exists to get right.
+ */
+export function isDueToday(r: RegisterViewRow): boolean {
+  return BigInt(r.todayPaise) > 0n && BigInt(r.remainingPaise) > 0n;
+}
+
+/**
+ * The payment date says today, but nobody has set today's amount.
+ *
+ * Not an error — it is the shape an omission takes. Someone scheduled the customer for today
+ * and then never said how much, so the counter would never see them.
+ */
+export function isTodayButUnset(r: RegisterViewRow, today: string): boolean {
+  return r.paymentOn === today && BigInt(r.todayPaise) === 0n && BigInt(r.remainingPaise) > 0n;
+}
+
+export interface DueSummary {
+  count: number;
+  total: bigint;
+  cash: bigint;
+  online: bigint;
+  unsetCount: number;
+}
+
+/**
+ * Today's obligation across every row the user can see.
+ *
+ * Deliberately computed from the full row set rather than the filtered view: this is what the
+ * branch must fund before opening, and it must not change because somebody filtered to one
+ * agent to check something.
+ */
+export function summariseDueToday(
+  rows: readonly (RegisterViewRow & { todayCashPaise: string; todayOnlinePaise: string })[],
+  today: string,
+): DueSummary {
+  let count = 0;
+  let total = 0n;
+  let cash = 0n;
+  let online = 0n;
+  let unsetCount = 0;
+  for (const r of rows) {
+    if (isDueToday(r)) {
+      count += 1;
+      total += BigInt(r.todayPaise);
+      cash += BigInt(r.todayCashPaise);
+      online += BigInt(r.todayOnlinePaise);
+    } else if (isTodayButUnset(r, today)) {
+      unsetCount += 1;
+    }
+  }
+  return { count, total, cash, online, unsetCount };
+}
+
+/**
+ * The sort a given filter implies.
+ *
+ * Choosing a filter and then choosing a sort is two decisions for one intent. "Due today"
+ * always means largest-first, because that is the order you plan cash in. Picking one specific
+ * day makes the date column useless as a key — every row carries the same date — so it falls
+ * back to size instead.
+ */
+export function autoSortFor(
+  tab: RegisterTab,
+  onDate: string,
+  dateField: DateField,
+): { key: SortKey; dir: 'asc' | 'desc' } {
+  if (onDate) {
+    return dateField === 'payment' ? { key: 'today', dir: 'desc' } : { key: 'remaining', dir: 'desc' };
+  }
+  if (tab === 'due') return { key: 'today', dir: 'desc' };
+  if (tab === 'pending') return { key: 'formDate', dir: 'asc' };
+  if (tab === 'all') return { key: 'formDate', dir: 'desc' };
+  return { key: 'remaining', dir: 'desc' };
+}
+
+/** Columns offered in the "Sorted by" box, in the order they are offered. */
+export const SORT_LABEL: Partial<Record<SortKey, string>> = {
+  today: "Today's amount",
+  remaining: 'Remaining',
+  amount: 'Maturity amount',
+  paid: 'Paid',
+  customer: 'Customer name',
+  agent: 'Agent',
+  paymentDate: 'Payment date',
+  formDate: 'Form in date',
+  maturityDate: 'Maturity date',
+  account: 'A/c number',
+  days: 'Window days',
+  perDay: 'Per day',
+};
+
+/** The next calendar day. Plain UTC arithmetic on a YYYY-MM-DD string, like working-days.ts. */
+export function nextDay(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Indian digit grouping for a plain rupee string.
+ *
+ * Anything that is not a clean number comes back untouched, so a half-typed value is never
+ * mangled — which is what lets the sheet show 10,00,000 at rest and raw digits while editing.
+ */
+export function groupIndian(v: string): string {
+  const t = v.trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(t)) return v;
+  const [whole, frac] = t.split('.');
+  const grouped = new Intl.NumberFormat('en-IN').format(BigInt(whole));
+  return frac ? `${grouped}.${frac}` : grouped;
+}
+
+// ── Date filtering ─────────────────────────────────────────────────────────
+//
+// One filter, three shapes: a single day, a closed range, or an open-ended
+// "everything before today". They are all the same structure — a `from` and a
+// `to`, either of which may be blank — so the table only ever applies one rule.
+
+export interface DateRange {
+  /** Inclusive lower bound, or '' for open-ended. */
+  from: string;
+  /** Inclusive upper bound, or '' for open-ended. */
+  to: string;
+}
+
+export const EMPTY_RANGE: DateRange = { from: '', to: '' };
+
+export type DatePreset = 'today' | 'tomorrow' | 'thisWeek' | 'next7' | 'thisMonth' | 'overdue';
+
+/** Offered left to right in the toolbar, in the order a clerk reaches for them. */
+export const DATE_PRESETS: DatePreset[] = ['today', 'tomorrow', 'thisWeek', 'next7', 'thisMonth', 'overdue'];
+
+export const DATE_PRESET_LABEL: Record<DatePreset, string> = {
+  today: 'Today',
+  tomorrow: 'Tomorrow',
+  thisWeek: 'This week',
+  next7: 'Next 7 days',
+  thisMonth: 'This month',
+  overdue: 'Overdue',
+};
+
+/** Plain UTC arithmetic on a YYYY-MM-DD string, like working-days.ts. */
+export function shiftDays(iso: string, n: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** The previous calendar day. */
+export function prevDay(iso: string): string {
+  return shiftDays(iso, -1);
+}
+
+/** Monday of the week containing `iso`. Weeks start Monday — Sunday is the off day here. */
+export function startOfWeek(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  return shiftDays(iso, -((d.getUTCDay() + 6) % 7));
+}
+
+export function startOfMonth(iso: string): string {
+  return `${iso.slice(0, 7)}-01`;
+}
+
+export function endOfMonth(iso: string): string {
+  const y = Number(iso.slice(0, 4));
+  const m = Number(iso.slice(5, 7));
+  // Day 0 of the next month is the last day of this one — no month-length table needed.
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+}
+
+/**
+ * Turn a preset into the range it means.
+ *
+ * "Overdue" is deliberately open at the bottom: a payment date three months
+ * stale is still overdue, and a clerk asking for overdue rows wants all of
+ * them, not the ones inside some arbitrary lookback.
+ */
+export function resolveDatePreset(preset: DatePreset, today: string): DateRange {
+  switch (preset) {
+    case 'today':
+      return { from: today, to: today };
+    case 'tomorrow': {
+      const t = nextDay(today);
+      return { from: t, to: t };
+    }
+    case 'thisWeek': {
+      const s = startOfWeek(today);
+      return { from: s, to: shiftDays(s, 6) };
+    }
+    case 'next7':
+      return { from: today, to: shiftDays(today, 6) };
+    case 'thisMonth':
+      return { from: startOfMonth(today), to: endOfMonth(today) };
+    case 'overdue':
+      return { from: '', to: prevDay(today) };
+  }
+}
+
+/** Which preset — if any — the current range is showing, so the chip can light up. */
+export function activeDatePreset(range: DateRange, today: string): DatePreset | null {
+  for (const p of DATE_PRESETS) {
+    const r = resolveDatePreset(p, today);
+    if (r.from === range.from && r.to === range.to) return p;
+  }
+  return null;
+}
+
+export function isRangeActive(range: DateRange): boolean {
+  return Boolean(range.from || range.to);
+}
+
+/**
+ * Does this row fall inside the range, read against the chosen date column?
+ *
+ * A row with no date in that column is excluded whenever a filter is on. That is
+ * the honest answer: "show me everything paid on the 22nd" cannot include a row
+ * that has no payment date, and silently keeping it would inflate the total the
+ * clerk is about to count out.
+ *
+ * ISO dates compare correctly as strings, so no Date objects are built per row.
+ */
+export function rowInDateRange(r: RegisterViewRow, field: DateField, range: DateRange): boolean {
+  if (!isRangeActive(range)) return true;
+  const v = rowOnDate(r, field);
+  if (!v) return false;
+  if (range.from && v < range.from) return false;
+  if (range.to && v > range.to) return false;
+  return true;
+}
+
+// ── Selection ──────────────────────────────────────────────────────────────
+
+/** What a bulk action does to today's amount. Shared by the sheet and the server. */
+export type BulkTodayMode = 'perDay' | 'remaining' | 'amount' | 'clear';
+
+export const BULK_TODAY_LABEL: Record<BulkTodayMode, string> = {
+  perDay: 'Recommended per day',
+  remaining: 'Full remaining',
+  amount: 'A fixed amount',
+  clear: 'Clear (set to zero)',
+};
+
+/**
+ * Today's amount a bulk action should set on one row.
+ *
+ * Always clamped to what the case still owes, so no bulk action can ever approve
+ * more than the customer is due — the same ceiling `updateRegisterRow` enforces
+ * for a single typed cell.
+ */
+export function bulkTodayAmount(
+  mode: BulkTodayMode,
+  row: { remaining: bigint; windowDays: number; amount?: bigint },
+): bigint {
+  const remaining = row.remaining > 0n ? row.remaining : 0n;
+  if (remaining === 0n) return 0n;
+  switch (mode) {
+    case 'clear':
+      return 0n;
+    case 'remaining':
+      return remaining;
+    case 'perDay': {
+      const days = BigInt(Math.max(1, Math.floor(row.windowDays) || 1));
+      return remaining / days;
+    }
+    case 'amount': {
+      const want = row.amount ?? 0n;
+      if (want <= 0n) return 0n;
+      return want > remaining ? remaining : want;
+    }
+  }
+}
+
+export interface SelectionRow extends RegisterViewRow {
+  maturityPaise: string;
+  paidPaise: string;
+  todayCashPaise: string;
+  todayOnlinePaise: string;
+}
+
+export interface SelectionSummary {
+  count: number;
+  maturity: bigint;
+  paid: bigint;
+  remaining: bigint;
+  today: bigint;
+  cash: bigint;
+  online: bigint;
+  dueCount: number;
+}
+
+/** Totals for the ticked rows — what the toolbar states before you act on them. */
+export function summariseSelection(rows: readonly SelectionRow[]): SelectionSummary {
+  let maturity = 0n;
+  let paid = 0n;
+  let remaining = 0n;
+  let today = 0n;
+  let cash = 0n;
+  let online = 0n;
+  let dueCount = 0;
+  for (const r of rows) {
+    maturity += BigInt(r.maturityPaise);
+    paid += BigInt(r.paidPaise);
+    remaining += BigInt(r.remainingPaise);
+    today += BigInt(r.todayPaise);
+    cash += BigInt(r.todayCashPaise);
+    online += BigInt(r.todayOnlinePaise);
+    if (isDueToday(r)) dueCount += 1;
+  }
+  return { count: rows.length, maturity, paid, remaining, today, cash, online, dueCount };
+}
