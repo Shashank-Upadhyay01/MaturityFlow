@@ -43,6 +43,16 @@ dropped over plain HTTP, so otherwise nobody can sign in). Details in `README.md
    one code change, in `src/lib/storage.ts`; see "Known gaps"). After this the laptop is purely a
    dev box; the cloud serves everyone 24/7.
 
+   **Status (2026-08-23):** the Supabase Postgres is already provisioned and in sync — project
+   `maturityflow` (`fktcubdpsgutcvyfdozt`, ap-south-1), all 17 tables, 10 demo logins. What's left
+   is the Vercel import + env vars (needs your accounts). Full runbook: `docs/11-CLOUD-MIGRATION.md`.
+
+**Local DB note:** the app's `.env` points at `localhost:5432`, which on this laptop is
+**native Windows PostgreSQL 18** (holds the real 107-case register + demo logins). The
+`docker compose` Postgres is deliberately on host port **5433** to avoid clashing with it, and is
+currently unused — so `docker compose up -d db` alone does *not* give you the app's data. Migrations
+and `test:db` run against 5432.
+
 What keeps this cheap: **every environment-specific setting is read from `.env`, so moving between
 laptop, LAN and cloud is configuration, not code** — the single exception being document storage.
 

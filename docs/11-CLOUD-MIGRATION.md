@@ -57,35 +57,56 @@ npm run build
 
 Do these in order. Each step is small; the risk is in the sequence, not the individual commands.
 
-### 2.1 — Stand up managed Postgres
+### 2.1 — Managed Postgres — ALREADY DONE ✅
 
-1. Create a project on [Neon](https://neon.tech) or [Supabase](https://supabase.com) (either is
-   fine; both are Postgres 16-compatible).
-2. Copy its **pooled** connection string. On Supabase that is the "Transaction pooler" URL (port
-   `6543`); on Neon it is the "Pooled connection" endpoint. It will contain `sslmode=require` — the
-   app's pool (`src/db/index.ts`) already turns TLS on automatically when it sees that.
-3. Point a **local** shell at it and create the schema there:
+A Supabase project already exists and its schema is in sync with the app:
 
-   ```bash
-   DATABASE_URL="postgresql://…pooled…?sslmode=require" npm run db:migrate
-   ```
+| | |
+|---|---|
+| **Project** | `maturityflow` |
+| **Ref / ID** | `fktcubdpsgutcvyfdozt` |
+| **Region** | `ap-south-1` (Mumbai) |
+| **Postgres** | 17 |
+| **Schema** | all 17 tables present (migration `0004` applied to it on 2026-08-23) |
+| **Accounts** | 10 seeded demo logins, every role, valid bcrypt hashes — password `Maturity@2026` |
+| **Data** | demo only (4 branches, holidays, settings; 0 real cases) — the real 107-case laptop register was **not** copied (it is customer PII; copy it deliberately, later, if you want it in the cloud) |
 
-   Do **not** run `db:seed` against a database that will hold real data — it truncates every table
-   first. Seed only if this cloud DB is a demo.
+**The one thing to fetch yourself:** the connection string, because it contains the database
+password, which no tool exposes. In the Supabase dashboard: **Project → Connect → Connection
+pooling → Transaction mode**, and copy the URI. It looks like:
 
-> **Why the pooled string, and why this matters on Vercel.** Each Vercel serverless invocation can
-> spin up its own `pg` pool. Against a raw Postgres endpoint that exhausts the connection limit fast.
-> The provider's pooler (pgBouncer) fixes this. Also set **`DB_POOL_MAX=1`** in the Vercel env
-> (below): on serverless you want one connection per function instance, not twenty. The `max: 20`
-> default in `src/db/index.ts` is sized for the single LAN server, not for many serverless workers.
+```
+postgresql://postgres.fktcubdpsgutcvyfdozt:[YOUR-DB-PASSWORD]@aws-0-ap-south-1.pooler.supabase.com:6543/postgres
+```
 
-### 2.2 — Move document storage off local disk
+The host contains `supabase`, so `src/db/index.ts` turns TLS on automatically — no `?sslmode=`
+needed. If you ever forgot the DB password, reset it under **Project → Database → Settings**.
 
-This is **the only code change** the cloud move needs, and it is isolated to one file.
+> **Why the pooled string, and why it matters on Vercel.** Each Vercel serverless invocation can
+> spin up its own `pg` pool; against a raw endpoint that exhausts the connection limit fast. The
+> Transaction-mode pooler (pgBouncer, port `6543`) fixes this. Also set **`DB_POOL_MAX=1`** in the
+> Vercel env (below): on serverless you want one connection per function instance, not twenty. The
+> `max: 20` default in `src/db/index.ts` is sized for the single LAN server. drizzle + node-postgres
+> issue unnamed queries, so they are compatible with transaction-mode pooling. (If you ever hit a
+> prepared-statement error, switch to the **Session** pooler on port `5432` instead.)
+
+### 2.2 — Document storage — deferred, does NOT block the first deploy
+
+There are **zero uploaded documents** today (`case_documents` is empty on both the laptop and the
+cloud DB), and the core flow — maturity → approval → schedule → payout — never touches storage. So
+you can deploy to Vercel now and wire blob storage later, before anyone uploads a KYC/maturity scan
+in production. Until then, document *upload* is the only feature that won't work on Vercel (the
+serverless filesystem is ephemeral); everything else works.
+
+When you want it (it is **the only code change** the cloud move needs, isolated to one file):
 
 - Documents are written and read through `src/lib/storage.ts` (its pure, tested half is
   `src/lib/storage-rules.ts` — leave that alone). On Vercel the filesystem is **ephemeral and
   read-only** at runtime, so local-disk storage silently loses every upload. It must go to blob.
+- You already have Supabase — the natural choice is a **Supabase Storage** bucket (or S3 / Vercel
+  Blob). Swap the disk implementation for the blob adapter, keeping the exported function
+  signatures identical so nothing upstream changes; `serverActions.bodySizeLimit` in
+  `next.config.ts` stays as-is.
 - Swap the disk implementation in `src/lib/storage.ts` for an S3 or Azure Blob adapter (e.g. the AWS
   SDK `@aws-sdk/client-s3`, or Vercel Blob). Keep the exported function signatures identical so
   nothing upstream changes; `serverActions.bodySizeLimit` in `next.config.ts` stays as-is.
@@ -105,18 +126,19 @@ This is **the only code change** the cloud move needs, and it is isolated to one
 
    | Key | Value |
    |---|---|
-   | `DATABASE_URL` | the pooled managed-Postgres string from 2.1 |
+   | `DATABASE_URL` | the pooled Supabase string from 2.1 (Transaction pooler, `:6543`) |
    | `DB_POOL_MAX` | `1` |
-   | `SESSION_SECRET` | a fresh `openssl rand -base64 48` (do **not** reuse the laptop's) |
+   | `SESSION_SECRET` | a fresh 48-byte base64 secret — `node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"` — **not** the laptop's |
    | `SESSION_TTL_HOURS` | `12` |
-   | `APP_URL` | the Vercel URL, e.g. `https://maturityflow.vercel.app` (https) |
+   | `APP_URL` | the Vercel URL (fill in after the first deploy assigns it, e.g. `https://maturityflow.vercel.app`), then redeploy |
    | `COOKIE_SECURE` | `true` (it's https now — the LAN's `false` was only for plain HTTP) |
    | `APP_TIMEZONE` | `Asia/Kolkata` |
    | `NODE_ENV` | `production` |
-   | `STORAGE_*` | the blob bucket credentials from 2.2 |
+   | `STORAGE_ROOT` | `./storage` — placeholder; only document *upload* uses it, and that's deferred (2.2) |
 
 3. Deploy. Vercel builds the same repo you build locally.
-4. Check `https://<your-app>/api/health` returns OK, then sign in.
+4. Check `https://<your-app>/api/health` returns `{"status":"ok","database":"connected"}`, then sign
+   in with any demo account (password `Maturity@2026`).
 
 ### 2.4 — Cut over
 
@@ -155,10 +177,13 @@ storage code change; choose Vercel (above) for the least operational burden long
 
 ## Checklist
 
-- [ ] Phase 1 gates green (`typecheck`, `test`, `test:db`, `build`)
-- [ ] Repo pushed to GitHub
-- [ ] Managed Postgres created; `db:migrate` run against it (pooled string, `sslmode=require`)
-- [ ] `src/lib/storage.ts` swapped to blob (Vercel path) — or VPS path chosen to defer it
-- [ ] Vercel env vars set (fresh `SESSION_SECRET`, `DB_POOL_MAX=1`, `COOKIE_SECURE=true`, `STORAGE_*`)
-- [ ] `/api/health` OK on the cloud URL; sign-in works
+- [x] Phase 1 gates green (`typecheck`, `lint`, `test` 191✓, `test:db` 5✓, `build`)
+- [x] Repo pushed to GitHub
+- [x] Managed Postgres ready — Supabase `maturityflow` (`fktcubdpsgutcvyfdozt`, ap-south-1), schema
+      synced (migration `0004` applied), 10 demo logins verified
+- [ ] **You:** copy the Transaction-pooler `DATABASE_URL` from the Supabase dashboard
+- [ ] **You:** import the repo into Vercel and set the env vars (table in 2.3)
+- [ ] `/api/health` OK on the cloud URL; sign-in works (`Maturity@2026`)
 - [ ] Users cut over; laptop demoted to dev box; `start-lan.bat` stopped
+- [ ] *(later)* `src/lib/storage.ts` swapped to Supabase Storage / S3 blob before uploading real docs
+- [ ] *(optional)* copy the real 107-case laptop register into the cloud DB, if wanted (it's PII)
