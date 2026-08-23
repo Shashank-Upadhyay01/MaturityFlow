@@ -55,7 +55,22 @@ npm run build
 
 ## Phase 2 — the cloud: app on Vercel, database on Neon/Supabase, docs on blob
 
-Do these in order. Each step is small; the risk is in the sequence, not the individual commands.
+> **⏸️ PAUSED — resume only when the user says "deploy to cloud".** Phase 1 (laptop/localhost) is
+> the current focus. Cloud deployment was scaffolded on 2026-08-23 and then intentionally paused.
+> **Nothing below needs redoing** — here is the exact saved state and where to pick up:
+>
+> - **Supabase DB** — `maturityflow` (`fktcubdpsgutcvyfdozt`, ap-south-1), schema synced (0004
+>   applied), 10 demo logins. ✅
+> - **Vercel project** — `maturityflow` under `shashank-upadhyay01s-projects`
+>   (`prj_lbQSLCn1Pb3hlXoiBkq0O6hiRT6o`), created + linked (`.vercel/`), with these **production**
+>   env vars already set: `SESSION_SECRET`, `DB_POOL_MAX=1`, `SESSION_TTL_HOURS=12`,
+>   `APP_TIMEZONE=Asia/Kolkata`, `COOKIE_SECURE=true`. ✅
+> - **To resume (only 3 things left):** (1) a fresh Vercel token — the 2026-08-23 one was deleted and
+>   should be revoked; (2) the Supabase Transaction-pooler `DATABASE_URL` → set it as the last env
+>   var; (3) `vercel --prod`, then set `APP_URL` to the assigned URL and redeploy. Then verify
+>   `/api/health`.
+>
+> Do these in order. Each step is small; the risk is in the sequence, not the individual commands.
 
 ### 2.1 — Managed Postgres — ALREADY DONE ✅
 
