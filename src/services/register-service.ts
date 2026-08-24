@@ -18,6 +18,7 @@ import { formatCaseNumber, newId } from '@/lib/id';
 import { DEFAULT_CASH_CAP_PAISE } from '@/lib/org-settings';
 import { loadOrgSettings } from '@/services/org-settings';
 import { parseRupeesToPaise } from '@/lib/money';
+import { MIN_WINDOW_DAYS } from '@/lib/payout-policy';
 import { bulkTodayAmount, type BulkTodayMode } from '@/lib/register-view';
 import { parseRegisterDate } from '@/lib/excel-register';
 import { todayISO } from '@/lib/working-days';
@@ -217,8 +218,12 @@ export async function updateRegisterRow(
       setCase.paymentOn = parseDate(patch.paymentOn);
     }
     if (patch.windowDays != null) {
-      if (!Number.isInteger(patch.windowDays) || patch.windowDays < 1 || patch.windowDays > 60) {
-        throw new Error('Days must be 1–60');
+      if (
+        !Number.isInteger(patch.windowDays) ||
+        patch.windowDays < MIN_WINDOW_DAYS ||
+        patch.windowDays > 60
+      ) {
+        throw new Error(`Days must be ${MIN_WINDOW_DAYS}–60`);
       }
       setCase.windowDays = patch.windowDays;
     }

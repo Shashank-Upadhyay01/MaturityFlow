@@ -436,8 +436,8 @@ export async function replanWithWindowAction(
 ): Promise<ActionResult<{ slaBreachUnavoidable: boolean; lastPayoutOn: string; instalments: number; windowDays: number }>> {
   try {
     const { session, actor } = await requireActor();
-    if (!Number.isInteger(windowDays) || windowDays < 1 || windowDays > 60) {
-      return fail('Enter between 1 and 60 working days', 'VALIDATION');
+    if (!Number.isInteger(windowDays) || windowDays < MIN_WINDOW_DAYS || windowDays > 60) {
+      return fail(`Enter between ${MIN_WINDOW_DAYS} and 60 working days`, 'VALIDATION');
     }
     const c = await loadCaseScope(caseId);
     if (!c) return fail('Case not found', 'NOT_FOUND');
