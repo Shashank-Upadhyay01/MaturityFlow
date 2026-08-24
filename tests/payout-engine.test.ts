@@ -7,7 +7,7 @@ import {
   generateSchedule,
   rescheduleRemaining,
 } from '../src/lib/payout-engine';
-import { isWorkingDay, makeCalendar } from '../src/lib/working-days';
+import { collectWorkingDays, isWorkingDay, makeCalendar } from '../src/lib/working-days';
 
 const cal = makeCalendar();
 const STEP_1K = 100_000n; // ₹1,000
@@ -398,5 +398,92 @@ describe('deriveDeadline', () => {
       calendar: cal,
     });
     expect(res.lastPayoutDate).toBe(deriveDeadline('2026-08-17', 15, cal));
+  });
+});
+
+describe('cadence and the processing offset', () => {
+  const LAKH = 10_000_000n;
+
+  // 2026-08-24 is a Monday.
+  const base = {
+    roundingPaise: 100_000n, // ₹1,000
+    startDate: '2026-08-24',
+    calendar: cal,
+  };
+
+  it('defaults are unchanged — no stride, no offset', () => {
+    const a = generateSchedule({ ...base, totalPaise: 50_000_000n, days: 12 });
+    const b = generateSchedule({
+      ...base,
+      totalPaise: 50_000_000n,
+      days: 12,
+      stride: 1,
+      startOffsetWorkingDays: 0,
+    });
+    expect(b.installments.map((i) => i.dueDate)).toEqual(a.installments.map((i) => i.dueDate));
+    expect(a.installments[0].dueDate).toBe('2026-08-24');
+  });
+
+  it('the offset holds the first payout back by whole working days', () => {
+    const withOffset = generateSchedule({
+      ...base,
+      totalPaise: 50_000_000n,
+      days: 12,
+      startOffsetWorkingDays: 3,
+    });
+    const everyDay = collectWorkingDays('2026-08-24', 4, cal);
+    // W0, W1, W2 are processing; the first payout is W3.
+    expect(withOffset.installments[0].dueDate).toBe(everyDay[3]);
+    expect(withOffset.installments).toHaveLength(12);
+  });
+
+  it('a large case pays on 12 consecutive working days from W3', () => {
+    const r = generateSchedule({
+      ...base,
+      totalPaise: LAKH * 5n,
+      days: 12,
+      stride: 1,
+      startOffsetWorkingDays: 3,
+    });
+    const window = collectWorkingDays('2026-08-24', 15, cal);
+    expect(r.installments.map((i) => i.dueDate)).toEqual(window.slice(3, 15));
+    expect(r.installments[r.installments.length - 1].dueDate).toBe(window[14]);
+  });
+
+  it('a small case pays on 6 alternate working days, finishing inside the window', () => {
+    const r = generateSchedule({
+      ...base,
+      totalPaise: 6_000_000n, // ₹60,000
+      days: 6,
+      stride: 2,
+      startOffsetWorkingDays: 3,
+    });
+    const window = collectWorkingDays('2026-08-24', 15, cal);
+    expect(r.installments.map((i) => i.dueDate)).toEqual([
+      window[3], window[5], window[7], window[9], window[11], window[13],
+    ]);
+    // W13 is inside the W14 deadline.
+    expect(r.installments[5].dueDate).not.toBe(window[14]);
+  });
+
+  it('still sums to the maturity amount with a stride and an offset', () => {
+    const total = 6_012_345n;
+    const r = generateSchedule({
+      ...base,
+      totalPaise: total,
+      days: 6,
+      stride: 2,
+      startOffsetWorkingDays: 3,
+    });
+    expect(r.installments.reduce((a, i) => a + i.amountPaise, 0n)).toBe(total);
+    assertInvariants(r);
+  });
+
+  it('rejects a stride or offset that is not a whole non-negative number', () => {
+    const bad = { ...base, totalPaise: 50_000_000n, days: 6 };
+    expect(() => generateSchedule({ ...bad, stride: 0 })).toThrow(ScheduleInputError);
+    expect(() => generateSchedule({ ...bad, stride: 1.5 })).toThrow(ScheduleInputError);
+    expect(() => generateSchedule({ ...bad, startOffsetWorkingDays: -1 })).toThrow(ScheduleInputError);
+    expect(() => generateSchedule({ ...bad, startOffsetWorkingDays: 2.5 })).toThrow(ScheduleInputError);
   });
 });

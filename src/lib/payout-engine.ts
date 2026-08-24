@@ -57,6 +57,16 @@ export interface ScheduleInput {
   cashPolicy?: CashPolicy;
   /** true => first payout is the working day AFTER startDate. Default false (pay from day 0). */
   startOnNextWorkingDay?: boolean;
+  /**
+   * Working days between consecutive payouts. 1 (default) = every working day.
+   * 2 = every other working day, for maturities below the priority threshold.
+   */
+  stride?: number;
+  /**
+   * Working days to skip after the anchor before the first payout — the processing days.
+   * Default 0, which is the historical behaviour.
+   */
+  startOffsetWorkingDays?: number;
   /** Bank policy ceiling for the window (default 15) — used only to raise a warning. */
   policyMaxDays?: number;
   /** Branch's per-day cash-in-hand comfort level — used only to raise a warning. */
@@ -150,6 +160,8 @@ export function generateSchedule(input: ScheduleInput): ScheduleResult {
     distribution = 'FRONT_LOADED',
     cashPolicy = DEFAULT_CASH_POLICY,
     startOnNextWorkingDay = false,
+    stride = 1,
+    startOffsetWorkingDays = 0,
     policyMaxDays = 15,
     branchDailyCashComfortPaise,
   } = input;
@@ -169,6 +181,12 @@ export function generateSchedule(input: ScheduleInput): ScheduleResult {
   }
   if (typeof roundingPaise !== 'bigint' || roundingPaise < 1n) {
     throw new ScheduleInputError('Rounding step must be a bigint of at least 1 paisa');
+  }
+  if (!Number.isInteger(stride) || stride < 1) {
+    throw new ScheduleInputError('stride must be a whole number of at least 1');
+  }
+  if (!Number.isInteger(startOffsetWorkingDays) || startOffsetWorkingDays < 0) {
+    throw new ScheduleInputError('startOffsetWorkingDays must be a whole number of at least 0');
   }
   if (cashPolicy.kind === 'CASH_CAP') {
     const cap = cashPolicy.cashCapPerDayPaise;
@@ -250,10 +268,18 @@ export function generateSchedule(input: ScheduleInput): ScheduleResult {
   }
 
   // ── Step 7: assign working-day dates ─────────────────────────────────────
+  // The anchor is the approval day. The processing days sit between it and the first payout, so
+  // the payout window opens `startOffsetWorkingDays` working days later. `stride` then decides
+  // whether payouts land on every working day or every other one. Neither affects a single rupee
+  // computed above — this step only decides which dates the amounts are stamped onto.
   const anchor = startOnNextWorkingDay
     ? nextWorkingDay(addOneDay(startDate), calendar)
     : nextWorkingDay(startDate, calendar);
-  const dates = collectWorkingDays(anchor, effectiveDays, calendar);
+  const payoutAnchor =
+    startOffsetWorkingDays > 0
+      ? collectWorkingDays(anchor, startOffsetWorkingDays + 1, calendar)[startOffsetWorkingDays]
+      : anchor;
+  const dates = collectWorkingDays(payoutAnchor, effectiveDays, calendar, stride);
 
   // ── Step 8: split each instalment into cash and online legs ──────────────
   const installments: PlannedInstallment[] = [];
