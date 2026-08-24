@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CalendarError,
   addDays,
   collectWorkingDays,
   countWorkingDaysBetween,
@@ -133,5 +134,42 @@ describe('working-day traversal', () => {
     for (let i = 0; i < 4000; i++) allHolidays.add(addDays('2026-01-01', i));
     const dead = makeCalendar(allHolidays);
     expect(() => nextWorkingDay('2026-08-17', dead)).toThrow();
+  });
+});
+
+describe('collectWorkingDays with a stride', () => {
+  // 2026-08-24 is a Monday. Sundays and 2nd/4th Saturdays are off by default.
+  it('stride 1 is exactly the old behaviour', () => {
+    const a = collectWorkingDays('2026-08-24', 6, cal);
+    const b = collectWorkingDays('2026-08-24', 6, cal, 1);
+    expect(b).toEqual(a);
+  });
+
+  it('stride 2 takes every other working day', () => {
+    const every = collectWorkingDays('2026-08-24', 11, cal);
+    const alternate = collectWorkingDays('2026-08-24', 6, cal, 2);
+    expect(alternate).toEqual([every[0], every[2], every[4], every[6], every[8], every[10]]);
+  });
+
+  it('stride 2 counts working days, not calendar days, across a weekend', () => {
+    const dates = collectWorkingDays('2026-08-24', 4, cal, 2);
+    for (const d of dates) expect(isWorkingDay(d, cal)).toBe(true);
+    // Consecutive picks are two working days apart, inclusive count of 3.
+    for (let i = 0; i + 1 < dates.length; i++) {
+      expect(countWorkingDaysBetween(dates[i], dates[i + 1], cal)).toBe(3);
+    }
+  });
+
+  it('stride 2 steps over a holiday without landing on it', () => {
+    const withHoliday = makeCalendar(['2026-08-26']); // the Wednesday
+    const dates = collectWorkingDays('2026-08-24', 3, withHoliday, 2);
+    expect(dates).not.toContain('2026-08-26');
+    for (const d of dates) expect(isWorkingDay(d, withHoliday)).toBe(true);
+  });
+
+  it('rejects a stride that is not a positive whole number', () => {
+    expect(() => collectWorkingDays('2026-08-24', 3, cal, 0)).toThrow(CalendarError);
+    expect(() => collectWorkingDays('2026-08-24', 3, cal, -1)).toThrow(CalendarError);
+    expect(() => collectWorkingDays('2026-08-24', 3, cal, 1.5)).toThrow(CalendarError);
   });
 });

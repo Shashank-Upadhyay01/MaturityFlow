@@ -151,24 +151,40 @@ export function nextWorkingDayAfter(from: ISODate, cal: WorkingDayCalendar): ISO
  * Collect exactly `count` working days starting at (or after) `start`.
  * This is what turns "15 days" into 15 real, payable dates.
  */
+/**
+ * Collect `count` working days starting at `start`.
+ *
+ * `stride` is how many working days apart the collected days sit: 1 takes every working day,
+ * 2 takes every other one (used by sub-₹1-lakh maturities, which pay on alternate days).
+ * Non-working days are skipped before the stride is applied, so "alternate" means alternate
+ * *working* days — a Friday payout is followed by a Tuesday one, not a Sunday.
+ */
 export function collectWorkingDays(
   start: ISODate,
   count: number,
   cal: WorkingDayCalendar,
+  stride = 1,
 ): ISODate[] {
   if (!Number.isInteger(count) || count < 0) {
     throw new CalendarError(`count must be a non-negative integer, got ${count}`);
   }
+  if (!Number.isInteger(stride) || stride < 1) {
+    throw new CalendarError(`stride must be a positive integer, got ${stride}`);
+  }
   const out: ISODate[] = [];
   let d = start;
   let scanned = 0;
+  let workingIndex = 0;
   while (out.length < count) {
     if (scanned++ > MAX_SCAN_DAYS) {
       throw new CalendarError(
         `Could not collect ${count} working days from ${start} — check the holiday calendar.`,
       );
     }
-    if (isWorkingDay(d, cal)) out.push(d);
+    if (isWorkingDay(d, cal)) {
+      if (workingIndex % stride === 0) out.push(d);
+      workingIndex++;
+    }
     d = addDays(d, 1);
   }
   return out;
