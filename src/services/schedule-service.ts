@@ -17,6 +17,7 @@ import {
   payoutPlanFor,
   type Cadence,
 } from '@/lib/payout-policy';
+import { rebalanceAfter, type EditableInstalment } from '@/lib/schedule-edit';
 import type { WorkingDayCalendar } from '@/lib/working-days';
 import { todayISO } from '@/lib/working-days';
 
@@ -233,6 +234,78 @@ export async function persistReschedule({
     .where(eq(maturityCases.id, caseRow.id));
 
   return { result, carriedOverPaise };
+}
+
+/**
+ * Apply one day's new amount and spread the difference over the later unpaid days.
+ *
+ * The caller has already taken the CASE row lock. The instalments are re-read here WITH
+ * `.for('update')` — lock order is always case → instalment — and the rebalance is computed from
+ * those re-read rows, never from anything the client sent. The client supplies two parameters:
+ * which day, and what it should now be.
+ */
+export async function persistInstalmentEdit({
+  tx,
+  caseRow,
+  instalmentId,
+  newAmountPaise,
+}: {
+  tx: Queryable;
+  caseRow: MaturityCase;
+  instalmentId: string;
+  newAmountPaise: bigint;
+}): Promise<{ changed: number }> {
+  const live = await tx
+    .select()
+    .from(payoutInstalments)
+    .where(
+      and(
+        eq(payoutInstalments.caseId, caseRow.id),
+        eq(payoutInstalments.scheduleVersion, caseRow.scheduleVersion),
+        ne(payoutInstalments.status, 'SUPERSEDED'),
+      ),
+    )
+    .for('update');
+
+  const ordered = [...live].sort((a, b) => a.seq - b.seq);
+  const editable: EditableInstalment[] = ordered.map((i) => ({
+    id: i.id,
+    seq: i.seq,
+    dueOn: i.dueOn,
+    amountPaise: i.amountPaise,
+    paidPaise: i.paidCashPaise + i.paidOnlinePaise,
+    isFinal: i.isFinal,
+  }));
+
+  const res = rebalanceAfter(editable, instalmentId, newAmountPaise, caseRow.roundingPaise);
+  if (!res.ok) throw new Error(res.message);
+
+  const cap = caseRow.cashPolicy === 'CASH_CAP' ? (caseRow.cashCapPerDayPaise ?? 0n) : null;
+  let changed = 0;
+  for (let k = 0; k < res.instalments.length; k++) {
+    const now = res.instalments[k];
+    const was = ordered[k];
+    if (now.amountPaise === was.amountPaise) continue;
+    // Legs are re-split from the case's own cash policy, never carried over from the old row —
+    // INV-3 (cash + online === amount) is a database CHECK and must hold on every write.
+    const cash =
+      caseRow.cashPolicy === 'ONLINE_ONLY'
+        ? 0n
+        : cap !== null && now.amountPaise > cap
+          ? cap
+          : now.amountPaise;
+    await tx
+      .update(payoutInstalments)
+      .set({
+        amountPaise: now.amountPaise,
+        cashLegPaise: cash,
+        onlineLegPaise: now.amountPaise - cash,
+        updatedAt: new Date(),
+      })
+      .where(eq(payoutInstalments.id, now.id));
+    changed++;
+  }
+  return { changed };
 }
 
 /**

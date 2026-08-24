@@ -1,17 +1,18 @@
 'use server';
 
-import { and, eq, ne } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { db } from '@/db';
-import { customers, maturityCases, payoutInstalments } from '@/db/schema';
+import { customers, maturityCases } from '@/db/schema';
 import { requestMeta, requireActor } from '@/lib/auth/session';
 import { newId } from '@/lib/id';
 import { parseRupeesToPaise } from '@/lib/money';
 import { MIN_WINDOW_DAYS } from '@/lib/payout-policy';
 import { assertCan } from '@/lib/rbac';
 import { writeAudit } from '@/lib/audit';
+import { persistInstalmentEdit } from '@/services/schedule-service';
 import {
   approveCase,
   cancelCase,
@@ -51,7 +52,7 @@ export async function saveRegisterRowAction(
         patch.windowDays < MIN_WINDOW_DAYS ||
         patch.windowDays > 60
       ) {
-        return fail('Days must be between 1 and 60', 'VALIDATION');
+        return fail(`Days must be between ${MIN_WINDOW_DAYS} and 60`, 'VALIDATION');
       }
       set.windowDays = patch.windowDays;
     }
@@ -461,86 +462,62 @@ export async function replanWithWindowAction(
   }
 }
 
-/** Move rupees between unpaid days. The remaining total cannot change. */
-export async function adjustUnpaidInstalmentsAction(
+/**
+ * Set one day's amount; the server spreads the difference over the later unpaid days.
+ *
+ * The client sends parameters — which day, what it should be — and the server derives the rest
+ * from rows it re-read under lock. It never accepts a set of amounts computed in a browser: that
+ * was the previous shape of this action, and it put the client's arithmetic into the database.
+ */
+export async function setInstalmentAmountAction(
   caseId: string,
-  changes: { id: string; amountRupees: string }[],
-): Promise<ActionResult> {
+  instalmentId: string,
+  amountRupees: string,
+): Promise<ActionResult<{ changed: number }>> {
   try {
     const { session, actor } = await requireActor();
     const c = await loadCaseScope(caseId);
     if (!c) return fail('Case not found', 'NOT_FOUND');
     assertCan(actor, 'schedule.override', c);
 
-    const parsed: { id: string; amount: bigint }[] = [];
-    for (const ch of changes) {
-      try {
-        parsed.push({ id: ch.id, amount: parseRupeesToPaise(ch.amountRupees) });
-      } catch {
-        return fail('Every adjusted amount must be a valid rupee figure', 'VALIDATION');
-      }
+    let newAmountPaise: bigint;
+    try {
+      newAmountPaise = parseRupeesToPaise(amountRupees);
+    } catch {
+      return fail('Enter a valid rupee amount', 'VALIDATION');
     }
 
-    await db.transaction(async (tx) => {
-      const [row] = await tx.select().from(maturityCases).where(eq(maturityCases.id, caseId)).for('update').limit(1);
-      if (!row) throw new Error('Case not found');
-      const insts = await tx
+    const out = await db.transaction(async (tx) => {
+      // The CASE row first, then the instalments inside persistInstalmentEdit with
+      // .for('update'). Lock order is always case -> instalment.
+      const [row] = await tx
         .select()
-        .from(payoutInstalments)
-        .where(and(eq(payoutInstalments.caseId, caseId), ne(payoutInstalments.status, 'SUPERSEDED')));
+        .from(maturityCases)
+        .where(eq(maturityCases.id, caseId))
+        .for('update')
+        .limit(1);
+      if (!row) throw new Error('Case not found');
 
-      const byId = new Map(insts.map((i) => [i.id, i]));
-      let unpaidWas = 0n;
-      let unpaidNow = 0n;
-      for (const i of insts) {
-        const outstanding = i.amountPaise - i.paidCashPaise - i.paidOnlinePaise;
-        if (outstanding <= 0n) continue;
-        unpaidWas += outstanding;
-        const next = parsed.find((p) => p.id === i.id);
-        const newAmt = next ? next.amount : i.amountPaise;
-        if (newAmt < i.paidCashPaise + i.paidOnlinePaise) {
-          throw new Error('Cannot set a day below what has already been paid.');
-        }
-        unpaidNow += newAmt - i.paidCashPaise - i.paidOnlinePaise;
-      }
-      if (unpaidNow !== unpaidWas) {
-        throw new Error(
-          `Unpaid days must still add up to the remaining amount. Difference: ${(unpaidNow - unpaidWas).toString()} paise.`,
-        );
-      }
-
-      for (const ch of parsed) {
-        const i = byId.get(ch.id);
-        if (!i) continue;
-        if (i.status === 'PAID') continue;
-        const paid = i.paidCashPaise + i.paidOnlinePaise;
-        const cash = i.cashLegPaise;
-        const online = ch.amount > cash ? ch.amount - cash : 0n;
-        const cashLeg = ch.amount - online;
-        await tx
-          .update(payoutInstalments)
-          .set({
-            amountPaise: ch.amount,
-            cashLegPaise: cashLeg,
-            onlineLegPaise: online,
-            updatedAt: new Date(),
-          })
-          .where(eq(payoutInstalments.id, ch.id));
-        void paid;
-      }
+      const res = await persistInstalmentEdit({
+        tx,
+        caseRow: row,
+        instalmentId,
+        newAmountPaise,
+      });
 
       await writeAudit(tx, session, {
         action: 'schedule.adjusted',
         entity: 'MaturityCase',
         entityId: caseId,
         branchId: row.branchId,
-        summary: `${row.caseNumber}: unpaid daily amounts adjusted`,
+        summary: `${row.caseNumber}: one day set to ${amountRupees}, ${res.changed} day(s) re-balanced`,
         ...(await requestMeta()),
       });
+      return res;
     });
 
     revalidateCase(caseId);
-    return ok();
+    return ok({ changed: out.changed });
   } catch (e) {
     return toActionError(e);
   }

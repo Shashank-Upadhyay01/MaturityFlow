@@ -324,12 +324,15 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           {canOverride && isLive && remaining > 0n && (
             <ScheduleAdjust
               caseId={c.id}
+              roundingPaise={c.roundingPaise.toString()}
               rows={liveInstalments.map((i) => ({
                 id: i.id,
                 seq: i.seq,
+                dueOn: i.dueOn,
                 amountPaise: i.amountPaise.toString(),
                 paidPaise: (i.paidCashPaise + i.paidOnlinePaise).toString(),
                 status: i.status,
+                isFinal: i.isFinal,
               }))}
             />
           )}
