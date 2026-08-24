@@ -25,7 +25,9 @@ This is what allows the browser preview and the server-persisted schedule to be 
 | `calendar` | `WorkingDayCalendar` | Weekend policy + holiday set. |
 | `distribution` | `FRONT_LOADED \| BACK_LOADED \| EVEN` | Where the "heavier" days sit. Default `FRONT_LOADED`. |
 | `cashPolicy` | `CashPolicy` | `CASH_ONLY` / `ONLINE_ONLY` / `CASH_CAP` with `cashCapPerDayPaise`. |
-| `firstDayIsStartDate` | `boolean` | Pay from the approval day itself (default) or from the next working day. |
+| `startOnNextWorkingDay` | `boolean` | `true` => first payout is the working day AFTER the anchor. Default `false` (pay from the approval day). |
+| `stride` | `number` | Working days between payouts. `1` (default) daily, `2` alternate. |
+| `startOffsetWorkingDays` | `number` | Working days after the anchor with no payout — the processing days. Default `0`. |
 
 ### Output
 
@@ -117,6 +119,39 @@ if (sum !== totalPaise) throw new ScheduleIntegrityError(...);
 
 This is not a test — it is a runtime assertion that ships to production. If the arithmetic is ever
 wrong, the schedule refuses to exist rather than paying out a wrong number. **INV-2.**
+
+## 2a. Cadence and the processing window
+
+`src/lib/payout-policy.ts` decides the *shape* of a schedule; the engine only executes it. The
+engine never learns that the ₹1 lakh rule exists — that separation is why a change to the rule
+cannot reach the code that splits money.
+
+Let `W0` be the approval date rolled forward to a working day. Working days are counted
+`W0, W1, W2, …`, skipping non-working days.
+
+```
+W0  W1  W2 │ W3 ........................ W14
+└ processing┘ └──── 12 withdrawal days ────┘   deadline = W14
+```
+
+- The window is **15 working days inclusive of the approval day**: 3 processing + 12 payout.
+- **`>= ₹1,00,000`** — `DAILY`, stride 1: payouts on `W3…W14`, 12 instalments.
+- **`< ₹1,00,000`** — `ALTERNATE`, stride 2: payouts on `W3, W5, W7, W9, W11, W13`, 6 instalments,
+  finishing one working day inside the same deadline.
+
+The threshold is inclusive: exactly ₹1,00,000 is a large case. `windowDays` is the **total**
+window, not the payout count — `payoutDays = windowDays - 3`, so a 20-day window gives 17 daily
+payouts or 9 alternate ones. The shortest usable window is `MIN_WINDOW_DAYS` (4); anything less
+leaves no day to pay on and `payoutPlanFor` throws rather than inventing a one-day schedule.
+
+Cadence is persisted on `maturity_cases.cadence` at approval and never re-derived, because the
+maturity amount is editable and a later correction must not move a live case onto a different
+rhythm.
+
+**"Recommended per day" is `remaining / payoutDays`, never `remaining / windowDays`.** Dividing by
+the window counts the processing days, which pay nothing, and ignores the alternate-day cadence —
+it under-fills every day and leaves the case short at its own deadline. `recommendedPerDay()` in
+`register-view.ts` is the single definition.
 
 ### Step 7 — Assign working-day dates
 
