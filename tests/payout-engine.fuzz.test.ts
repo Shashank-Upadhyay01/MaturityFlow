@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { generateSchedule, type Distribution } from '../src/lib/payout-engine';
-import { addDays, isWorkingDay, makeCalendar } from '../src/lib/working-days';
+import {
+  addDays,
+  collectWorkingDays,
+  countWorkingDaysBetween,
+  isWorkingDay,
+  makeCalendar,
+} from '../src/lib/working-days';
 
 /**
  * Property-based sweep over the schedule engine.
@@ -47,6 +53,9 @@ describe(`payout engine — ${ITERATIONS.toLocaleString('en-IN')} randomised cas
       const kind = CASH_KINDS[Math.floor(rand() * CASH_KINDS.length)];
       const startDate = addDays('2026-01-01', Math.floor(rand() * 700));
       const cashCapPerDayPaise = BigInt(Math.floor(rand() * 5_000_000)) * 100n;
+      // Cadence: daily or alternate, with and without the processing offset.
+      const stride = rand() < 0.5 ? 1 : 2;
+      const startOffsetWorkingDays = rand() < 0.5 ? 0 : 3;
 
       const res = generateSchedule({
         totalPaise,
@@ -57,11 +66,14 @@ describe(`payout engine — ${ITERATIONS.toLocaleString('en-IN')} randomised cas
         distribution,
         cashPolicy:
           kind === 'CASH_CAP' ? { kind, cashCapPerDayPaise } : { kind },
+        stride,
+        startOffsetWorkingDays,
       });
 
       const ctx = () =>
         `seed-case #${iter}: total=${totalPaise} days=${days} step=${roundingPaise} ` +
-        `mode=${distribution} cash=${kind} start=${startDate}`;
+        `mode=${distribution} cash=${kind} start=${startDate} stride=${stride} ` +
+        `offset=${startOffsetWorkingDays}`;
 
       // INV-2 — the sum is exact
       let sum = 0n;
@@ -95,12 +107,38 @@ describe(`payout engine — ${ITERATIONS.toLocaleString('en-IN')} randomised cas
         if (i > 0 && inst.dueDate <= res.installments[i - 1].dueDate) {
           throw new Error(`Dates not strictly increasing at #${i + 1}. ${ctx()}`);
         }
+        // cadence — consecutive payouts sit exactly `stride` working days apart.
+        // countWorkingDaysBetween is inclusive of both ends, so the expected count is stride + 1.
+        if (i > 0) {
+          const gap = countWorkingDaysBetween(res.installments[i - 1].dueDate, inst.dueDate, cal);
+          if (gap !== stride + 1) {
+            throw new Error(
+              `Cadence broken at #${i + 1}: ${gap} working days apart, expected ${stride + 1}. ${ctx()}`,
+            );
+          }
+        }
         // sequence numbering
         if (inst.seq !== i + 1) throw new Error(`Bad seq at #${i + 1}. ${ctx()}`);
         // rounding: every non-final instalment is a whole multiple of the step
         if (!inst.isFinal && inst.amountPaise % roundingPaise !== 0n) {
           throw new Error(`Instalment #${i + 1} is not a whole step. ${ctx()}`);
         }
+      }
+
+      // The processing days really are clear of payouts: the first payout sits exactly
+      // `startOffsetWorkingDays` working days past the anchor, so the inclusive count between
+      // them is the offset + 1. Anything less means a payout landed inside processing.
+      //
+      // This sweep leaves `startOnNextWorkingDay` at its default of false, so the anchor is the
+      // first working day on or after `startDate` — which is what collectWorkingDays(…, 1) gives.
+      // If that flag is ever randomised here, this anchor must be computed to match.
+      const anchor = collectWorkingDays(startDate, 1, cal)[0];
+      const lead = countWorkingDaysBetween(anchor, res.installments[0].dueDate, cal);
+      if (lead !== startOffsetWorkingDays + 1) {
+        throw new Error(
+          `Processing offset broken: first payout ${lead} working days in, expected ` +
+            `${startOffsetWorkingDays + 1}. ${ctx()}`,
+        );
       }
 
       if (sum !== totalPaise) throw new Error(`INV-2 broken: ${sum} !== ${totalPaise}. ${ctx()}`);
