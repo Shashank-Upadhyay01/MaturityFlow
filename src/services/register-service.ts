@@ -308,6 +308,8 @@ export async function setTodayAmount(
     const total = bulkTodayAmount(mode, {
       remaining,
       windowDays: row.windowDays,
+      // The cadence — and so how many days can carry a payout — depends on the maturity amount.
+      maturityPaise: row.maturityAmountPaise,
       amount: amountPaise,
     });
     const split = recommendSplit(total, remaining, row.cashCapPerDayPaise ?? cap);

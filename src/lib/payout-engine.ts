@@ -414,6 +414,8 @@ export interface RescheduleInput {
   distribution?: Distribution;
   cashPolicy?: CashPolicy;
   branchDailyCashComfortPaise?: Paise;
+  /** Keeps a sub-threshold case on alternate days when its remainder is re-planned. */
+  cadence?: 'DAILY' | 'ALTERNATE';
 }
 
 export interface RescheduleResult extends ScheduleResult {
@@ -437,6 +439,7 @@ export function rescheduleRemaining(input: RescheduleInput): RescheduleResult {
     distribution = 'FRONT_LOADED',
     cashPolicy = DEFAULT_CASH_POLICY,
     branchDailyCashComfortPaise,
+    cadence = 'DAILY',
   } = input;
 
   if (remainingPaise <= 0n) {
@@ -456,15 +459,22 @@ export function rescheduleRemaining(input: RescheduleInput): RescheduleResult {
   const slaBreachUnavoidable = availableDays < 1;
   const days = Math.max(1, availableDays);
 
+  // An alternate-day case must stay on alternate days when it is re-planned, or a small maturity
+  // would quietly become a daily one the first time anything slipped. `availableDays` counts the
+  // working days left; at stride 2 only every other one can carry a payout.
+  const stride = cadence === 'ALTERNATE' ? 2 : 1;
+  const payoutSlots = cadence === 'ALTERNATE' ? Math.ceil(days / 2) : days;
+
   const result = generateSchedule({
     totalPaise: remainingPaise,
-    days,
+    days: payoutSlots,
     roundingPaise,
     startDate: start,
     calendar,
     distribution,
     cashPolicy,
-    policyMaxDays: days,
+    stride,
+    policyMaxDays: payoutSlots,
     branchDailyCashComfortPaise,
   });
 

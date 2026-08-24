@@ -447,7 +447,6 @@ export function NewMaturityForm({
             cashPolicy,
             startOnNextWorkingDay: startNext,
             calendar,
-            policyMaxDays: branch?.defaultWindowDays ?? 15,
           }}
         />
         <p className="mt-3 flex items-start gap-2 px-1 text-[0.75rem] leading-relaxed text-[var(--faint-fg)]">

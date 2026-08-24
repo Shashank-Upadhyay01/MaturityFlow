@@ -26,6 +26,7 @@ import {
 import type { SessionUser } from '@/lib/auth/session';
 import { newId } from '@/lib/id';
 import { rupees } from '@/lib/money';
+import { payoutPlanFor } from '@/lib/payout-policy';
 import { permissionsOf } from '@/lib/rbac';
 import { approveCase, createCase } from '@/services/case-service';
 import { recordPayout } from '@/services/payout-service';
@@ -200,7 +201,9 @@ describe('two cashiers, one instalment', () => {
   });
 
   it('the ledger always reconciles with the transaction log', async () => {
-    const caseId = await makeApprovedCase('30000', 3);
+    // 8 is the TOTAL working-day window: 3 processing days leave 5, and ₹30,000 is below the
+    // ₹1 lakh line so it pays on alternate days — a short schedule, which is what this test wants.
+    const caseId = await makeApprovedCase('30000', 8);
     const insts = await db
       .select()
       .from(payoutInstalments)
@@ -262,7 +265,9 @@ describe('two approvers, one case', () => {
       .from(payoutInstalments)
       .where(and(eq(payoutInstalments.caseId, caseId), eq(payoutInstalments.scheduleVersion, 1)));
 
-    expect(rows[0].n).toBe(12);
+    // Derived, not hard-coded: `windowDays` is the total window, so the payout count is whatever
+    // the policy says it is. Writing 9 here would silently rot the next time the window changes.
+    expect(rows[0].n).toBe(payoutPlanFor(rupees('200000'), 12).payoutDays);
     // INV-2 survives the race.
     expect(BigInt(rows[0].total)).toBe(c.maturityAmountPaise);
   });

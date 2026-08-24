@@ -23,6 +23,12 @@ export const LARGE_CASE_THRESHOLD_PAISE = 10_000_000n;
  */
 export const PROCESSING_WORKING_DAYS = 3;
 
+/**
+ * The shortest window that can actually pay anything: the processing days plus one payout day.
+ * Validate against this at input, so a case cannot be created that can never be approved.
+ */
+export const MIN_WINDOW_DAYS = PROCESSING_WORKING_DAYS + 1;
+
 export type Cadence = 'DAILY' | 'ALTERNATE';
 
 export class PayoutPolicyError extends Error {

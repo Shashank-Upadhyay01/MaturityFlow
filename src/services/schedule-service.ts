@@ -11,6 +11,12 @@ import {
   generateSchedule,
   rescheduleRemaining,
 } from '@/lib/payout-engine';
+import {
+  MIN_WINDOW_DAYS,
+  PROCESSING_WORKING_DAYS,
+  payoutPlanFor,
+  type Cadence,
+} from '@/lib/payout-policy';
 import type { WorkingDayCalendar } from '@/lib/working-days';
 import { todayISO } from '@/lib/working-days';
 
@@ -50,16 +56,23 @@ export async function persistSchedule({
   const anchor = anchorDate ?? caseRow.approvedOn;
   if (!anchor) throw new Error('Cannot generate a schedule before the case is approved');
 
+  // `windowDays` is the TOTAL working-day window, not the payout count. The policy decides how
+  // many of those days carry a payout and how far apart they sit: ₹1 lakh and over pays every
+  // working day, below that every other one, both finishing inside the same window.
+  const plan = payoutPlanFor(caseRow.maturityAmountPaise, caseRow.windowDays);
+
   const result = generateSchedule({
     totalPaise: caseRow.maturityAmountPaise,
-    days: caseRow.windowDays,
+    days: plan.payoutDays,
     roundingPaise: caseRow.roundingPaise,
     startDate: anchor,
     calendar,
     distribution: caseRow.distribution,
     cashPolicy: cashPolicyOf(caseRow),
     startOnNextWorkingDay: caseRow.startOnNextWorkingDay,
-    policyMaxDays: caseRow.windowDays,
+    stride: plan.stride,
+    startOffsetWorkingDays: plan.processingDays,
+    policyMaxDays: plan.payoutDays,
     branchDailyCashComfortPaise,
   });
 
@@ -86,6 +99,9 @@ export async function persistSchedule({
       scheduleVersion: version,
       scheduleGeneratedAt: new Date(),
       firstPayoutOn: result.firstPayoutDate,
+      cadence: plan.cadence,
+      // The deadline is the end of the WHOLE window, not of the payout run — an alternate-day
+      // case finishes a working day early and is still held to the same promise.
       deadlineOn: deriveDeadline(anchor, caseRow.windowDays, calendar, caseRow.startOnNextWorkingDay),
       updatedAt: new Date(),
     })
@@ -170,6 +186,9 @@ export async function persistReschedule({
     distribution: caseRow.distribution,
     cashPolicy: cashPolicyOf(caseRow),
     branchDailyCashComfortPaise,
+    // Carried from the case, not re-derived: a sub-₹1-lakh maturity must not become a daily
+    // one the first time its remainder is re-planned.
+    cadence: caseRow.cadence as Cadence,
   });
 
   const version = caseRow.scheduleVersion + 1;
@@ -235,8 +254,11 @@ export async function persistReplanWindow({
   fromDate: string;
   branchDailyCashComfortPaise?: bigint;
 }): Promise<{ result: ReturnType<typeof rescheduleRemaining>; carriedOverPaise: bigint } | null> {
-  if (!Number.isInteger(windowDays) || windowDays < 1 || windowDays > 366) {
-    throw new Error('Window must be between 1 and 366 working days.');
+  if (!Number.isInteger(windowDays) || windowDays < MIN_WINDOW_DAYS || windowDays > 366) {
+    throw new Error(
+      `Window must be between ${MIN_WINDOW_DAYS} and 366 working days — the first ` +
+        `${PROCESSING_WORKING_DAYS} are processing days and carry no payout.`,
+    );
   }
   const deadline = deriveDeadline(fromDate, windowDays, calendar, false);
   await tx

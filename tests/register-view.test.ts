@@ -274,12 +274,28 @@ describe('rowInDateRange', () => {
 describe('bulkTodayAmount', () => {
   const rem = (remaining: bigint, windowDays = 15) => ({ remaining, windowDays });
 
-  it('divides the remainder over the window, rounding down', () => {
-    expect(bulkTodayAmount('perDay', rem(10_000_00n, 15))).toBe(6666n * 10n + 6n); // 66,666 paise
-    expect(bulkTodayAmount('perDay', rem(100n, 3))).toBe(33n);
+  it('divides the remainder over the days that can carry a payout, not the whole window', () => {
+    // ₹10,000 is below the ₹1 lakh line, so it pays on alternate days: a 15-working-day window
+    // is 3 processing days + 12 payout days, of which 6 are used. NOT remaining / 15 — that
+    // would under-fill every day and leave the case short at its own deadline.
+    expect(bulkTodayAmount('perDay', rem(10_000_00n, 15))).toBe(1_000_000n / 6n);
+
+    // ₹2,00,000 is at or above the line, so it pays daily: 12 payout days in the same window.
+    expect(
+      bulkTodayAmount('perDay', { remaining: 200_000_00n, windowDays: 15, maturityPaise: 200_000_00n }),
+    ).toBe(20_000_000n / 12n);
   });
 
-  it('treats a zero or nonsense window as one day rather than dividing by zero', () => {
+  it('a part-paid large case still spreads over its 12 payout days', () => {
+    // Remaining is small but the maturity is large, so the cadence stays daily.
+    expect(
+      bulkTodayAmount('perDay', { remaining: 12_000n, windowDays: 15, maturityPaise: 200_000_00n }),
+    ).toBe(1_000n);
+  });
+
+  it('treats a zero or nonsense window as the shortest payable one', () => {
+    // Clamped to the minimum window (4 working days => 1 payout day), so the whole remainder
+    // is offered rather than dividing by zero.
     expect(bulkTodayAmount('perDay', rem(50_000n, 0))).toBe(50_000n);
     expect(bulkTodayAmount('perDay', rem(50_000n, -4))).toBe(50_000n);
   });

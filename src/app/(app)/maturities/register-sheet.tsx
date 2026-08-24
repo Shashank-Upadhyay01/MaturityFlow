@@ -3,6 +3,7 @@
 import {
   ArrowDown,
   ArrowUp,
+  ArrowUpDown,
   CalendarDays,
   CheckCheck,
   ChevronDown,
@@ -26,7 +27,7 @@ import { toast } from 'sonner';
 import { saveRegisterLayoutAction } from '@/actions/admin';
 import { importRegisterAction } from '@/actions/import';
 import {
-  addRegisterRowsAction,
+  createRegisterRowWithFieldsAction,
   bulkAssignAgentAction,
   bulkSetApprovedAction,
   bulkSetFormSubmittedAction,
@@ -52,6 +53,7 @@ import {
   DATE_FIELD_LABEL,
   DATE_PRESETS,
   DATE_PRESET_LABEL,
+  DATE_PRESET_SHORT,
   EMPTY_RANGE,
   SORT_LABEL,
   TAB_LABEL,
@@ -60,6 +62,7 @@ import {
   groupIndian,
   isDueToday,
   isRangeActive,
+  recommendedPerDay,
   resolveDatePreset,
   rowInDateRange,
   summariseDueToday,
@@ -71,7 +74,10 @@ import {
   type SortKey,
 } from '@/lib/register-view';
 import {
+  columnsThatFit,
   visibleRegisterCols,
+  REGISTER_GUTTER_REM,
+  type RegisterColDef,
   type RegisterColId,
   type RegisterLayout,
   REGISTER_COL_DEFS,
@@ -270,8 +276,233 @@ type BulkMenu = 'today' | 'agent' | 'remove' | null;
 /** Mirrors MAX_BLANK_ROWS_PER_CALL in register-service. The server enforces the real limit. */
 const MAX_ADD_ROWS = 100;
 
+/**
+ * How many rows the sheet shows when nobody has asked for more.
+ *
+ * Counting the rows that already exist: with 80 real rows a clerk gets 20 empty ones to type
+ * into, not 100 on top. They cost nothing — an empty row lives in the browser until somebody
+ * types in it, and only then becomes a case.
+ */
+const DEFAULT_SHEET_LENGTH = 100;
+
+/**
+ * One of the sheet's empty rows.
+ *
+ * It holds its own drafts and writes nothing until the clerk leaves the row — tabbing between
+ * cells inside it must not create a case after the first field, or the row would be replaced by
+ * a real one mid-sentence and the focus would jump out from under them. Leaving the row with
+ * anything typed creates the case and applies every field at once.
+ *
+ * `onCommitted` refreshes the sheet; the new row then arrives as a normal row from the server.
+ */
+function BlankRow({
+  cols,
+  extrasCol,
+  disabled,
+  onCommit,
+}: {
+  cols: RegisterColDef[];
+  extrasCol: boolean;
+  disabled: boolean;
+  onCommit: (patch: Record<string, string>) => Promise<void>;
+}) {
+  const [vals, setVals] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+
+  const commit = async () => {
+    const patch: Record<string, string> = {};
+    for (const [id, v] of Object.entries(vals)) {
+      const field = COL_PATCH_FIELD[id as RegisterColId];
+      if (field && v.trim()) patch[field] = v.trim();
+    }
+    if (!Object.keys(patch).length) return;
+    setSaving(true);
+    await onCommit(patch);
+    setVals({});
+    setSaving(false);
+  };
+
+  return (
+    <tr
+      className="border-b border-[var(--hairline)] hover:bg-[var(--glass-bg-subtle)]"
+      onBlur={(e) => {
+        // Only when focus actually leaves this row — not when it moves to the next cell in it.
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        void commit();
+      }}
+    >
+      <td className={cn(td, 'print:hidden')} />
+      <td className={cn(td, 'print:hidden')} />
+      <td className={cn(td, 'print:hidden')} />
+      {cols.map((c) => {
+        const typed = COL_PATCH_FIELD[c.id] != null;
+        return (
+          <td key={c.id} className={cn(td, c.right && num)}>
+            {typed && !disabled ? (
+              <CellInput
+                value={vals[c.id] ?? ''}
+                onChange={(v) => setVals((p) => ({ ...p, [c.id]: v }))}
+                // The row commits on the way out; a per-cell commit would create the case
+                // after the first field and yank the row out from under the caret.
+                onCommit={() => {}}
+                disabled={saving}
+                className={c.right ? num : undefined}
+                title={`${c.label} — new row`}
+              />
+            ) : null}
+          </td>
+        );
+      })}
+      {extrasCol && <td className={cn(td, 'print:hidden')} />}
+    </tr>
+  );
+}
+
+/** Which patch field a typed column writes into. Columns absent here are derived, not typed. */
+const COL_PATCH_FIELD: Partial<Record<RegisterColId, string>> = {
+  account: 'accountNumber',
+  customer: 'customerName',
+  agent: 'agentName',
+  maturityDate: 'instrumentMaturityOn',
+  formDate: 'formSubmittedOn',
+  paymentDate: 'paymentOn',
+  amount: 'maturityRupees',
+  paid: 'paidRupees',
+  days: 'windowDays',
+  today: 'todayRupees',
+  cash: 'todayCashRupees',
+  online: 'todayOnlineRupees',
+};
+
 /** Mirrors MAX_BULK_ROWS in register-bulk. The server enforces the real limit. */
 const MAX_BULK = 500;
+
+/** A thin vertical rule between groups of controls or figures. */
+function Div({ className }: { className?: string }) {
+  return <span className={cn('h-6 w-px shrink-0 bg-[var(--hairline)]', className)} aria-hidden />;
+}
+
+/**
+ * One figure on the desk rail.
+ *
+ * `tone` is the whole highlighting vocabulary: money that has gone out is green, a shortfall is
+ * amber, everything else is plain. A shortfall of zero is deliberately passed as 'plain' by the
+ * caller — an amber ₹0 every morning teaches the clerk to stop seeing amber.
+ */
+/**
+ * One column of the desk: a heading and a short list of figures under it.
+ *
+ * The desk used to be a flex row of loose stats with `justify-end` groups, which balanced the
+ * ends and left a hole in the middle — ~430px of nothing on the cash line at 1366. Columns of a
+ * shared grid have no middle to leave empty: each one takes a defined share of the width, and
+ * the label/value rows inside justify to both of its edges.
+ */
+function DeskZone({
+  title,
+  extra,
+  children,
+  className,
+  tinted,
+}: {
+  title: string;
+  extra?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+  tinted?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        'min-w-0 rounded-[10px] px-2.5 py-1.5',
+        tinted && 'bg-[var(--color-brand-50)]',
+        className,
+      )}
+    >
+      <div className="mb-1 flex h-4 items-center justify-between gap-2">
+        <span
+          className={cn(
+            'truncate text-[0.6rem] font-semibold uppercase tracking-[0.07em]',
+            tinted ? 'text-[var(--color-brand-700)]' : 'text-[var(--faint-fg)]',
+          )}
+        >
+          {title}
+        </span>
+        {extra}
+      </div>
+      {/*
+        Capped so a wide monitor does not strand a label at one end of the column and its figure
+        at the other — past about this width the pair stops reading as one line.
+      */}
+      <div className="max-w-[17rem] space-y-[3px]">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * A label on the left, its figure on the right, justified to the column's full width so the
+ * numbers form a straight edge you can read down.
+ */
+function DeskRow({
+  label,
+  value,
+  tone = 'plain',
+  title,
+}: {
+  label: React.ReactNode;
+  value: React.ReactNode;
+  tone?: 'plain' | 'money' | 'warn';
+  title?: string;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-2" title={title}>
+      <span className="truncate text-[0.7rem] leading-tight text-[var(--muted-fg)]">{label}</span>
+      <span
+        className={cn(
+          'shrink-0 text-[0.8125rem] font-semibold leading-tight tabular-nums',
+          tone === 'money' && 'text-[var(--color-money-500)]',
+          tone === 'warn' && 'text-[var(--color-warn-600)]',
+          tone === 'plain' && 'text-[var(--page-fg)]',
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+/** A `DeskRow` whose figure the clerk types. Same shape, so the column edge stays straight. */
+function DeskInputRow({
+  label,
+  value,
+  onChange,
+  onCommit,
+  disabled,
+  title,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onCommit: () => void;
+  disabled?: boolean;
+  title?: string;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-2" title={title}>
+      <span className="truncate text-[0.7rem] leading-tight text-[var(--muted-fg)]">{label}</span>
+      <span className="flex w-[6.25rem] shrink-0 items-center gap-1 rounded-[7px] border border-[var(--input-border)] bg-[var(--input-bg)] px-1.5 focus-within:border-[color-mix(in_oklab,var(--ring)_55%,transparent)]">
+        <span className="text-[0.7rem] leading-none text-[var(--faint-fg)]">₹</span>
+        <input
+          value={value}
+          disabled={disabled}
+          inputMode="numeric"
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={onCommit}
+          className="h-5 w-full min-w-0 bg-transparent text-right text-[0.8125rem] font-semibold leading-none tabular-nums outline-none disabled:cursor-not-allowed disabled:opacity-55"
+        />
+      </span>
+    </label>
+  );
+}
 
 /**
  * Report a bulk outcome once, in one toast.
@@ -367,6 +598,59 @@ export function RegisterSheet(props: {
   const [draftLayout, setDraftLayout] = useState<RegisterLayout>(props.columnLayout);
   const visCols = visibleRegisterCols(props.columnLayout);
 
+  /**
+   * How long the sheet should be, counting the rows that already exist.
+   *
+   * A register with 80 real rows shows 20 empty ones after them; "Add rows" raises this number
+   * and the empty block grows immediately, because an empty row costs nothing until it is typed
+   * in. Rows already in the database never come out of the count — 100 means a hundred-row sheet,
+   * not a hundred blanks on top of what is there.
+   */
+  const [sheetLength, setSheetLength] = useState(DEFAULT_SHEET_LENGTH);
+
+  /** Rows whose off-screen columns are expanded. */
+  const [openExtras, setOpenExtras] = useState<Record<string, boolean>>({});
+
+  /**
+   * Width available to the table, measured rather than guessed.
+   *
+   * Starts at 0, which yields the required columns only. That is the correct first paint on a
+   * narrow screen; on a wide one the observer corrects it before the browser paints.
+   */
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [gridWidth, setGridWidth] = useState(0);
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => setGridWidth(entry.contentRect.width));
+    ro.observe(el);
+    setGridWidth(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+
+  /**
+   * The columns this screen can actually hold, and the ones that moved into the row expander.
+   *
+   * Deciding this here rather than in CSS is what removes the sideways scrollbar: a clerk who
+   * scrolls right to read the cash figure loses the customer's name off the left edge, which is
+   * exactly the moment a payout goes onto the wrong account.
+   */
+  /**
+   * Everything in the row that is not a data column: the select box and two ticks
+   * (REGISTER_GUTTER_REM), the Given column when this role records payouts, and the overflow
+   * expander. The expander is reserved unconditionally — whether it exists depends on the
+   * answer, so budgeting for it is the only way out of the circle, and the cost when nothing
+   * overflows is a little slack.
+   */
+  const reservedRem = REGISTER_GUTTER_REM + (props.canPay ? 4.5 : 0) + 2.5;
+  const fit = useMemo(
+    () => columnsThatFit(visCols, gridWidth, reservedRem),
+    [visCols, gridWidth, reservedRem],
+  );
+  const shownCols = fit.shown;
+  const hasExtras = fit.dropped.length > 0;
+
+
   const closed = props.dayStatus === 'CLOSED';
   const closeRequested = props.dayStatus === 'CLOSE_REQUESTED';
 
@@ -419,11 +703,12 @@ export function RegisterSheet(props: {
     };
     const cmpStr = (a: string, b: string) => a.localeCompare(b, 'en-IN', { numeric: true, sensitivity: 'base' });
     const cmpBig = (a: bigint, b: bigint) => (a < b ? -1 : a > b ? 1 : 0);
-    const perDay = (r: RegisterRow) => {
-      const rem = asBig(r.remainingPaise);
-      const days = Math.max(1, Number(d(r.id, 'windowDays', String(r.windowDays))) || 1);
-      return rem / BigInt(days);
-    };
+    const perDay = (r: RegisterRow) =>
+      recommendedPerDay(
+        asBig(r.remainingPaise),
+        asBig(r.maturityPaise),
+        Number(d(r.id, 'windowDays', String(r.windowDays))) || r.windowDays,
+      );
 
     return [...list].sort((a, b) => {
       let c = 0;
@@ -488,7 +773,10 @@ export function RegisterSheet(props: {
 
   const visible = useMemo(() => {
     let list: readonly RegisterRow[] = props.rows;
-    if (props.role === 'CASHIER') list = list.filter((r) => r.approved);
+    // No role-specific row filter here. A cashier used to be shown approved rows only, which
+    // emptied the whole sheet whenever nothing had been approved yet — the register is the
+    // branch's book and everyone reads all of it. Paying is still gated on `r.approved` at the
+    // row's own Pay control, so seeing an unapproved row does not make it payable.
     if (tab === 'pending') list = list.filter((r) => !r.approved);
     if (tab === 'today') list = list.filter((r) => BigInt(r.remainingPaise) > 0n);
     if (tab === 'due') list = list.filter(isDueToday);
@@ -504,7 +792,7 @@ export function RegisterSheet(props: {
       );
     }
     return sortRows(list);
-  }, [props.rows, props.role, tab, agentId, q, range, dateField, sortRows]);
+  }, [props.rows, tab, agentId, q, range, dateField, sortRows]);
 
   const totals = visible.reduce(
     (a, r) => {
@@ -542,6 +830,16 @@ export function RegisterSheet(props: {
   const need = extraMode === 'today' ? totals.today : dateFilterOn ? totals.remaining : allRemaining;
   const extraAfterCash = need > cashHandP ? need - cashHandP : 0n;
   const extraOpening = extraAfterCash > onlineP ? extraAfterCash - onlineP : 0n;
+
+  /*
+   * Cover: what the branch can actually pay out today against what it owes today.
+   * The four figures beside it are the workings; this is the answer, and it is the one
+   * thing the clerk used to have to compute in their head before opening the till.
+   * Ratio is taken in paise and only then narrowed to a Number, so no money touches float.
+   */
+  const coverHave = cashHandP + onlineP;
+  const covered = coverHave >= need;
+  const coverPct = need > 0n ? Math.min(100, Number((coverHave * 1000n) / need) / 10) : 100;
 
   const agentTotals = useMemo(() => {
     if (!agentId) return null;
@@ -727,9 +1025,8 @@ export function RegisterSheet(props: {
       case 'days':
         return r.windowDays;
       case 'perDay': {
-        const rem = BigInt(r.remainingPaise);
-        const n = Math.max(1, r.windowDays);
-        return rem > 0n ? inr(rem / BigInt(n)) : '0';
+        const per = recommendedPerDay(BigInt(r.remainingPaise), BigInt(r.maturityPaise), r.windowDays);
+        return per > 0n ? inr(per) : '0';
       }
       case 'today':
         return inr(BigInt(r.todayPaise));
@@ -840,434 +1137,620 @@ export function RegisterSheet(props: {
   const tableRows = printScope === 'selection' ? selectedRows : visible;
 
   const locked = closed;
+
+  /**
+   * Blank rows belong on an unfiltered sheet and nowhere else.
+   *
+   * "Due today" padded out to a hundred rows would be ninety-odd empty ones under a heading that
+   * says how much cash the branch must open with — the filter would stop meaning anything. So
+   * they appear on All, with no search, agent or date narrowing, and only for someone who could
+   * have created the row anyway.
+   */
+  const sheetUnfiltered = tab === 'all' && !q.trim() && !agentId && !isRangeActive(range);
+  const blankRowCount =
+    sheetUnfiltered && props.canEdit && props.canCreate && !locked
+      ? Math.max(0, sheetLength - props.rows.length)
+      : 0;
+
+  /** Both desk money fields write the same row, so they commit through one call. */
+  async function commitDayCash() {
+    const r = await saveDayCashAction(props.branchId, props.today, cashHand, onlinePlan);
+    if (!r.ok) toast.error(r.error);
+    else router.refresh();
+  }
+
   const liveCount = props.rows.filter((r) => BigInt(r.remainingPaise) > 0n).length;
 
   return (
     <div className="space-y-3 print:space-y-2">
+      {/*
+        One command bar, where there used to be three bands under a mostly-empty app bar.
+        Identity moved up into the top bar (topbar.tsx prints the page name now), so what is
+        left here is only what acts on the sheet: which rows, which days, which order, and the
+        two buttons that put rows in it. Groups are told apart by hairline rules rather than by
+        giving each one its own line of glass.
+      */}
       <Glass className="print:hidden">
-        {/* Row 1 — identity, view, and the actions that change data. */}
-        <div className="flex flex-wrap items-center gap-2 px-3 py-2.5">
-          <div className="mr-auto min-w-0 max-w-[15rem] pr-1">
-            <h1 className="truncate text-[1.125rem] font-semibold leading-tight tracking-[-0.02em]">
-              Register
-            </h1>
-            <p className="truncate text-[0.75rem] text-[var(--muted-fg)]">
-              {props.branchLabel}
-              <span className="text-[var(--faint-fg)]">
-                {' '}
-                · {liveCount} live / {props.rows.length}
-              </span>
-            </p>
-          </div>
-
-          <div className="flex rounded-[10px] border border-[var(--input-border)] p-0.5">
-            {(['due', 'today', 'pending', 'all'] as Tab[]).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => applyFilter({ tab: t })}
-                className={cn(
-                  'inline-flex h-8 items-center gap-1.5 rounded-[8px] px-2.5 text-[0.8125rem] whitespace-nowrap',
-                  tab === t
-                    ? 'bg-[var(--glass-bg-strong)] font-medium text-[var(--page-fg)]'
-                    : 'text-[var(--muted-fg)] hover:text-[var(--page-fg)]',
-                  t === 'due' && tab !== t && dueStats.count > 0 && 'text-[var(--color-brand-600)]',
-                )}
-              >
-                {TAB_LABEL[t]}
-                {t === 'due' && dueStats.count > 0 && (
-                  <span
+        {/* The visible page name lives in the app top bar; this keeps the document heading. */}
+        <h1 className="sr-only">Register — {props.branchLabel}</h1>
+        <div className="flex flex-col gap-1.5 px-3 py-2">
+          {/* Which rows the sheet is showing — and the two buttons that put rows in it. */}
+          <div className="flex items-start gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-2">
+              <div className="flex rounded-[10px] border border-[var(--input-border)] p-0.5">
+                {(['due', 'today', 'pending', 'all'] as Tab[]).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => applyFilter({ tab: t })}
                     className={cn(
-                      'rounded-full px-1.5 py-px text-[0.65rem] font-semibold tabular-nums',
+                      'inline-flex h-7 items-center gap-1.5 rounded-[8px] px-2 text-[0.8125rem] whitespace-nowrap',
                       tab === t
-                        ? 'bg-[var(--color-brand-500)] text-white'
-                        : 'bg-[var(--color-brand-100)] text-[var(--color-brand-700)]',
+                        ? 'bg-[var(--glass-bg-strong)] font-medium text-[var(--page-fg)]'
+                        : 'text-[var(--muted-fg)] hover:text-[var(--page-fg)]',
+                      t === 'due' && tab !== t && dueStats.count > 0 && 'text-[var(--color-brand-600)]',
                     )}
                   >
-                    {dueStats.count}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-
-          <label className="relative min-w-[7.5rem] max-w-[11rem] flex-1">
-            <span className="sr-only">Search name, account or agent</span>
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--faint-fg)]" />
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Name, A/c, agent"
-              className="!h-9 !py-1.5 pl-8 !text-[0.8125rem] !leading-none"
-            />
-          </label>
-
-          <label className="min-w-[7rem] max-w-[9.5rem] flex-1">
-            <span className="sr-only">Filter by agent</span>
-            <select
-              className="mf-input !h-9 !py-1.5 !text-[0.8125rem] !leading-none"
-              value={agentId}
-              onChange={(e) => setAgentId(e.target.value)}
-            >
-              <option value="">All agents</option>
-              {props.agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {props.canCreate && (
-            <div className="relative">
-              <Button
-                variant="glass"
-                size="sm"
-                disabled={locked}
-                onClick={() => setAddOpen((v) => !v)}
-                aria-expanded={addOpen}
-                aria-haspopup="dialog"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Add rows
-                <ChevronDown className="h-3 w-3 opacity-60" />
-              </Button>
-              {addOpen && (
-                // `.glass` sets `position: relative` and is declared outside any @layer, so it
-                // beats Tailwind's layered `absolute` utility — putting the class and the
-                // positioning on one element drops the popover back into the flex flow and
-                // shreds the toolbar. Position the wrapper; style the panel inside it.
-                <div className="absolute right-0 top-full z-30 mt-1.5 w-60">
-                  <div
-                    role="dialog"
-                    aria-label="Add blank rows"
-                    className="rounded-[12px] border border-[var(--glass-border)] bg-[var(--page-bg)] p-3 shadow-[0_16px_40px_-12px_rgb(0_0_0/0.35)]"
-                  >
-                  <p className="mb-2 text-[0.75rem] text-[var(--muted-fg)]">
-                    How many blank rows?
-                  </p>
-                  <div className="mb-2 flex gap-1">
-                    {[1, 5, 10, 25].map((n) => (
-                      <button
-                        key={n}
-                        type="button"
-                        onClick={() => setAddCount(String(n))}
+                    {TAB_LABEL[t]}
+                    {t === 'due' && dueStats.count > 0 && (
+                      <span
                         className={cn(
-                          'h-7 flex-1 rounded-[7px] border border-[var(--input-border)] text-[0.75rem] tabular-nums',
-                          addCount === String(n)
-                            ? 'bg-[var(--glass-bg-strong)] font-medium'
-                            : 'text-[var(--muted-fg)] hover:text-[var(--page-fg)]',
+                          'rounded-full px-1.5 py-px text-[0.65rem] font-semibold tabular-nums',
+                          tab === t
+                            ? 'bg-[var(--color-brand-500)] text-white'
+                            : 'bg-[var(--color-brand-100)] text-[var(--color-brand-700)]',
                         )}
                       >
-                        {n}
-                      </button>
-                    ))}
-                  </div>
-                  <form
-                    className="flex gap-2"
-                    onSubmit={async (e) => {
-                      e.preventDefault();
-                      const n = Number(addCount);
-                      if (!Number.isFinite(n) || n < 1) return toast.error('Enter a number of rows.');
-                      if (n > MAX_ADD_ROWS) return toast.error(`At most ${MAX_ADD_ROWS} rows at a time.`);
-                      setBusy('add');
-                      const r = await addRegisterRowsAction(props.branchId, n);
-                      setBusy(null);
-                      if (!r.ok) toast.error(r.error);
-                      else {
-                        toast.success(
-                          r.data?.added === 1 ? 'Row added' : `${r.data?.added ?? n} rows added`,
-                        );
-                        setAddOpen(false);
-                        router.refresh();
-                      }
-                    }}
+                        {dueStats.count}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              {/*
+                Search and the agent filter travel together. Left loose they wrapped one at a
+                time, so a narrow window put "All agents" on a line of its own and the bar looked
+                broken rather than merely full.
+              */}
+              <div className="flex min-w-[13rem] flex-1 items-center gap-2">
+              <label className="relative min-w-[7rem] flex-1">
+                <span className="sr-only">Search name, account or agent</span>
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--faint-fg)]" />
+                <Input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Name, A/c, agent"
+                  className="!h-7 !py-1 pl-8 !text-[0.8125rem] !leading-none"
+                />
+              </label>
+
+              <label className="min-w-[6rem] flex-1">
+                <span className="sr-only">Filter by agent</span>
+                <select
+                  className="mf-input !h-7 !py-1 !text-[0.8125rem] !leading-none"
+                  value={agentId}
+                  onChange={(e) => setAgentId(e.target.value)}
+                >
+                  <option value="">All agents</option>
+                  {props.agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              </div>
+              <Div className="hidden lg:block" />
+
+                <ArrowUpDown className="hidden h-3.5 w-3.5 shrink-0 text-[var(--faint-fg)] 2xl:block" aria-hidden />
+                <select
+                  className="mf-input !h-7 !w-auto !py-1 !text-[0.75rem] !leading-none"
+                  value={sortKey}
+                  onChange={(e) => setSortKey(e.target.value as SortKey)}
+                  aria-label="Sort column"
+                  title="Sort column"
+                >
+                  {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
+                    <option key={k} value={k}>
+                      {SORT_LABEL[k]}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setSortDir((v) => (v === 'asc' ? 'desc' : 'asc'))}
+                  title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
+                  className="inline-flex h-7 items-center gap-1 rounded-[8px] border border-[var(--input-border)] px-2 text-[0.78rem] text-[var(--muted-fg)] hover:text-[var(--page-fg)]"
+                >
+                  {sortDir === 'asc' ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
+                  {/*
+                    The words are the first thing to go when the bar runs out of room — the arrow
+                    still says which way, the tooltip spells it out, and the table header repeats
+                    it on the sorted column. Keeping them cost a whole extra line on a laptop.
+                  */}
+                  <span className="hidden 2xl:inline">
+                    {sortDir === 'asc' ? 'Low → high' : 'High → low'}
+                  </span>
+                </button>
+
+            </div>
+
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+              {/*
+                On a laptop this bar has no width to spare, so the branch name gives way first
+                and the code carries the identity. Nothing is lost: the full label is in the
+                tooltip, and the top bar prints it for anyone scoped to a single branch.
+              */}
+              <span
+                className="whitespace-nowrap text-[0.72rem] text-[var(--muted-fg)]"
+                title={props.branchLabel}
+              >
+                <span className="hidden 2xl:inline">{props.branchLabel}</span>
+                <span className="2xl:hidden">{props.branchLabel.split(' · ')[0]}</span>
+                <span className="tabular-nums text-[var(--faint-fg)]">
+                  {' '}
+                  · {liveCount} live / {props.rows.length}
+                </span>
+              </span>
+
+              <Div />
+
+
+              {props.canCreate && (
+                <div className="relative">
+                  <Button
+                    variant="glass"
+                    size="sm"
+                    disabled={locked}
+                    onClick={() => setAddOpen((v) => !v)}
+                    aria-expanded={addOpen}
+                    aria-haspopup="dialog"
                   >
-                    <Input
-                      autoFocus
-                      inputMode="numeric"
-                      value={addCount}
-                      onChange={(e) => setAddCount(e.target.value.replace(/[^\d]/g, ''))}
-                      className="!h-8 !py-1 text-center !text-[0.8125rem] tabular-nums"
-                      aria-label="Number of rows to add"
-                    />
-                    <Button type="submit" variant="primary" size="sm" loading={busy === 'add'}>
-                      Add
-                    </Button>
-                  </form>
-                  <p className="mt-2 text-[0.68rem] text-[var(--faint-fg)]">
-                    Up to {MAX_ADD_ROWS} at once. They appear as blank draft rows.
-                  </p>
-                  </div>
+                    <Plus className="h-3.5 w-3.5" />
+                    Add rows
+                    <ChevronDown className="h-3 w-3 opacity-60" />
+                  </Button>
+                  {addOpen && (
+                    // `.glass` sets `position: relative` and is declared outside any @layer, so it
+                    // beats Tailwind's layered `absolute` utility — putting the class and the
+                    // positioning on one element drops the popover back into the flex flow and
+                    // shreds the toolbar. Position the wrapper; style the panel inside it.
+                    <div className="absolute right-0 top-full z-30 mt-1.5 w-60">
+                      <div
+                        role="dialog"
+                        aria-label="Add blank rows"
+                        className="rounded-[12px] border border-[var(--glass-border)] bg-[var(--page-bg)] p-3 shadow-[0_16px_40px_-12px_rgb(0_0_0/0.35)]"
+                      >
+                      <p className="mb-2 text-[0.75rem] text-[var(--muted-fg)]">
+                        How many blank rows?
+                      </p>
+                      <div className="mb-2 flex gap-1">
+                        {[1, 5, 10, 25].map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() => setAddCount(String(n))}
+                            className={cn(
+                              'h-7 flex-1 rounded-[7px] border border-[var(--input-border)] text-[0.75rem] tabular-nums',
+                              addCount === String(n)
+                                ? 'bg-[var(--glass-bg-strong)] font-medium'
+                                : 'text-[var(--muted-fg)] hover:text-[var(--page-fg)]',
+                            )}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                      <form
+                        className="flex gap-2"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const n = Number(addCount);
+                          if (!Number.isFinite(n) || n < 1) return toast.error('Enter a number of rows.');
+                          if (n > MAX_ADD_ROWS) return toast.error(`At most ${MAX_ADD_ROWS} rows at a time.`);
+                          // Lengthen the sheet rather than writing n DRAFT cases. Each row
+                          // becomes real the moment somebody types in it, so this is instant
+                          // and costs nothing if the clerk asked for more than they needed.
+                          setSheetLength((len) => Math.max(len, props.rows.length) + n);
+                          // The blank rows only render unfiltered, so go where they are.
+                          setTab('all');
+                          setQ('');
+                          setAgentId('');
+                          setRange(EMPTY_RANGE);
+                          setAddOpen(false);
+                          toast.success(n === 1 ? 'Row added' : `${n} rows added`);
+                        }}
+                      >
+                        <Input
+                          autoFocus
+                          inputMode="numeric"
+                          value={addCount}
+                          onChange={(e) => setAddCount(e.target.value.replace(/[^\d]/g, ''))}
+                          className="!h-7 !py-1 text-center !text-[0.8125rem] tabular-nums"
+                          aria-label="Number of rows to add"
+                        />
+                        <Button type="submit" variant="primary" size="sm" loading={busy === 'add'}>
+                          Add
+                        </Button>
+                      </form>
+                      <p className="mt-2 text-[0.68rem] text-[var(--faint-fg)]">
+                        Up to {MAX_ADD_ROWS} at once. They appear as blank draft rows.
+                      </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
+              {props.canImport && (
+                <>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    className="sr-only"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void onImport(f);
+                      e.target.value = '';
+                    }}
+                  />
+                  <Button variant="primary" size="sm" loading={busy === 'import'} onClick={() => fileRef.current?.click()}>
+                    <Upload className="h-3.5 w-3.5" />
+                    Import
+                  </Button>
+                </>
+              )}
             </div>
-          )}
-          {props.canImport && (
-            <>
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".xlsx,.xls"
-                className="sr-only"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) void onImport(f);
-                  e.target.value = '';
-                }}
-              />
-              <Button variant="primary" size="sm" loading={busy === 'import'} onClick={() => fileRef.current?.click()}>
-                <Upload className="h-3.5 w-3.5" />
-                Import
-              </Button>
-            </>
-          )}
-        </div>
-
-        {/* Row 2 — pick a day or a span of days, and see the sort that choice implies. */}
-        <div className="flex flex-wrap items-center gap-2 border-t border-[var(--hairline)] px-3 py-2">
-          <CalendarDays className="h-3.5 w-3.5 shrink-0 text-[var(--faint-fg)]" aria-hidden />
-          <select
-            className="mf-input !h-8 !w-auto !py-1 !text-[0.78rem] !leading-none"
-            value={dateField}
-            onChange={(e) => applyFilter({ dateField: e.target.value as DateField })}
-            aria-label="Which date to filter on"
-          >
-            {(Object.keys(DATE_FIELD_LABEL) as DateField[]).map((f) => (
-              <option key={f} value={f}>
-                {DATE_FIELD_LABEL[f]}
-              </option>
-            ))}
-          </select>
-
-          {/*
-            One control, two shapes. Setting only "from" narrows to a single day — the common
-            case, and what the Today / Tomorrow chips write — while filling both gives a span.
-            The chips and the boxes are the same state, so a preset always shows you the dates
-            it actually applied rather than hiding them behind a label.
-          */}
-          <div className="flex items-center gap-1">
-            <input
-              type="date"
-              className="mf-input !h-8 !w-auto !py-1 !text-[0.78rem] !leading-none tabular-nums"
-              value={range.from}
-              max={range.to || undefined}
-              onChange={(e) => applyFilter({ range: { from: e.target.value, to: range.to } })}
-              aria-label="From date"
-              title="From this date"
-            />
-            <span className="text-[0.78rem] text-[var(--faint-fg)]">→</span>
-            <input
-              type="date"
-              className="mf-input !h-8 !w-auto !py-1 !text-[0.78rem] !leading-none tabular-nums"
-              value={range.to}
-              min={range.from || undefined}
-              onChange={(e) => applyFilter({ range: { from: range.from, to: e.target.value } })}
-              aria-label="To date"
-              title="To this date — leave empty for a single day"
-            />
           </div>
 
-          <div className="flex flex-wrap gap-1">
-            {DATE_PRESETS.map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() =>
-                  applyFilter({
-                    range: preset === p ? EMPTY_RANGE : resolveDatePreset(p, props.today),
-                  })
-                }
-                aria-pressed={preset === p}
-                className={cn(
-                  'h-8 rounded-[8px] border border-[var(--input-border)] px-2.5 text-[0.78rem] whitespace-nowrap',
-                  preset === p
-                    ? 'bg-[var(--glass-bg-strong)] font-medium text-[var(--page-fg)]'
-                    : 'text-[var(--muted-fg)] hover:text-[var(--page-fg)]',
-                  p === 'overdue' && preset !== p && 'text-[var(--color-warn-600)]',
+          {/* Which days, in what order, and where a copy of it goes. */}
+          <div className="flex items-start gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-2">
+              <CalendarDays className="h-3.5 w-3.5 shrink-0 text-[var(--faint-fg)]" aria-hidden />
+              <select
+                className="mf-input !h-7 !w-auto !py-1 !text-[0.75rem] !leading-none"
+                value={dateField}
+                onChange={(e) => applyFilter({ dateField: e.target.value as DateField })}
+                aria-label="Which date to filter on"
+              >
+                {(Object.keys(DATE_FIELD_LABEL) as DateField[]).map((f) => (
+                  <option key={f} value={f}>
+                    {DATE_FIELD_LABEL[f]}
+                  </option>
+                ))}
+              </select>
+
+              {/*
+                One control, two shapes. Setting only "from" narrows to a single day — the common
+                case, and what the Today / Tomorrow chips write — while filling both gives a span.
+                The chips and the boxes are the same state, so a preset always shows you the dates
+                it actually applied rather than hiding them behind a label.
+              */}
+              <div className="flex items-center gap-1">
+                <input
+                  type="date"
+                  className="mf-input !h-7 !w-[7.9rem] !py-1 !text-[0.75rem] !leading-none tabular-nums"
+                  value={range.from}
+                  max={range.to || undefined}
+                  onChange={(e) => applyFilter({ range: { from: e.target.value, to: range.to } })}
+                  aria-label="From date"
+                  title="From this date"
+                />
+                <span className="text-[0.78rem] text-[var(--faint-fg)]">→</span>
+                <input
+                  type="date"
+                  className="mf-input !h-7 !w-[7.9rem] !py-1 !text-[0.75rem] !leading-none tabular-nums"
+                  value={range.to}
+                  min={range.from || undefined}
+                  onChange={(e) => applyFilter({ range: { from: range.from, to: e.target.value } })}
+                  aria-label="To date"
+                  title="To this date — leave empty for a single day"
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-1">
+                {DATE_PRESETS.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() =>
+                      applyFilter({
+                        range: preset === p ? EMPTY_RANGE : resolveDatePreset(p, props.today),
+                      })
+                    }
+                    aria-pressed={preset === p}
+                    title={DATE_PRESET_LABEL[p]}
+                    className={cn(
+                      'h-7 rounded-[7px] border border-[var(--input-border)] px-1.5 text-[0.75rem] whitespace-nowrap',
+                      preset === p
+                        ? 'bg-[var(--glass-bg-strong)] font-medium text-[var(--page-fg)]'
+                        : 'text-[var(--muted-fg)] hover:text-[var(--page-fg)]',
+                      p === 'overdue' && preset !== p && 'text-[var(--color-warn-600)]',
+                    )}
+                  >
+                    {DATE_PRESET_SHORT[p]}
+                  </button>
+                ))}
+                {dateFilterOn && (
+                  <button
+                    type="button"
+                    onClick={() => applyFilter({ range: EMPTY_RANGE })}
+                    className="inline-flex h-7 items-center gap-1 rounded-[8px] px-2 text-[0.78rem] text-[var(--muted-fg)] hover:text-[var(--page-fg)]"
+                  >
+                    <X className="h-3 w-3" />
+                    Clear
+                  </button>
                 )}
-              >
-                {DATE_PRESET_LABEL[p]}
-              </button>
-            ))}
-            {dateFilterOn && (
-              <button
-                type="button"
-                onClick={() => applyFilter({ range: EMPTY_RANGE })}
-                className="inline-flex h-8 items-center gap-1 rounded-[8px] px-2 text-[0.78rem] text-[var(--muted-fg)] hover:text-[var(--page-fg)]"
-              >
-                <X className="h-3 w-3" />
-                Clear
-              </button>
-            )}
-          </div>
+              </div>
+            </div>
 
-          <div className="ml-auto flex items-center gap-1.5">
-            {props.canImport && (
-              <Button asChild variant="ghost" size="icon" className="h-8 w-8" title="Download a blank Excel template">
-                <a href={`/api/export/template?branch=${props.branchId}`} aria-label="Download blank Excel template">
-                  <FileSpreadsheet className="h-3.5 w-3.5" />
-                </a>
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              loading={busy === 'export'}
-              onClick={() => void exportXlsx('view')}
-              title={`Export these ${visible.length} rows to Excel — tick rows to export just those`}
-              aria-label="Export this view to Excel"
-            >
-              <Download className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => doPrint('view')}
-              title={`Print these ${visible.length} rows`}
-              aria-label="Print this view"
-            >
-              <Printer className="h-3.5 w-3.5" />
-            </Button>
-            {props.canLayout && (
-              <Button
-                variant={colsOpen ? 'glass' : 'ghost'}
-                size="icon"
-                className="h-8 w-8"
-                title="Choose and reorder columns"
-                aria-label="Columns"
-                onClick={() => {
-                  setDraftLayout(props.columnLayout);
-                  setColsOpen((v) => !v);
-                }}
-              >
-                <Columns3 className="h-3.5 w-3.5" />
-              </Button>
-            )}
-            <span className="mx-0.5 h-5 w-px bg-[var(--hairline)]" aria-hidden />
-            <span className="text-[0.72rem] text-[var(--faint-fg)]">Sorted by</span>
-            <select
-              className="mf-input !h-8 !w-auto !py-1 !text-[0.78rem] !leading-none"
-              value={sortKey}
-              onChange={(e) => setSortKey(e.target.value as SortKey)}
-              aria-label="Sort column"
-            >
-              {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
-                <option key={k} value={k}>
-                  {SORT_LABEL[k]}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => setSortDir((v) => (v === 'asc' ? 'desc' : 'asc'))}
-              title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
-              className="inline-flex h-8 items-center gap-1 rounded-[8px] border border-[var(--input-border)] px-2 text-[0.78rem] text-[var(--muted-fg)] hover:text-[var(--page-fg)]"
-            >
-              {sortDir === 'asc' ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
-              {sortDir === 'asc' ? 'Low → high' : 'High → low'}
-            </button>
+            {/*
+              Row 2 closes with what this view is and where a copy of it goes: how many rows the
+              filter left, then the four ways out of the screen. They sit here rather than beside
+              Add rows / Import so the first row has the width to hold the sort control without
+              spilling onto a third line — and so this row ends on something instead of air.
+            */}
+            <div className="flex shrink-0 items-center gap-1.5 self-center">
+              <p className="whitespace-nowrap text-right text-[0.72rem] leading-tight text-[var(--faint-fg)]">
+                <span className="font-semibold tabular-nums text-[var(--muted-fg)]">
+                  {visible.length}
+                </span>{' '}
+                of <span className="tabular-nums">{props.rows.length}</span> rows
+                {selCount > 0 && (
+                  <span className="text-[var(--color-brand-600)]"> · {selCount} selected</span>
+                )}
+              </p>
+                {props.canImport && (
+                  <Button asChild variant="ghost" size="icon" className="h-7 w-7" title="Download a blank Excel template">
+                    <a href={`/api/export/template?branch=${props.branchId}`} aria-label="Download blank Excel template">
+                      <FileSpreadsheet className="h-3.5 w-3.5" />
+                    </a>
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  loading={busy === 'export'}
+                  onClick={() => void exportXlsx('view')}
+                  title={`Export these ${visible.length} rows to Excel — tick rows to export just those`}
+                  aria-label="Export this view to Excel"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => doPrint('view')}
+                  title={`Print these ${visible.length} rows`}
+                  aria-label="Print this view"
+                >
+                  <Printer className="h-3.5 w-3.5" />
+                </Button>
+                {props.canLayout && (
+                  <Button
+                    variant={colsOpen ? 'glass' : 'ghost'}
+                    size="icon"
+                    className="h-7 w-7"
+                    title="Choose and reorder columns"
+                    aria-label="Columns"
+                    onClick={() => {
+                      setDraftLayout(props.columnLayout);
+                      setColsOpen((v) => !v);
+                    }}
+                  >
+                    <Columns3 className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+            </div>
           </div>
         </div>
 
-        {/* Row 3 — today's obligation, stated once and stated loudly. */}
-        <div className="flex flex-wrap items-stretch gap-x-6 gap-y-2 border-t border-[var(--hairline)] px-3 py-2.5">
+        {/*
+          The desk. What must go out on the left, the money to meet it in the middle, the book
+          totals on the right — then one bar underneath saying whether the middle covers the
+          left. The two cash fields used to sit in a four-column panel *below* the table, which
+          meant the branch could not see what it had to open with until it scrolled past every
+          row. They are the first thing anyone needs in the morning, so they are up here now.
+        */}
+        {/*
+          The desk, as five columns of one grid rather than loose stats in two flex rows.
+
+          Each column answers one question, in the order the morning actually goes: what is owed
+          today, how much of it has gone out, what there is to pay the rest with, what is missing,
+          and what the whole book is worth. The grid is what removes the blank space — a flex row
+          with `justify-end` balanced the two ends and left a hole in the middle, but a column
+          takes a defined share of the width and the label/value rows inside justify to both of
+          its edges, so the figures line up in a readable right-hand column.
+        */}
+        <div className="grid grid-cols-1 gap-x-2 gap-y-1 border-t border-[var(--hairline)] px-2 py-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           <button
             type="button"
             onClick={() => applyFilter({ tab: 'due', range: EMPTY_RANGE })}
-            title="Show only these rows"
+            title="Show only the rows due today"
             className={cn(
-              'flex items-center gap-3 rounded-[10px] border-l-[3px] py-1 pl-2.5 pr-3 text-left transition-colors',
+              'min-w-0 rounded-[10px] px-2.5 py-1.5 text-left transition-colors',
               dueStats.count > 0
-                ? 'border-l-[var(--color-brand-500)] bg-[var(--color-brand-50)] hover:bg-[var(--color-brand-100)]'
-                : 'border-l-[var(--hairline)] hover:bg-[var(--glass-bg-subtle)]',
+                ? 'bg-[var(--color-brand-50)] hover:bg-[var(--color-brand-100)]'
+                : 'hover:bg-[var(--glass-bg-subtle)]',
             )}
           >
-            <span>
-              <span className="block text-[0.65rem] font-semibold uppercase tracking-[0.06em] text-[var(--color-brand-700)]">
+            <span className="mb-1 flex h-4 items-center">
+              <span className="text-[0.6rem] font-semibold uppercase tracking-[0.07em] text-[var(--color-brand-700)]">
                 Due today
               </span>
-              <span className="block text-[0.78rem] leading-tight text-[var(--muted-fg)]">
-                <span className="font-semibold tabular-nums text-[var(--page-fg)]">{dueStats.count}</span>{' '}
-                {dueStats.count === 1 ? 'withdrawal' : 'withdrawals'}
-              </span>
             </span>
-            <span className="border-l border-[var(--hairline)] pl-3">
-              <span className="block text-[1.35rem] font-semibold leading-none tabular-nums text-[var(--page-fg)]">
-                ₹{inr(dueStats.total)}
-              </span>
-              <span className="block pt-1 text-[0.68rem] leading-none text-[var(--faint-fg)]">
-                cash ₹{inr(dueStats.cash)} · online ₹{inr(dueStats.online)}
-              </span>
+            <span className="block truncate text-[1.35rem] font-semibold leading-none tabular-nums text-[var(--page-fg)]">
+              ₹{inr(dueStats.total)}
+            </span>
+            <span className="mt-1 block truncate text-[0.68rem] leading-tight text-[var(--muted-fg)]">
+              {dueStats.count} {dueStats.count === 1 ? 'withdrawal' : 'withdrawals'}
+            </span>
+            <span className="block truncate text-[0.65rem] leading-tight text-[var(--faint-fg)]">
+              cash ₹{inr(dueStats.cash)} · online ₹{inr(dueStats.online)}
             </span>
           </button>
 
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[0.8125rem]">
-            <span>
-              <span className="text-[var(--faint-fg)]">Given today</span>{' '}
-              <span className="font-semibold tabular-nums text-[var(--color-money-500)]">
-                {props.withdrawalsToday} · ₹{inr(paidTodayP)}
-              </span>
-            </span>
-            <span>
-              <span className="text-[var(--faint-fg)]">Still to give</span>{' '}
-              <span className="font-semibold tabular-nums">₹{inr(stillToGive)}</span>
-            </span>
-            {dueStats.unsetCount > 0 && (
-              <button
-                type="button"
-                onClick={() =>
-                  applyFilter({
-                    tab: 'all',
-                    range: resolveDatePreset('today', props.today),
-                    dateField: 'payment',
-                  })
-                }
-                className="rounded-[7px] bg-[var(--color-warn-500)]/12 px-2 py-0.5 text-[0.75rem] text-[var(--color-warn-600)] hover:bg-[var(--color-warn-500)]/20"
-                title="Payment date is today but no amount has been set for today"
-              >
-                {dueStats.unsetCount} dated today with no amount set
-              </button>
-            )}
-          </div>
+          <DeskZone
+            title="Paid so far"
+            extra={
+              dueStats.unsetCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    applyFilter({
+                      tab: 'all',
+                      range: resolveDatePreset('today', props.today),
+                      dateField: 'payment',
+                    })
+                  }
+                  title={`${dueStats.unsetCount} rows are dated today but have no amount set for today`}
+                  className="shrink-0 rounded-[6px] bg-[var(--color-warn-500)]/12 px-1.5 text-[0.62rem] font-semibold tabular-nums text-[var(--color-warn-600)] hover:bg-[var(--color-warn-500)]/20"
+                >
+                  {dueStats.unsetCount} unset
+                </button>
+              ) : undefined
+            }
+          >
+            <DeskRow
+              label="Given today"
+              tone="money"
+              value={`₹${inr(paidTodayP)}`}
+              title="Paid out so far today"
+            />
+            <DeskRow
+              label="Still to give"
+              value={`₹${inr(stillToGive)}`}
+              title="Due today and not yet paid"
+            />
+            <DeskRow
+              label="Withdrawals"
+              value={props.withdrawalsToday}
+              title="Payments recorded today"
+            />
+          </DeskZone>
 
-          <div className="ml-auto flex flex-wrap items-center gap-x-5 gap-y-1 text-[0.8125rem]">
-            {agentTotals ? (
-              <>
-                <span className="font-medium">{props.agents.find((a) => a.id === agentId)?.name}</span>
-                <span>
-                  <span className="text-[var(--faint-fg)]">Live</span>{' '}
-                  <span className="tabular-nums">{agentTotals.live}</span>
-                  <span className="text-[var(--faint-fg)]">/{agentTotals.n}</span>
+          <DeskZone title="Cash to pay with">
+            <DeskInputRow
+              label="In hand"
+              value={cashHand}
+              onChange={setCashHand}
+              onCommit={commitDayCash}
+              disabled={!props.canSetCash || locked}
+              title="Cash the branch is opening with today (approximate)"
+            />
+            <DeskInputRow
+              label="Online"
+              value={onlinePlan}
+              onChange={setOnlinePlan}
+              onCommit={commitDayCash}
+              disabled={!props.canSetCash || locked}
+              title="Amount planned to go out by online transfer"
+            />
+            <DeskRow
+              label="Total to hand"
+              value={`₹${inr(coverHave)}`}
+              title="Cash in hand plus the planned online transfer"
+            />
+          </DeskZone>
+
+          <DeskZone
+            title="Shortfall"
+            extra={
+              <span className="flex shrink-0 rounded-[6px] border border-[var(--input-border)] p-px">
+                {(['today', 'all'] as ExtraMode[]).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    title={
+                      m === 'today'
+                        ? "Measure against this view's total for today"
+                        : 'Measure against everything still outstanding'
+                    }
+                    className={cn(
+                      'rounded-[5px] px-1.5 text-[0.6rem] font-medium',
+                      extraMode === m
+                        ? 'bg-[var(--glass-bg-strong)] text-[var(--page-fg)]'
+                        : 'text-[var(--faint-fg)] hover:text-[var(--page-fg)]',
+                    )}
+                    onClick={() => setExtraMode(m)}
+                  >
+                    {m === 'today' ? 'Today' : 'All'}
+                  </button>
+                ))}
+              </span>
+            }
+          >
+            <DeskRow
+              label="Short of cash"
+              tone={extraAfterCash > 0n ? 'warn' : 'plain'}
+              value={`₹${inr(extraAfterCash)}`}
+              title={`${extraMode === 'today' ? "This view's total for today" : dateFilterOn ? "This view's remaining" : 'All remaining'} less cash in hand`}
+            />
+            <DeskRow
+              label="After online"
+              tone={extraOpening > 0n ? 'warn' : 'plain'}
+              value={`₹${inr(extraOpening)}`}
+              title="Still to arrange once the planned online transfer lands"
+            />
+            {/*
+              Cover, sitting under the two figures it settles. Amber only when the branch is
+              genuinely short — an amber bar every morning is a bar nobody reads — and no bar at
+              all when nothing is due, because a full green track would read as a full till.
+            */}
+            <div
+              className="flex items-center gap-1.5 pt-0.5"
+              title={
+                need === 0n
+                  ? 'Nothing is due in this view.'
+                  : `₹${inr(coverHave)} to hand against ₹${inr(need)} due.`
+              }
+            >
+              {need > 0n && (
+                <span
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(coverPct)}
+                  aria-label="Cash and online transfer against what is due"
+                  className="h-1.5 min-w-[1.5rem] flex-1 overflow-hidden rounded-full bg-[var(--glass-bg-subtle)] ring-1 ring-inset ring-[var(--hairline)]"
+                >
+                  <span
+                    className={cn(
+                      'block h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none',
+                      covered ? 'bg-[var(--color-money-500)]' : 'bg-[var(--color-warn-500)]',
+                    )}
+                    style={{ width: `${coverPct}%` }}
+                  />
                 </span>
-                <span>
-                  <span className="text-[var(--faint-fg)]">Remaining</span>{' '}
-                  <span className="font-semibold tabular-nums">₹{inr(agentTotals.remaining)}</span>
-                </span>
-                <span>
-                  <span className="text-[var(--faint-fg)]">Paid</span>{' '}
-                  <span className="tabular-nums text-[var(--color-money-500)]">₹{inr(agentTotals.paid)}</span>
-                </span>
-              </>
-            ) : (
-              <>
-                <span>
-                  <span className="text-[var(--faint-fg)]">Maturity</span>{' '}
-                  <span className="font-semibold tabular-nums">₹{inr(totals.maturity)}</span>
-                </span>
-                <span>
-                  <span className="text-[var(--faint-fg)]">Paid</span>{' '}
-                  <span className="font-semibold tabular-nums text-[var(--color-money-500)]">₹{inr(totals.paid)}</span>
-                </span>
-                <span>
-                  <span className="text-[var(--faint-fg)]">Remaining</span>{' '}
-                  <span className="font-semibold tabular-nums">₹{inr(totals.remaining)}</span>
-                </span>
-              </>
-            )}
-          </div>
+              )}
+              <span className="shrink-0 whitespace-nowrap text-[0.65rem] font-semibold tabular-nums">
+                {need === 0n ? (
+                  <span className="text-[var(--faint-fg)]">Nothing due</span>
+                ) : covered ? (
+                  <span className="text-[var(--color-money-500)]">Covered</span>
+                ) : (
+                  <span className="text-[var(--color-warn-600)]">{Math.round(coverPct)}% covered</span>
+                )}
+              </span>
+            </div>
+          </DeskZone>
+
+          {agentTotals ? (
+            <DeskZone title={props.agents.find((a) => a.id === agentId)?.name ?? 'Agent'}>
+              <DeskRow label="Live" value={`${agentTotals.live} / ${agentTotals.n}`} />
+              <DeskRow label="Paid" tone="money" value={`₹${inr(agentTotals.paid)}`} />
+              <DeskRow label="Remaining" value={`₹${inr(agentTotals.remaining)}`} />
+            </DeskZone>
+          ) : (
+            <DeskZone title="The book">
+              <DeskRow label="Maturity" value={`₹${inr(totals.maturity)}`} />
+              <DeskRow label="Paid" tone="money" value={`₹${inr(totals.paid)}`} />
+              <DeskRow label="Remaining" value={`₹${inr(totals.remaining)}`} />
+            </DeskZone>
+          )}
         </div>
       </Glass>
 
@@ -1448,37 +1931,81 @@ export function RegisterSheet(props: {
         ticked and states what is ticked before offering to act on it, because "38 rows · ₹4,20,000"
         is the sentence a clerk needs to read before pressing Remove.
       */}
+      {/*
+        Parks just under the app top bar (h-12) rather than sliding beneath it, and stays ONE
+        line: it sticks over the table as you scroll, so a second line would sit on top of the
+        column headings — which is exactly what happened when the totals were first added here.
+        Everything inside is `whitespace-nowrap` and compact for that reason.
+      */}
       {selCount > 0 && (
-        <Glass className="mf-rise sticky top-1 z-20 flex flex-wrap items-center gap-2 px-3 py-2 print:hidden">
+        <Glass
+          className="mf-rise sticky top-[3.25rem] z-20 flex items-center gap-2 overflow-x-auto px-3 py-2 print:hidden"
+          // Inline, not a `bg-*` utility: `.glass` is declared outside any @layer and would win.
+          // Opaque because this bar parks over the table's sticky header — see --surface-solid.
+          style={{ background: 'var(--surface-solid)' }}
+        >
           <span className="flex items-center gap-2 pr-1">
             <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-[var(--color-brand-500)] px-1.5 text-[0.72rem] font-semibold tabular-nums text-white">
               {selCount}
             </span>
             <span className="text-[0.8125rem] leading-tight">
               <span className="font-medium">selected</span>
-              <span className="block text-[0.7rem] text-[var(--faint-fg)] tabular-nums">
-                remaining ₹{inr(sel.remaining)} · today ₹{inr(sel.today)}
-                {selOffView > 0 && ` · ${selOffView} outside this view`}
-              </span>
+              {selOffView > 0 && (
+                <span className="block text-[0.7rem] text-[var(--faint-fg)]">
+                  {selOffView} outside this view
+                </span>
+              )}
             </span>
           </span>
 
-          <span className="h-6 w-px bg-[var(--hairline)]" aria-hidden />
+          {/*
+            What is actually in the selection, before offering to act on it. A clerk about to
+            press Remove or Set today needs the totals in front of them, not just a count —
+            "38 rows, ₹4,20,000 still owed, 12 of them due today" is the sentence that decides it.
+          */}
+          {/*
+            Takes the slack and scrolls inside itself. Without `min-w-0 flex-1` the totals push
+            into the buttons instead of yielding, and "online ₹0" ends up printed under Excel.
+          */}
+          <span className="flex min-w-0 flex-1 items-center gap-x-2 overflow-x-auto text-[0.68rem] tabular-nums">
+            {(
+              [
+                ['mat', sel.maturity],
+                ['paid', sel.paid],
+                ['rem', sel.remaining],
+                ['today', sel.today],
+                ['cash', sel.cash],
+                ['online', sel.online],
+              ] as const
+            ).map(([label, v]) => (
+              <span key={label} className="whitespace-nowrap">
+                <span className="text-[var(--faint-fg)]">{label} </span>
+                <span className="font-semibold">₹{inr(v)}</span>
+              </span>
+            ))}
+            {sel.dueCount > 0 && (
+              <span className="whitespace-nowrap text-[var(--color-brand-600)]">
+                <span className="font-semibold">{sel.dueCount}</span> due
+              </span>
+            )}
+          </span>
 
-          <Button variant="ghost" size="sm" onClick={() => void exportXlsx('selection')} loading={busy === 'export'}>
+          <span className="h-6 w-px shrink-0 bg-[var(--hairline)]" aria-hidden />
+
+          <Button className="shrink-0" variant="ghost" size="sm" onClick={() => void exportXlsx('selection')} loading={busy === 'export'}>
             <Download className="h-3.5 w-3.5" />
             Excel
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => exportCsv('selection')}>
+          <Button className="shrink-0" variant="ghost" size="sm" onClick={() => exportCsv('selection')}>
             CSV
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => doPrint('selection')}>
+          <Button className="shrink-0" variant="ghost" size="sm" onClick={() => doPrint('selection')}>
             <Printer className="h-3.5 w-3.5" />
             Print
           </Button>
 
           {props.canEdit && !locked && (
-            <div className="relative">
+            <div className="relative shrink-0">
               <Button
                 variant={bulkMenu === 'today' ? 'glass' : 'ghost'}
                 size="sm"
@@ -1540,6 +2067,7 @@ export function RegisterSheet(props: {
 
           {props.canSubmit && !locked && (
             <Button
+              className="shrink-0"
               variant="ghost"
               size="sm"
               loading={busy === 'bulk-form'}
@@ -1557,6 +2085,7 @@ export function RegisterSheet(props: {
 
           {props.canApprove && !locked && (
             <Button
+              className="shrink-0"
               variant="ghost"
               size="sm"
               loading={busy === 'bulk-appr'}
@@ -1571,7 +2100,7 @@ export function RegisterSheet(props: {
           )}
 
           {props.canEdit && !locked && props.agents.length > 0 && (
-            <div className="relative">
+            <div className="relative shrink-0">
               <Button
                 variant={bulkMenu === 'agent' ? 'glass' : 'ghost'}
                 size="sm"
@@ -1619,7 +2148,7 @@ export function RegisterSheet(props: {
           )}
 
           {props.canRemove && !locked && (
-            <div className="relative">
+            <div className="relative shrink-0">
               <Button
                 variant={bulkMenu === 'remove' ? 'danger' : 'ghost'}
                 size="sm"
@@ -1669,7 +2198,7 @@ export function RegisterSheet(props: {
                     <Trash2 className="h-3.5 w-3.5" />
                     Remove
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setBulkMenu(null)}>
+                  <Button className="shrink-0" variant="ghost" size="sm" onClick={() => setBulkMenu(null)}>
                     Cancel
                   </Button>
                 </div>
@@ -1677,7 +2206,7 @@ export function RegisterSheet(props: {
             </div>
           )}
 
-          <Button variant="ghost" size="sm" className="ml-auto" onClick={clearSelection} title="Esc">
+          <Button className="ml-auto shrink-0" variant="ghost" size="sm" onClick={clearSelection} title="Esc">
             <X className="h-3.5 w-3.5" />
             Clear
           </Button>
@@ -1685,8 +2214,14 @@ export function RegisterSheet(props: {
       )}
 
       <Glass className="overflow-hidden">
-        <div className="mf-hscroll min-h-[18rem] max-h-[min(66vh,46rem)]">
-          <table className="w-full min-w-[72rem] table-fixed border-collapse text-[0.7rem]">
+        {/*
+          No `min-w` and no horizontal scroll: `columnsThatFit` has already chosen a set of
+          columns that fits the measured width, and anything it could not fit is one click away
+          in the row expander. A sheet that scrolls sideways loses the customer's name off the
+          left edge exactly when the clerk is reading the cash figure.
+        */}
+        <div ref={gridRef} className="min-h-[18rem] max-h-[min(66vh,46rem)] overflow-y-auto overflow-x-hidden">
+          <table className="w-full table-fixed border-collapse text-[0.7rem]">
             <thead className="sticky top-0 z-10 bg-[var(--glass-bg-strong)] backdrop-blur-md">
               <tr className="border-b border-[var(--hairline)]">
                 <th className={cn(th, 'w-7 print:hidden')}>
@@ -1701,13 +2236,11 @@ export function RegisterSheet(props: {
                     }
                   />
                 </th>
-                {props.canSubmit && (
-                  <SortTh label="Form" col="formTick" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-10 print:hidden" />
-                )}
-                {props.canApprove && (
-                  <SortTh label="Appr." col="approved" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-10 print:hidden" />
-                )}
-                {visCols.map((c) => (
+                {/* Both columns render for every role. Whether the tick *moves* is a separate
+                    question, answered per row below — hiding the column hid the data with it. */}
+                <SortTh label="Form" col="formTick" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-10 print:hidden" />
+                <SortTh label="Appr." col="approved" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-10 print:hidden" />
+                {shownCols.map((c) => (
                   <SortTh
                     key={c.id}
                     label={c.label}
@@ -1719,8 +2252,9 @@ export function RegisterSheet(props: {
                     className={c.w}
                   />
                 ))}
+                {hasExtras && <th className={cn(th, 'w-9 print:hidden')} aria-label="More columns" />}
                 {props.canPay && (
-                  <SortTh label="Given" col="given" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="print:hidden" />
+                  <SortTh label="Given" col="given" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-[4.5rem] print:hidden" />
                 )}
               </tr>
             </thead>
@@ -1780,35 +2314,33 @@ export function RegisterSheet(props: {
                         }}
                       />
                     </td>
-                    {props.canSubmit && (
-                      <td className={cn(td, 'print:hidden')}>
-                        <input
-                          type="checkbox"
-                          disabled={locked}
-                          checked={r.formSubmitted}
-                          onChange={async (e) => {
-                            const res = await toggleFormSubmittedAction(r.id, e.target.checked);
-                            if (!res.ok) toast.error(res.error);
-                            else router.refresh();
-                          }}
-                        />
-                      </td>
-                    )}
-                    {props.canApprove && (
-                      <td className={cn(td, 'print:hidden')}>
-                        <input
-                          type="checkbox"
-                          disabled={locked}
-                          checked={r.approved}
-                          onChange={async (e) => {
-                            const res = await toggleApprovedAction(r.id, e.target.checked);
-                            if (!res.ok) toast.error(res.error);
-                            else router.refresh();
-                          }}
-                        />
-                      </td>
-                    )}
-                    {visCols.map((c) => (
+                    <td className={cn(td, 'print:hidden')}>
+                      <input
+                        type="checkbox"
+                        disabled={locked || !props.canSubmit}
+                        checked={r.formSubmitted}
+                        title={props.canSubmit ? undefined : 'Read-only'}
+                        onChange={async (e) => {
+                          const res = await toggleFormSubmittedAction(r.id, e.target.checked);
+                          if (!res.ok) toast.error(res.error);
+                          else router.refresh();
+                        }}
+                      />
+                    </td>
+                    <td className={cn(td, 'print:hidden')}>
+                      <input
+                        type="checkbox"
+                        disabled={locked || !props.canApprove}
+                        checked={r.approved}
+                        title={props.canApprove ? undefined : 'Read-only'}
+                        onChange={async (e) => {
+                          const res = await toggleApprovedAction(r.id, e.target.checked);
+                          if (!res.ok) toast.error(res.error);
+                          else router.refresh();
+                        }}
+                      />
+                    </td>
+                    {shownCols.map((c) => (
                       <td key={c.id} className={cn(td, c.right && num)}>
                         {c.id === 'account' && (
                           <CellInput
@@ -1983,69 +2515,70 @@ export function RegisterSheet(props: {
                         )}
                       </td>
                     )}
+                    {hasExtras && (
+                      <td className={cn(td, 'print:hidden')}>
+                        <button
+                          type="button"
+                          className="h-5 w-full rounded-[5px] text-[0.62rem] font-medium text-[var(--muted-fg)] hover:bg-[var(--glass-bg-strong)] hover:text-[var(--page-fg)]"
+                          aria-expanded={Boolean(openExtras[r.id])}
+                          title={`${fit.dropped.map((c) => c.label).join(', ')}`}
+                          onClick={() => setOpenExtras((s) => ({ ...s, [r.id]: !s[r.id] }))}
+                        >
+                          {openExtras[r.id] ? '−' : `+${fit.dropped.length}`}
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
+
+              {/*
+                The columns this screen was too narrow to hold, for the one row the clerk asked
+                about. Rendered as its own row so the table keeps its column widths.
+              */}
+              {hasExtras &&
+                visible
+                  .filter((r) => openExtras[r.id])
+                  .map((r) => (
+                    <tr key={`x-${r.id}`} className="border-b border-[var(--hairline)] bg-[var(--glass-bg-subtle)]">
+                      <td colSpan={3} className={cn(td, 'print:hidden')} />
+                      <td colSpan={shownCols.length + (props.canPay ? 2 : 1)} className="px-2 py-1.5">
+                        <span className="mr-2 text-[0.65rem] font-medium text-[var(--faint-fg)]">
+                          {r.customerName || 'This row'}:
+                        </span>
+                        <span className="inline-flex flex-wrap gap-x-4 gap-y-1">
+                          {fit.dropped.map((c) => (
+                            <span key={c.id} className="text-[0.68rem]">
+                              <span className="text-[var(--faint-fg)]">{c.label} </span>
+                              <span className="font-medium tabular-nums">{String(exportValue(c.id, r) || '—')}</span>
+                            </span>
+                          ))}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+
+              {/*
+                The empty rows. They exist only here — nothing reaches the database until a clerk
+                types in one and leaves it. Shown only on the unfiltered "All" view: padding a
+                filtered sheet with blanks would put 100 empty rows under "Due today".
+              */}
+              {blankRowCount > 0 &&
+                Array.from({ length: blankRowCount }, (_, i) => (
+                  <BlankRow
+                    key={`blank-${i}`}
+                    cols={shownCols}
+                    extrasCol={hasExtras || props.canPay}
+                    disabled={!props.canEdit || locked || !props.canCreate}
+                    onCommit={async (patch) => {
+                      const res = await createRegisterRowWithFieldsAction(props.branchId, patch);
+                      if (!res.ok) toast.error(res.error);
+                      else router.refresh();
+                    }}
+                  />
+                ))}
             </tbody>
           </table>
-        </div>
-      </Glass>
-
-      <Glass className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-4 print:hidden">
-        <label className="flex flex-col gap-1 text-[0.75rem] text-[var(--muted-fg)]">
-          Cash in hand today (approx)
-          <Input
-            value={cashHand}
-            disabled={!props.canSetCash || locked}
-            onChange={(e) => setCashHand(e.target.value)}
-            onBlur={async () => {
-              const r = await saveDayCashAction(props.branchId, props.today, cashHand, onlinePlan);
-              if (!r.ok) toast.error(r.error);
-              else router.refresh();
-            }}
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-[0.75rem] text-[var(--muted-fg)]">
-          Sending via online transfer
-          <Input
-            value={onlinePlan}
-            disabled={!props.canSetCash || locked}
-            onChange={(e) => setOnlinePlan(e.target.value)}
-            onBlur={async () => {
-              const r = await saveDayCashAction(props.branchId, props.today, cashHand, onlinePlan);
-              if (!r.ok) toast.error(r.error);
-              else router.refresh();
-            }}
-          />
-        </label>
-        <div>
-          <div className="mb-1 flex items-center justify-between text-[0.75rem] text-[var(--muted-fg)]">
-            Short of cash
-            <span className="flex rounded-[8px] border border-[var(--input-border)] p-0.5">
-              {(['today', 'all'] as ExtraMode[]).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  className={cn('rounded-[6px] px-2 py-0.5 text-[0.7rem]', extraMode === m && 'bg-[var(--glass-bg-strong)]')}
-                  onClick={() => setExtraMode(m)}
-                >
-                  {m === 'today' ? 'Today' : 'All'}
-                </button>
-              ))}
-            </span>
-          </div>
-          <p className="text-[1.25rem] font-semibold tabular-nums">₹{inr(extraAfterCash)}</p>
-          <p className="text-[0.7rem] text-[var(--faint-fg)]">
-            {extraMode === 'today' ? "This view's today total" : dateFilterOn ? "This view's remaining" : 'All remaining'}{' '}
-            minus cash in hand
-          </p>
-        </div>
-        <div>
-          <p className="mb-1 text-[0.75rem] text-[var(--muted-fg)]">Extra opening to arrange</p>
-          <p className="text-[1.25rem] font-semibold tabular-nums">₹{inr(extraOpening)}</p>
-          <p className="text-[0.7rem] text-[var(--faint-fg)]">
-            Still short once the online transfer lands
-          </p>
         </div>
       </Glass>
 
@@ -2065,19 +2598,20 @@ export function RegisterSheet(props: {
             Save and close today
           </Button>
         )}
+        {/*
+          The row count and the date range moved up to the filter bar, where the controls that
+          set them are. What is left here is the money this view represents — the one figure that
+          belongs beside the button that closes the day on it.
+        */}
         <p className="text-[0.75rem] text-[var(--faint-fg)]">
-          {visible.length} of {props.rows.length} rows
-          {dateFilterOn && (
-            <>
-              {' '}
-              · {DATE_FIELD_LABEL[dateField].toLowerCase()}{' '}
-              {range.from && range.to && range.from === range.to
-                ? formatDMY(range.from)
-                : `${range.from ? formatDMY(range.from) : 'any'} → ${range.to ? formatDMY(range.to) : 'any'}`}
-            </>
-          )}{' '}
-          · today ₹{inr(totals.today)} · remaining ₹{inr(totals.remaining)}
-          {selCount > 0 && ` · ${selCount} selected`}
+          This view · today{' '}
+          <span className="font-semibold tabular-nums text-[var(--muted-fg)]">
+            ₹{inr(totals.today)}
+          </span>{' '}
+          · remaining{' '}
+          <span className="font-semibold tabular-nums text-[var(--muted-fg)]">
+            ₹{inr(totals.remaining)}
+          </span>
         </p>
       </div>
     </div>

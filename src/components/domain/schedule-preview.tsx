@@ -14,6 +14,7 @@ import {
   type ScheduleResult,
   generateSchedule,
 } from '@/lib/payout-engine';
+import { payoutPlanFor } from '@/lib/payout-policy';
 import {
   type SaturdayRule,
   formatISODate,
@@ -38,7 +39,6 @@ export interface SchedulePreviewInput {
   cashPolicy: CashPolicy;
   startOnNextWorkingDay: boolean;
   calendar: CalendarSnapshot;
-  policyMaxDays?: number;
 }
 
 /**
@@ -57,7 +57,6 @@ export function useSchedule(input: SchedulePreviewInput): {
     distribution,
     startOnNextWorkingDay,
     calendar,
-    policyMaxDays,
   } = input;
   const cashKind = input.cashPolicy.kind;
   const cashCap = input.cashPolicy.cashCapPerDayPaise;
@@ -69,10 +68,15 @@ export function useSchedule(input: SchedulePreviewInput): {
         sundaysOff: calendar.sundaysOff,
         saturdayRule: calendar.saturdayRule,
       });
+      // `days` is the TOTAL working-day window, exactly as `windowDays` is on the case. Run it
+      // through the same policy the server uses in persistSchedule, or this preview would show
+      // the clerk a schedule the server is never going to write — which is the one thing the
+      // engine's purity exists to prevent.
+      const plan = payoutPlanFor(totalPaise, days);
       return {
         result: generateSchedule({
           totalPaise,
-          days,
+          days: plan.payoutDays,
           roundingPaise,
           startDate,
           calendar: cal,
@@ -82,7 +86,9 @@ export function useSchedule(input: SchedulePreviewInput): {
               ? { kind: 'CASH_CAP', cashCapPerDayPaise: cashCap ?? 0n }
               : { kind: cashKind },
           startOnNextWorkingDay,
-          policyMaxDays: policyMaxDays ?? 15,
+          stride: plan.stride,
+          startOffsetWorkingDays: plan.processingDays,
+          policyMaxDays: plan.payoutDays,
         }),
         error: null,
       };
@@ -99,7 +105,6 @@ export function useSchedule(input: SchedulePreviewInput): {
     cashCap,
     startOnNextWorkingDay,
     calendar,
-    policyMaxDays,
   ]);
 }
 

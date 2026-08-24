@@ -413,7 +413,6 @@ function ApprovalPanel({
             cashPolicy,
             startOnNextWorkingDay: startNext,
             calendar,
-            policyMaxDays: 15,
           }}
         />
       </div>

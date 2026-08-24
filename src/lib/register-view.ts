@@ -8,6 +8,8 @@
  * Nothing here touches the DOM, the clock, or the database.
  */
 
+import { MIN_WINDOW_DAYS, payoutPlanFor } from './payout-policy';
+
 /** Every sortable column in the register. */
 export type SortKey =
   | 'formTick'
@@ -208,6 +210,21 @@ export const DATE_PRESET_LABEL: Record<DatePreset, string> = {
   overdue: 'Overdue',
 };
 
+/**
+ * What the chip prints. On a laptop the filter bar has no width to spare, and these six chips
+ * were the widest thing on it — long enough to push the sort control onto a line of its own.
+ * `DATE_PRESET_LABEL` stays the full wording and is shown as the chip's tooltip, so "Week" and
+ * "7 days" can still be told apart as the calendar week versus a rolling seven days.
+ */
+export const DATE_PRESET_SHORT: Record<DatePreset, string> = {
+  today: 'Today',
+  tomorrow: 'Tomorrow',
+  thisWeek: 'Week',
+  next7: '7 days',
+  thisMonth: 'Month',
+  overdue: 'Overdue',
+};
+
 /** Plain UTC arithmetic on a YYYY-MM-DD string, like working-days.ts. */
 export function shiftDays(iso: string, n: number): string {
   const d = new Date(`${iso}T00:00:00Z`);
@@ -299,6 +316,30 @@ export function rowInDateRange(r: RegisterViewRow, field: DateField, range: Date
 
 // ── Selection ──────────────────────────────────────────────────────────────
 
+/**
+ * The recommended daily figure: what is left, spread over the days that can actually carry a
+ * payout.
+ *
+ * NOT `remaining / windowDays`. `windowDays` is the whole window, including the processing days
+ * that pay nothing, and a sub-₹1-lakh case only pays on alternate days on top of that. Dividing
+ * by the window under-fills every day and leaves the case short at its own deadline — which is
+ * the exact failure the schedule engine exists to prevent.
+ *
+ * One definition, used by the sheet's column, its sort and the bulk "set today" action, so the
+ * three cannot disagree about what a day is worth.
+ */
+export function recommendedPerDay(
+  remainingPaise: bigint,
+  maturityPaise: bigint,
+  windowDays: number,
+): bigint {
+  const remaining = remainingPaise > 0n ? remainingPaise : 0n;
+  if (remaining === 0n) return 0n;
+  const window = Math.max(MIN_WINDOW_DAYS, Math.floor(windowDays) || MIN_WINDOW_DAYS);
+  const plan = payoutPlanFor(maturityPaise > 0n ? maturityPaise : remaining, window);
+  return remaining / BigInt(plan.payoutDays);
+}
+
 /** What a bulk action does to today's amount. Shared by the sheet and the server. */
 export type BulkTodayMode = 'perDay' | 'remaining' | 'amount' | 'clear';
 
@@ -318,7 +359,7 @@ export const BULK_TODAY_LABEL: Record<BulkTodayMode, string> = {
  */
 export function bulkTodayAmount(
   mode: BulkTodayMode,
-  row: { remaining: bigint; windowDays: number; amount?: bigint },
+  row: { remaining: bigint; windowDays: number; maturityPaise?: bigint; amount?: bigint },
 ): bigint {
   const remaining = row.remaining > 0n ? row.remaining : 0n;
   if (remaining === 0n) return 0n;
@@ -327,10 +368,8 @@ export function bulkTodayAmount(
       return 0n;
     case 'remaining':
       return remaining;
-    case 'perDay': {
-      const days = BigInt(Math.max(1, Math.floor(row.windowDays) || 1));
-      return remaining / days;
-    }
+    case 'perDay':
+      return recommendedPerDay(remaining, row.maturityPaise ?? remaining, row.windowDays);
     case 'amount': {
       const want = row.amount ?? 0n;
       if (want <= 0n) return 0n;

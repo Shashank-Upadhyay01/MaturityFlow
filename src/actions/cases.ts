@@ -9,6 +9,7 @@ import { customers, maturityCases, payoutInstalments } from '@/db/schema';
 import { requestMeta, requireActor } from '@/lib/auth/session';
 import { newId } from '@/lib/id';
 import { parseRupeesToPaise } from '@/lib/money';
+import { MIN_WINDOW_DAYS } from '@/lib/payout-policy';
 import { assertCan } from '@/lib/rbac';
 import { writeAudit } from '@/lib/audit';
 import {
@@ -45,7 +46,11 @@ export async function saveRegisterRowAction(
     } = { updatedAt: new Date() };
 
     if (patch.windowDays != null) {
-      if (!Number.isInteger(patch.windowDays) || patch.windowDays < 1 || patch.windowDays > 60) {
+      if (
+        !Number.isInteger(patch.windowDays) ||
+        patch.windowDays < MIN_WINDOW_DAYS ||
+        patch.windowDays > 60
+      ) {
         return fail('Days must be between 1 and 60', 'VALIDATION');
       }
       set.windowDays = patch.windowDays;
@@ -104,7 +109,11 @@ const createSchema = z.object({
   schemeName: z.string().optional().nullable(),
   policyNumber: z.string().optional().nullable(),
   instrumentMaturityOn: z.union([isoDate, z.literal('')]).optional(),
-  windowDays: z.coerce.number().int().min(1, 'At least 1 day').max(366),
+  windowDays: z.coerce
+    .number()
+    .int()
+    .min(MIN_WINDOW_DAYS, `At least ${MIN_WINDOW_DAYS} days — the first 3 are processing`)
+    .max(366),
   roundingPaise: z.string().min(1),
   distribution: z.enum(['FRONT_LOADED', 'BACK_LOADED', 'EVEN']),
   cashPolicy: z.enum(['CASH_ONLY', 'ONLINE_ONLY', 'CASH_CAP']),
@@ -272,7 +281,7 @@ export async function submitCaseAction(caseId: string): Promise<ActionResult> {
 const approveSchema = z.object({
   caseId: z.string().min(1),
   approvedOn: isoDate,
-  windowDays: z.coerce.number().int().min(1).max(366),
+  windowDays: z.coerce.number().int().min(MIN_WINDOW_DAYS).max(366),
   roundingPaise: z.string().min(1),
   distribution: z.enum(['FRONT_LOADED', 'BACK_LOADED', 'EVEN']),
   cashPolicy: z.enum(['CASH_ONLY', 'ONLINE_ONLY', 'CASH_CAP']),

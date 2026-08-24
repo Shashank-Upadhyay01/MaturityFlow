@@ -104,7 +104,6 @@ export function WindowReplan({
           cashPolicy,
           startOnNextWorkingDay: false,
           calendar,
-          policyMaxDays: 15,
         }}
       />
     </div>
