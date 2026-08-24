@@ -3,12 +3,19 @@
  * Screenshots land in /tmp so the result can be eyeballed, not just asserted.
  */
 import { chromium } from 'playwright';
+import { existsSync } from 'node:fs';
 
 const base = 'http://localhost:3000';
 const email = process.argv[2] ?? 'admin@bank.test';
 const tag = process.argv[3] ?? 'admin';
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium', args: ['--no-sandbox'] });
+// That container path only exists in the Linux sandbox; everywhere else (Windows
+// included) fall through to the browser `npx playwright install chromium` put down.
+const EXECUTABLE = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium';
+const browser = await chromium.launch({
+  executablePath: existsSync(EXECUTABLE) ? EXECUTABLE : undefined,
+  args: ['--no-sandbox'],
+});
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 const page = await ctx.newPage();
 const errors = [];
