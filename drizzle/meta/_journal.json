@@ -36,6 +36,13 @@
       "when": 1787404878128,
       "tag": "0004_register_day_and_today_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787583864220,
+      "tag": "0005_fresh_james_howlett",
+      "breakpoints": true
     }
   ]
 }

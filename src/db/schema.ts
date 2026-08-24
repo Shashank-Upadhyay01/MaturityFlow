@@ -65,6 +65,9 @@ export const distributionEnum = pgEnum('distribution_mode', [
   'EVEN',
 ]);
 
+/** How often a case pays out. Persisted at approval — never re-derived from the amount. */
+export const payoutCadenceEnum = pgEnum('payout_cadence', ['DAILY', 'ALTERNATE']);
+
 export const cashPolicyEnum = pgEnum('cash_policy_kind', ['CASH_ONLY', 'ONLINE_ONLY', 'CASH_CAP']);
 
 export const saturdayRuleEnum = pgEnum('saturday_rule', ['NONE', 'ALL', 'SECOND_FOURTH']);
@@ -302,6 +305,12 @@ export const maturityCases = pgTable(
     windowDays: integer('window_days').notNull().default(15),
     roundingPaise: bigint('rounding_paise', { mode: 'bigint' }).notNull().default(sql`100000`),
     distribution: distributionEnum('distribution').notNull().default('FRONT_LOADED'),
+    /**
+     * Set once, at approval, from the maturity amount. Stored rather than re-derived because the
+     * amount is editable: correcting a figure months later must not silently move a case from
+     * alternate-day to daily payouts.
+     */
+    cadence: payoutCadenceEnum('cadence').notNull().default('DAILY'),
     cashPolicy: cashPolicyEnum('cash_policy').notNull().default('CASH_ONLY'),
     cashCapPerDayPaise: bigint('cash_cap_per_day_paise', { mode: 'bigint' }),
     startOnNextWorkingDay: boolean('start_on_next_working_day').notNull().default(false),
