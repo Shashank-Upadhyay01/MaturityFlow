@@ -7,7 +7,7 @@ import { db } from '@/db';
 import { maturityCases } from '@/db/schema';
 import { requireActor } from '@/lib/auth/session';
 import { tryParseRupeesToPaise } from '@/lib/money';
-import { assertCan, canTypeRegister, roleCan, type Actor, type ResourceRef } from '@/lib/rbac';
+import { assertCan, assertCanTypeRegister, roleCan, type Actor, type ResourceRef } from '@/lib/rbac';
 import type { BulkTodayMode } from '@/lib/register-view';
 import { cancelCase } from '@/services/case-service';
 import {
@@ -57,12 +57,13 @@ async function scope(caseId: string) {
  * So the check is: hold *some* register-typing permission, and then be asserted against the
  * strongest one you actually hold, so that the scope check (branch, agent) still runs against a
  * real permission rather than a made-up one. Bulk edits go through the same gate as single cells.
+ *
+ * `assertCanTypeRegister` comes first and is not redundant. It used to fall back to asserting
+ * `case.edit`, which an Agent holds for the form workflow — so a role meant to be read-only in the
+ * sheet sailed through on its own rows. Ask the "may you type here at all?" question by name.
  */
 function assertCanTypeRow(actor: Actor, c: ResourceRef) {
-  if (!canTypeRegister(actor.role)) {
-    assertCan(actor, 'case.edit', c);
-    return;
-  }
+  assertCanTypeRegister(actor);
   assertCan(
     actor,
     roleCan(actor.role, 'case.edit')
@@ -106,6 +107,7 @@ function bulkFailure(e: unknown): ActionResult<BulkOutcome> {
 export async function addRegisterRowAction(branchId: string): Promise<ActionResult<{ id: string }>> {
   try {
     const { session, actor } = await requireActor();
+    assertCanTypeRegister(actor);
     assertCan(actor, 'case.create', { branchId });
     const id = await createBlankRegisterRow(session, branchId);
     revalidate();
@@ -127,6 +129,7 @@ export async function addRegisterRowsAction(
 ): Promise<ActionResult<{ ids: string[]; added: number }>> {
   try {
     const { session, actor } = await requireActor();
+    assertCanTypeRegister(actor);
     assertCan(actor, 'case.create', { branchId });
     const n = Number.isFinite(count) ? Math.floor(count) : 1;
     if (n < 1) return fail('Enter how many rows to add.', 'VALIDATION');
@@ -158,11 +161,43 @@ export async function saveRegisterFieldsAction(
   }
 }
 
+/**
+ * Turn one of the sheet's empty rows into a real case, and write the first edit into it.
+ *
+ * The register always shows blank rows past the end of the real ones so a clerk can type
+ * straight into the sheet. Those rows exist only in the browser — nothing is written until
+ * somebody types, and then only the row they typed in. That is what keeps 100 waiting rows from
+ * becoming 100 DRAFT cases burning case numbers and turning up in every export.
+ *
+ * Create and edit are two audited steps against the same case, in that order, exactly as if the
+ * clerk had pressed "Add rows" and then typed — this is not a shortcut around either path.
+ *
+ * Two clerks typing into the same visual blank row get one row each. That is the honest outcome:
+ * they each entered a different customer, and neither edit is lost.
+ */
+export async function createRegisterRowWithFieldsAction(
+  branchId: string,
+  patch: Parameters<typeof updateRegisterRow>[2],
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    const { session, actor } = await requireActor();
+    assertCanTypeRegister(actor);
+    assertCan(actor, 'case.create', { branchId });
+    const id = await createBlankRegisterRow(session, branchId);
+    await updateRegisterRow(session, id, patch);
+    revalidate();
+    return ok({ id });
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
 export async function toggleFormSubmittedAction(caseId: string, submitted: boolean): Promise<ActionResult> {
   try {
     const { session, actor } = await requireActor();
     const c = await scope(caseId);
     if (!c) return fail('Row not found', 'NOT_FOUND');
+    assertCanTypeRegister(actor);
     assertCan(actor, 'case.submit', c);
     await setFormSubmitted(session, caseId, submitted);
     revalidate();
@@ -335,6 +370,7 @@ export async function bulkSetFormSubmittedAction(
 ): Promise<ActionResult<BulkOutcome>> {
   try {
     const { session, actor, ids, refs } = await openBulk(caseIds);
+    assertCanTypeRegister(actor);
     const outcome = await runBulk(ids, refs, async (id, ref) => {
       assertCan(actor, 'case.submit', ref);
       await setFormSubmitted(session, id, submitted);

@@ -2,9 +2,11 @@
 
 import { KeyRound, LogOut, Menu, UserCircle2, X } from 'lucide-react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 
 import { logoutAction } from '@/actions/auth';
+import { pageTitleFor } from './nav-config';
 import { Sidebar, type NavBadges } from './sidebar';
 import { ThemeToggle } from './theme-toggle';
 import type { SessionUser } from '@/lib/auth/session';
@@ -23,30 +25,45 @@ export function Topbar({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [drawer, setDrawer] = useState(false);
+  const pathname = usePathname();
+  const title = pageTitleFor(pathname);
 
   return (
     <>
-      <header className="glass glass-flat sticky top-0 z-30 flex h-14 items-center gap-3 rounded-none border-x-0 border-t-0 px-4 sm:px-6">
+      <header className="glass glass-flat sticky top-0 z-30 flex h-12 items-center gap-3 rounded-none border-x-0 border-t-0 px-4 sm:px-6">
         <button
           type="button"
           onClick={() => setDrawer(true)}
           aria-label="Open navigation"
-          className="rounded-[11px] p-2 text-[var(--muted-fg)] transition-colors hover:bg-[var(--glass-bg-subtle)] xl:hidden"
+          className="-ml-1 rounded-[11px] p-1.5 text-[var(--muted-fg)] transition-colors hover:bg-[var(--glass-bg-subtle)] xl:hidden"
         >
           <Menu className="h-5 w-5" />
         </button>
 
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[0.8125rem] text-[var(--muted-fg)]">
-            <span className="font-medium text-[var(--page-fg)]">{todayLabel}</span>
-            {session.branchName && (
-              <>
-                <span className="mx-2 text-[var(--faint-fg)]">·</span>
-                {session.branchCode} {session.branchName}
-              </>
-            )}
-          </p>
+        {/*
+          The page name leads. This bar used to open with the date and then run
+          ~800px of empty glass before the avatar, which is why the screen read
+          as two half-used bars stacked on each other.
+        */}
+        <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
+          {/*
+            A locator, not the document heading — most screens print their own <h1> just below
+            this bar, and two <h1>s on one page is worse for a screen reader than none. The
+            Register, which gave its heading up to this bar, carries an sr-only one instead.
+          */}
+          <span className="truncate text-[0.9375rem] font-semibold uppercase leading-none tracking-[0.08em]">
+            {title}
+          </span>
+          {session.branchName && (
+            <span className="hidden truncate text-[0.75rem] text-[var(--muted-fg)] sm:block">
+              {session.branchCode} · {session.branchName}
+            </span>
+          )}
         </div>
+
+        <span className="hidden whitespace-nowrap text-[0.75rem] tabular-nums text-[var(--muted-fg)] md:block">
+          {todayLabel}
+        </span>
 
         <ThemeToggle />
 

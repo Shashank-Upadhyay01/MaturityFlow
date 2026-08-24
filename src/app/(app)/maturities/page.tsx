@@ -32,6 +32,18 @@ export default async function MaturitiesPage() {
 
   const cashLimit = branch?.dailyCashComfortPaise ?? rows[0]?.dailyCashComfortPaise ?? 50_000_000n;
 
+  /**
+   * A role that may not type the register gets none of its write affordances, whatever
+   * permissions it holds elsewhere.
+   *
+   * An Agent still owns `case.create` and `case.submit` for the form workflow, so reading those
+   * straight off the role left the "Add rows" button and the "Form in" tick interactive on a
+   * sheet they are not allowed to change — the server rejected every click. Ask the register's
+   * own question first, then the permission.
+   */
+  const canType = canTypeRegister(session.role);
+  const canOnSheet = (p: Parameters<typeof roleCan>[1]) => canType && roleCan(session.role, p);
+
   return (
     <div className="space-y-3">
       <RegisterSheet
@@ -45,17 +57,17 @@ export default async function MaturitiesPage() {
         plannedOnlinePaise={desk.plannedOnlinePaise.toString()}
         withdrawalsToday={desk.withdrawalsToday}
         paidTodayPaise={desk.paidTodayPaise.toString()}
-        canEdit={canTypeRegister(session.role)}
-        canPay={roleCan(session.role, 'payout.record')}
-        canApprove={roleCan(session.role, 'case.approve')}
-        canSubmit={roleCan(session.role, 'case.submit')}
-        canImport={roleCan(session.role, 'data.import')}
-        canCreate={roleCan(session.role, 'case.create')}
-        canSetCash={roleCan(session.role, 'cash.setOpening')}
-        canRequestClose={roleCan(session.role, 'payout.record') || roleCan(session.role, 'settings.manage')}
-        canConfirmClose={['ADMIN', 'OPS_HEAD', 'CMD', 'CEO'].includes(session.role)}
+        canEdit={canType}
+        canPay={canOnSheet('payout.record')}
+        canApprove={canOnSheet('case.approve')}
+        canSubmit={canOnSheet('case.submit')}
+        canImport={canOnSheet('data.import')}
+        canCreate={canOnSheet('case.create')}
+        canSetCash={canOnSheet('cash.setOpening')}
+        canRequestClose={canOnSheet('payout.record') || canOnSheet('settings.manage')}
+        canConfirmClose={canType && ['ADMIN', 'OPS_HEAD', 'CMD', 'CEO'].includes(session.role)}
         canLayout={roleCan(session.role, 'settings.manage')}
-        canRemove={roleCan(session.role, 'case.cancel')}
+        canRemove={canOnSheet('case.cancel')}
         columnLayout={parseRegisterLayout(branch?.registerColumnOrder)}
         agents={options.agents.map((a) => ({ id: a.id, name: a.name }))}
         rows={rows.map((r) => {

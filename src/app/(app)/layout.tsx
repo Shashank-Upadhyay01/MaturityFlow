@@ -30,10 +30,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           badges={badges}
           todayLabel={`${weekdayShort(today)}, ${formatISODate(today)}`}
         />
-        <main className="min-w-0 flex-1 px-3 py-4 sm:px-5">
+        <main className="min-w-0 flex-1 px-3 py-3 sm:px-4">
           {children}
         </main>
-        <footer className="no-print px-6 py-3 text-center text-[0.6875rem] text-[var(--faint-fg)]">
+        <footer className="no-print px-6 py-2 text-center text-[0.6875rem] text-[var(--faint-fg)]">
           MaturityFlow · every rupee scheduled, every action audited
         </footer>
       </div>
