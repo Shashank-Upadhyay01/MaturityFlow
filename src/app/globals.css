@@ -77,16 +77,26 @@
   --field-4: 200 90% 60%;
   --field-alpha: 0.16;
 
-  --page-bg: #eef1f8;
-  --page-fg: #0f172a;
-  --muted-fg: #5a6478;
-  --faint-fg: #8892a6;
+  /*
+     Light mode is a working screen, not a showroom.
 
-  --glass-bg: rgba(255, 255, 255, 0.62);
-  --glass-bg-strong: rgba(255, 255, 255, 0.8);
-  --glass-bg-subtle: rgba(255, 255, 255, 0.4);
-  --glass-border: rgba(255, 255, 255, 0.75);
-  --glass-border-quiet: rgba(15, 23, 42, 0.07);
+     It used to be near-white panels on a near-white page behind a *white* border, so nothing had
+     an edge and the only thing separating a table from the page was a shadow. Panels are now
+     close to opaque and carry a real, dark-tinted border; the page sits a shade below them so
+     they read as raised. Text targets: body ≥ 7:1, muted ≥ 7:1, faint ≥ 4.5:1 on the panel.
+
+     Only the light values change here — `.dark` redefines every one of these below.
+  */
+  --page-bg: #e7ebf3;
+  --page-fg: #0b1220;
+  --muted-fg: #4a5468;
+  --faint-fg: #66708a;
+
+  --glass-bg: rgba(255, 255, 255, 0.88);
+  --glass-bg-strong: rgba(255, 255, 255, 0.96);
+  --glass-bg-subtle: rgba(255, 255, 255, 0.6);
+  --glass-border: rgba(15, 23, 42, 0.13);
+  --glass-border-quiet: rgba(15, 23, 42, 0.09);
   --glass-highlight: rgba(255, 255, 255, 0.95);
   --glass-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -6px rgba(15, 23, 42, 0.1),
     0 24px 48px -20px rgba(15, 23, 42, 0.14);
@@ -95,9 +105,17 @@
   --glass-blur: 22px;
   --glass-saturate: 180%;
 
-  --hairline: rgba(15, 23, 42, 0.08);
-  --input-bg: rgba(255, 255, 255, 0.7);
-  --input-border: rgba(15, 23, 42, 0.12);
+  /*
+     A fully opaque panel surface, for the few panels that sit ON TOP of content rather than
+     beside it — the register's selection bar parks over the table's sticky header, and at any
+     translucency the column headings read straight through the totals printed on it.
+  */
+  --surface-solid: #ffffff;
+
+  /* Grid lines a clerk can actually follow across a 16-column row. */
+  --hairline: rgba(15, 23, 42, 0.15);
+  --input-bg: rgba(255, 255, 255, 0.95);
+  --input-border: rgba(15, 23, 42, 0.2);
   --ring: rgba(99, 102, 241, 0.45);
 }
 
@@ -138,6 +156,9 @@
     0 48px 88px -30px rgba(0, 0, 0, 0.7);
   --glass-blur: 26px;
   --glass-saturate: 165%;
+
+  /* Opaque counterpart of the light value — see --surface-solid above. */
+  --surface-solid: #171d2e;
 
   --hairline: rgba(255, 255, 255, 0.08);
   --input-bg: rgba(255, 255, 255, 0.05);
