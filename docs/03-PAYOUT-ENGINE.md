@@ -248,6 +248,27 @@ of on the day it happens.
 
 ---
 
+## 4a. Editing one day
+
+`src/lib/schedule-edit.ts` — `rebalanceAfter(instalments, id, newAmount, step)`.
+
+Setting one day's amount spreads the difference over the days **after** it. Days before it keep
+the figures the branch has already planned cash against; fully paid days are never rewritten; a
+part-paid day may be cut only as far as what actually went out. The total never moves, and that is
+re-asserted before the result is returned — a mismatch throws `ScheduleEditIntegrityError`.
+
+Clerk mistakes come back as typed errors (`NO_LATER_UNPAID_DAYS`, `AMOUNT_EXCEEDS_REMAINING`,
+`AMOUNT_BELOW_ALREADY_PAID`, …) carrying a message. Only broken arithmetic throws.
+
+The browser previews with this function and the server re-derives with the same one, from rows it
+re-read with `.for('update')` after taking the case row lock. So the client supplies two
+parameters — which day, what amount — and never a set of instalment rows. The previous version of
+that action accepted every amount from the browser and only checked they added up; this replaced
+it.
+
+Legs are re-split from the case's own cash policy on each changed row, because
+`cash + online === amount` is a database CHECK (INV-3) and a carried-over leg would break it.
+
 ## 5. Test strategy
 
 | Suite | What it proves |

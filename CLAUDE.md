@@ -132,6 +132,8 @@ These are enforced in code and in the database. Do not weaken them.
 src/lib/payout-engine.ts   ★ the algorithm. Pure, deterministic, no I/O. Read the docs first.
 src/lib/payout-policy.ts   ★ the ₹1 lakh rule: cadence, processing days, payout count. Pure.
                            The engine stays policy-free so a rule change cannot reach the money.
+src/lib/schedule-edit.ts   ★ moving money between days of a live schedule. Pure, fuzz-tested.
+                           Later days absorb the change; paid days are never rewritten.
 src/lib/money.ts           BigInt paise: parsing, Indian formatting, rounding steps
 src/lib/working-days.ts    weekend rules (2nd/4th Saturday), holidays, date maths in UTC
 src/lib/payment-rules.ts   pure validation for recording a disbursement (INV-4)
