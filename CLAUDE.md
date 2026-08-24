@@ -231,6 +231,12 @@ Local database: `docker compose up -d db` (Postgres 16 on 5432).
   that they pay on alternate working days inside the same window and share the same deadline.
   The minimum window is `MIN_WINDOW_DAYS` (4), enforced at every input site so a case cannot be
   created that could never be approved.
+- **"Missed" is derived, never read from a stored flag.** `isOverdueInstalment(asOf)` in
+  `queries.ts` is the one definition (`due_on < today AND status IN ('PENDING','PARTIAL')`).
+  `markMissedInstalments()` exists in `schedule-service.ts` and has no callers on purpose:
+  calling it from the follow-up lists would be a write on a read path — a transaction per page
+  view, fired by anyone holding `case.view` including the read-only Auditor, changing stored state
+  with no audit row. Leave it for a future scheduled job.
 - **A per-day figure is `remaining / payoutDays`, never `remaining / windowDays`.** The window
   includes days that pay nothing. `recommendedPerDay()` in `register-view.ts` is the single
   definition — the Per day column, its sort and the bulk "set today" action all call it.
