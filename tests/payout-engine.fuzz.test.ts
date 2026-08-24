@@ -39,7 +39,7 @@ const cal = makeCalendar(holidays);
 const ITERATIONS = Number(process.env.FUZZ_ITERATIONS ?? 100_000);
 
 describe(`payout engine — ${ITERATIONS.toLocaleString('en-IN')} randomised cases`, () => {
-  it('never violates a money invariant', () => {
+  it('never violates a money invariant', async () => {
     const rand = mulberry32(20260818);
     let checked = 0;
     let maxInstallments = 0;
@@ -163,6 +163,12 @@ describe(`payout engine — ${ITERATIONS.toLocaleString('en-IN')} randomised cas
 
       maxInstallments = Math.max(maxInstallments, res.installments.length);
       checked++;
+
+      // Hand the event loop back periodically. The full sweep is over a minute of uninterrupted
+      // synchronous work, which starves vitest's worker→reporter heartbeat and surfaces as
+      // `Timeout calling "onTaskUpdate"` — an unhandled error that vitest itself warns can mask
+      // real failures. Costs nothing measurable; keeps the run clean.
+      if (checked % 5_000 === 0) await new Promise((r) => setImmediate(r));
     }
 
     expect(checked).toBe(ITERATIONS);
