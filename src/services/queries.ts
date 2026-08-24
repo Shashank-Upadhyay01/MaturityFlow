@@ -21,9 +21,10 @@ import {
   type CaseStatus,
 } from '@/db/schema';
 import type { Actor } from '@/lib/rbac';
-import { ROLE_SCOPE } from '@/lib/rbac';
+import { ROLE_SCOPE, ROLE_WRITE_SCOPE } from '@/lib/rbac';
 import { buildRunway, type RunwayCase } from '@/lib/cash-runway';
 import { DEFAULT_CASH_CAP_PAISE } from '@/lib/org-settings';
+import { LARGE_CASE_THRESHOLD_PAISE } from '@/lib/payout-policy';
 import { addDays, collectWorkingDays, todayISO } from '@/lib/working-days';
 import { getBranchPolicy } from './calendar-service';
 import { loadOrgSettings } from './org-settings';
@@ -851,9 +852,17 @@ export async function listAudit(filters: {
 
 // ── Lookups for forms ─────────────────────────────────────────────────────
 
+/**
+ * The dropdowns behind the new-maturity form.
+ *
+ * These are scoped by ROLE_WRITE_SCOPE, not the wider read scope, because every option here is
+ * something the actor is about to *write*. On the read scope an agent would be offered every
+ * branch and every agent in the bank, and each pick would then be rejected by `assertCan` on
+ * submit — a form full of choices that fail. Offer only what the actor can actually use.
+ */
 export async function getFormOptions(actor: Actor) {
-  const branchFilter =
-    ROLE_SCOPE[actor.role] === 'ALL' ? undefined : eq(branches.id, actor.branchId ?? '__none__');
+  const scope = ROLE_WRITE_SCOPE[actor.role];
+  const branchFilter = scope === 'ALL' ? undefined : eq(branches.id, actor.branchId ?? '__none__');
 
   const allBranches = await db
     .select({
@@ -870,9 +879,9 @@ export async function getFormOptions(actor: Actor) {
     .orderBy(asc(branches.code));
 
   const agentFilter =
-    ROLE_SCOPE[actor.role] === 'OWN'
+    scope === 'OWN'
       ? eq(agents.id, actor.agentId ?? '__none__')
-      : ROLE_SCOPE[actor.role] === 'BRANCH'
+      : scope === 'BRANCH'
         ? eq(agents.branchId, actor.branchId ?? '__none__')
         : undefined;
 
@@ -883,9 +892,9 @@ export async function getFormOptions(actor: Actor) {
     .orderBy(asc(agents.name));
 
   const customerFilter =
-    ROLE_SCOPE[actor.role] === 'OWN'
+    scope === 'OWN'
       ? eq(customers.agentId, actor.agentId ?? '__none__')
-      : ROLE_SCOPE[actor.role] === 'BRANCH'
+      : scope === 'BRANCH'
         ? eq(customers.branchId, actor.branchId ?? '__none__')
         : undefined;
 
@@ -1065,6 +1074,143 @@ export async function getUserDossier(userId: string, currentTokenId?: string) {
       liveSessions,
     },
   };
+}
+
+// ── Follow-up: the four lists that chase money that has not moved ──────────
+
+/**
+ * "Missed" is DERIVED, never read from a stored flag.
+ *
+ * `markMissedInstalments()` exists in schedule-service.ts and would set `status = 'MISSED'`, but
+ * calling it here would mean writing on a read path: a transaction on every page view, fired by
+ * anyone holding `case.view` including the read-only Auditor, changing stored state with no audit
+ * row. The predicate below is the same answer, needs no write, and cannot drift from a column
+ * because it does not consult one.
+ *
+ * One definition, so the four tabs cannot disagree about what "missed" means.
+ */
+export function isOverdueInstalment(asOf: string) {
+  return and(
+    sql`${payoutInstalments.dueOn} < ${asOf}`,
+    inArray(payoutInstalments.status, ['PENDING', 'PARTIAL']),
+  );
+}
+
+const followUpRow = {
+  caseId: maturityCases.id,
+  caseNumber: maturityCases.caseNumber,
+  customerName: customers.name,
+  accountNumber: customers.accountNumber,
+  agentName: agents.name,
+  agentId: agents.id,
+  branchName: branches.name,
+  maturityAmountPaise: maturityCases.maturityAmountPaise,
+  paidCashPaise: maturityCases.paidCashPaise,
+  paidOnlinePaise: maturityCases.paidOnlinePaise,
+  approvedOn: maturityCases.approvedOn,
+  deadlineOn: maturityCases.deadlineOn,
+  cadence: maturityCases.cadence,
+} as const;
+
+/** Days that came and went without the money going out. */
+export async function listMissedInstalments(actor: Actor, asOf: string) {
+  const scope = caseScope(actor);
+  return db
+    .select({
+      ...followUpRow,
+      instalmentId: payoutInstalments.id,
+      dueOn: payoutInstalments.dueOn,
+      dueAmountPaise: payoutInstalments.amountPaise,
+      duePaidPaise: sql<string>`${payoutInstalments.paidCashPaise} + ${payoutInstalments.paidOnlinePaise}`,
+    })
+    .from(payoutInstalments)
+    .innerJoin(maturityCases, eq(maturityCases.id, payoutInstalments.caseId))
+    .innerJoin(customers, eq(customers.id, maturityCases.customerId))
+    .innerJoin(agents, eq(agents.id, maturityCases.agentId))
+    .innerJoin(branches, eq(branches.id, maturityCases.branchId))
+    .where(and(isOverdueInstalment(asOf), ...(scope ? [scope] : [])))
+    .orderBy(asc(payoutInstalments.dueOn));
+}
+
+/** Due today, still not handed over. */
+export async function listNotTakenToday(actor: Actor, asOf: string) {
+  const scope = caseScope(actor);
+  return db
+    .select({
+      ...followUpRow,
+      instalmentId: payoutInstalments.id,
+      dueOn: payoutInstalments.dueOn,
+      dueAmountPaise: payoutInstalments.amountPaise,
+      duePaidPaise: sql<string>`${payoutInstalments.paidCashPaise} + ${payoutInstalments.paidOnlinePaise}`,
+      cashLegPaise: payoutInstalments.cashLegPaise,
+      onlineLegPaise: payoutInstalments.onlineLegPaise,
+    })
+    .from(payoutInstalments)
+    .innerJoin(maturityCases, eq(maturityCases.id, payoutInstalments.caseId))
+    .innerJoin(customers, eq(customers.id, maturityCases.customerId))
+    .innerJoin(agents, eq(agents.id, maturityCases.agentId))
+    .innerJoin(branches, eq(branches.id, maturityCases.branchId))
+    .where(
+      and(
+        sql`${payoutInstalments.dueOn} = ${asOf}`,
+        inArray(payoutInstalments.status, ['PENDING', 'PARTIAL']),
+        ...(scope ? [scope] : []),
+      ),
+    )
+    .orderBy(desc(payoutInstalments.amountPaise));
+}
+
+/**
+ * Live cases at or above the ₹1 lakh line — the ones paid every working day.
+ *
+ * The threshold is the policy's, not a literal repeated here: change LARGE_CASE_THRESHOLD_PAISE
+ * and this list follows.
+ */
+export async function listPriorityCases(actor: Actor, asOf: string) {
+  const scope = caseScope(actor);
+  return db
+    .select({
+      ...followUpRow,
+      dueTodayPaise: sql<string>`COALESCE((
+        SELECT SUM(pi.amount_paise - pi.paid_cash_paise - pi.paid_online_paise)
+        FROM payout_instalments pi
+        WHERE pi.case_id = ${maturityCases.id}
+          AND pi.due_on = ${asOf}
+          AND pi.status IN ('PENDING','PARTIAL')
+      ), 0)`,
+    })
+    .from(maturityCases)
+    .innerJoin(customers, eq(customers.id, maturityCases.customerId))
+    .innerJoin(agents, eq(agents.id, maturityCases.agentId))
+    .innerJoin(branches, eq(branches.id, maturityCases.branchId))
+    .where(
+      and(
+        inArray(maturityCases.status, ['APPROVED', 'IN_PROGRESS']),
+        sql`${maturityCases.maturityAmountPaise} >= ${LARGE_CASE_THRESHOLD_PAISE}`,
+        ...(scope ? [scope] : []),
+      ),
+    )
+    .orderBy(desc(maturityCases.maturityAmountPaise));
+}
+
+/** Past the promised completion date with money still owed. */
+export async function listBreachedCases(actor: Actor, asOf: string) {
+  const scope = caseScope(actor);
+  return db
+    .select(followUpRow)
+    .from(maturityCases)
+    .innerJoin(customers, eq(customers.id, maturityCases.customerId))
+    .innerJoin(agents, eq(agents.id, maturityCases.agentId))
+    .innerJoin(branches, eq(branches.id, maturityCases.branchId))
+    .where(
+      and(
+        inArray(maturityCases.status, ['APPROVED', 'IN_PROGRESS']),
+        sql`${maturityCases.deadlineOn} IS NOT NULL AND ${maturityCases.deadlineOn} < ${asOf}`,
+        sql`${maturityCases.paidCashPaise} + ${maturityCases.paidOnlinePaise} < ${maturityCases.maturityAmountPaise}`,
+        ...(scope ? [scope] : []),
+      ),
+    )
+    .orderBy(asc(maturityCases.deadlineOn));
 }
 
 export { ne };

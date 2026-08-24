@@ -20,6 +20,7 @@ export const NAV: { section: string; items: NavItem[] }[] = [
       { href: '/maturities', label: 'Register', icon: 'files', permission: 'case.view', description: 'The branch Excel sheet' },
       { href: '/dashboard', label: 'Summary', icon: 'dashboard', permission: 'case.view', description: 'Totals across the register' },
       { href: '/approvals', label: 'Approvals', icon: 'inbox', permission: 'case.approve', badge: 'approvals', description: 'Forms waiting for sign-off' },
+      { href: '/follow-up', label: 'Follow-up', icon: 'shield', permission: 'case.view', description: 'Missed days, today’s counter, large cases, broken promises' },
     ],
   },
   {
@@ -40,3 +41,31 @@ export const NAV: { section: string; items: NavItem[] }[] = [
     ],
   },
 ];
+
+/**
+ * Screens that carry a title but never appear in the sidebar, plus the ones
+ * whose sidebar label is not what you want printed as a page heading.
+ */
+const EXTRA_TITLES: Record<string, string> = {
+  '/maturities/new': 'New maturity',
+  '/account': 'My profile',
+  '/account/password': 'Change password',
+  '/import': 'Import',
+  '/payouts': 'Payouts',
+};
+
+/**
+ * The page name for the top bar. Longest matching prefix wins, so
+ * `/maturities/<id>` still reads "Register" rather than falling back.
+ */
+export function pageTitleFor(pathname: string): string {
+  const exact = EXTRA_TITLES[pathname];
+  if (exact) return exact;
+
+  const items = NAV.flatMap((s) => s.items);
+  const hit = items
+    .filter((i) => pathname === i.href || pathname.startsWith(`${i.href}/`))
+    .sort((a, b) => b.href.length - a.href.length)[0];
+
+  return hit?.label ?? 'MaturityFlow';
+}
