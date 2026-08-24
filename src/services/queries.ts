@@ -1213,4 +1213,86 @@ export async function listBreachedCases(actor: Actor, asOf: string) {
     .orderBy(asc(maturityCases.deadlineOn));
 }
 
+/**
+ * Every customer an agent is responsible for, with the state of each maturity.
+ *
+ * One row per case, not per customer: a customer can hold more than one maturity, and collapsing
+ * them would hide the one that has not been paid. The caller groups.
+ *
+ * Scoped like everything else — an agent opening this sees only their own book.
+ */
+export async function getAgentCustomers(actor: Actor, agentId: string) {
+  const scope = caseScope(actor);
+  return db
+    .select({
+      caseId: maturityCases.id,
+      caseNumber: maturityCases.caseNumber,
+      customerId: customers.id,
+      customerName: customers.name,
+      accountNumber: customers.accountNumber,
+      phone: customers.phone,
+      schemeName: maturityCases.schemeName,
+      status: maturityCases.status,
+      maturityAmountPaise: maturityCases.maturityAmountPaise,
+      paidCashPaise: maturityCases.paidCashPaise,
+      paidOnlinePaise: maturityCases.paidOnlinePaise,
+      instrumentMaturityOn: maturityCases.instrumentMaturityOn,
+      formSubmittedOn: maturityCases.formSubmittedOn,
+      approvedOn: maturityCases.approvedOn,
+      deadlineOn: maturityCases.deadlineOn,
+      paymentOn: maturityCases.paymentOn,
+      cadence: maturityCases.cadence,
+      branchName: branches.name,
+      agentName: agents.name,
+      agentCode: agents.code,
+    })
+    .from(maturityCases)
+    .innerJoin(customers, eq(customers.id, maturityCases.customerId))
+    .innerJoin(agents, eq(agents.id, maturityCases.agentId))
+    .innerJoin(branches, eq(branches.id, maturityCases.branchId))
+    .where(
+      and(
+        eq(maturityCases.agentId, agentId),
+        inArray(maturityCases.status, OPEN.concat('COMPLETED')),
+        ...(scope ? [scope] : []),
+      ),
+    )
+    .orderBy(asc(customers.name), asc(maturityCases.caseNumber));
+}
+
+/** The same, for every agent at once — what the Agents page expands into. */
+export async function getAllAgentCustomers(actor: Actor) {
+  const scope = caseScope(actor);
+  return db
+    .select({
+      agentId: maturityCases.agentId,
+      caseId: maturityCases.id,
+      caseNumber: maturityCases.caseNumber,
+      customerId: customers.id,
+      customerName: customers.name,
+      accountNumber: customers.accountNumber,
+      phone: customers.phone,
+      schemeName: maturityCases.schemeName,
+      status: maturityCases.status,
+      maturityAmountPaise: maturityCases.maturityAmountPaise,
+      paidCashPaise: maturityCases.paidCashPaise,
+      paidOnlinePaise: maturityCases.paidOnlinePaise,
+      instrumentMaturityOn: maturityCases.instrumentMaturityOn,
+      formSubmittedOn: maturityCases.formSubmittedOn,
+      approvedOn: maturityCases.approvedOn,
+      deadlineOn: maturityCases.deadlineOn,
+      paymentOn: maturityCases.paymentOn,
+      cadence: maturityCases.cadence,
+    })
+    .from(maturityCases)
+    .innerJoin(customers, eq(customers.id, maturityCases.customerId))
+    .where(
+      and(
+        inArray(maturityCases.status, OPEN.concat('COMPLETED')),
+        ...(scope ? [scope] : []),
+      ),
+    )
+    .orderBy(asc(customers.name), asc(maturityCases.caseNumber));
+}
+
 export { ne };
