@@ -1,7 +1,23 @@
 import 'server-only';
 
 import { cache } from 'react';
-import { and, asc, count, desc, eq, gte, inArray, isNull, like, lte, ne, not, or, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  like,
+  lte,
+  ne,
+  not,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db } from '@/db';
 import {
@@ -45,7 +61,15 @@ export function caseScope(actor: Actor): SQL | undefined {
 }
 
 const LIVE: CaseStatus[] = ['APPROVED', 'IN_PROGRESS'];
-const OPEN: CaseStatus[] = ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'RETURNED', 'APPROVED', 'IN_PROGRESS', 'ON_HOLD'];
+const OPEN: CaseStatus[] = [
+  'DRAFT',
+  'SUBMITTED',
+  'UNDER_REVIEW',
+  'RETURNED',
+  'APPROVED',
+  'IN_PROGRESS',
+  'ON_HOLD',
+];
 
 // ── Dashboard ─────────────────────────────────────────────────────────────
 
@@ -76,7 +100,7 @@ const big = (v: unknown): bigint => (v == null ? 0n : BigInt(v as string));
 
 async function loadDashboardStats(actor: Actor, date: string): Promise<DashboardStats> {
   const scope = caseScope(actor);
-  const and_ = (...xs: (SQL | undefined)[]) => and(...xs.filter(Boolean) as SQL[]);
+  const and_ = (...xs: (SQL | undefined)[]) => and(...(xs.filter(Boolean) as SQL[]));
 
   // One connection at a time. Parallel tiles against a cloud pooler were
   // starving later pages (cash planner / payouts) of connections.
@@ -122,7 +146,13 @@ async function loadDashboardStats(actor: Actor, date: string): Promise<Dashboard
     })
     .from(payoutTransactions)
     .innerJoin(maturityCases, eq(maturityCases.id, payoutTransactions.caseId))
-    .where(and_(eq(payoutTransactions.valueDate, date), sql`${payoutTransactions.reversedAt} IS NULL`, scope));
+    .where(
+      and_(
+        eq(payoutTransactions.valueDate, date),
+        sql`${payoutTransactions.reversedAt} IS NULL`,
+        scope,
+      ),
+    );
 
   const [overdue] = await db
     .select({
@@ -222,9 +252,12 @@ export interface RegisterSummary {
  * The Summary page reads the register, not the instalment schedule.
  * Remaining = amount − paid, same as the sheet header.
  */
-export async function getRegisterSummary(actor: Actor, date = todayISO()): Promise<RegisterSummary> {
+export async function getRegisterSummary(
+  actor: Actor,
+  date = todayISO(),
+): Promise<RegisterSummary> {
   const scope = caseScope(actor);
-  const and_ = (...xs: (SQL | undefined)[]) => and(...xs.filter(Boolean) as SQL[]);
+  const and_ = (...xs: (SQL | undefined)[]) => and(...(xs.filter(Boolean) as SQL[]));
   const remainingSql = sql`${maturityCases.maturityAmountPaise} - ${maturityCases.paidCashPaise} - ${maturityCases.paidOnlinePaise}`;
 
   const [book] = await db
@@ -299,7 +332,7 @@ export async function getNavBadges(
   date = todayISO(),
 ): Promise<{ approvals: number; dueToday: number; overdue: number }> {
   const scope = caseScope(actor);
-  const and_ = (...xs: (SQL | undefined)[]) => and(...xs.filter(Boolean) as SQL[]);
+  const and_ = (...xs: (SQL | undefined)[]) => and(...(xs.filter(Boolean) as SQL[]));
 
   const [waiting] = await db
     .select({ n: count() })
@@ -623,9 +656,7 @@ export async function getAgentRollup(actor: Actor) {
 
 export async function getBranchRollup(actor: Actor) {
   const branchFilter =
-    ROLE_SCOPE[actor.role] === 'ALL'
-      ? undefined
-      : eq(branches.id, actor.branchId ?? '__none__');
+    ROLE_SCOPE[actor.role] === 'ALL' ? undefined : eq(branches.id, actor.branchId ?? '__none__');
   return db
     .select({
       branchId: branches.id,
@@ -697,7 +728,8 @@ export async function getCashPlan(branchId: string, days = 14, from = todayISO()
     todayOnlinePaise: c.todayOnlinePaise,
     windowDays: c.windowDays,
     committed: c.status === 'APPROVED' || c.status === 'IN_PROGRESS',
-    cashCapPaise: c.cashCapPerDayPaise && c.cashCapPerDayPaise > 0n ? c.cashCapPerDayPaise : CASH_CAP,
+    cashCapPaise:
+      c.cashCapPerDayPaise && c.cashCapPerDayPaise > 0n ? c.cashCapPerDayPaise : CASH_CAP,
   }));
 
   const positions = await db
@@ -823,16 +855,18 @@ export async function getMonthlyLedger(actor: Actor, from: string, to: string) {
 
 // ── Audit ─────────────────────────────────────────────────────────────────
 
-export async function listAudit(filters: {
-  action?: string;
-  entityId?: string;
-  branchId?: string;
-  actorId?: string;
-  hideAuth?: boolean;
-  onlyAuth?: boolean;
-  limit?: number;
-  offset?: number;
-} = {}) {
+export async function listAudit(
+  filters: {
+    action?: string;
+    entityId?: string;
+    branchId?: string;
+    actorId?: string;
+    hideAuth?: boolean;
+    onlyAuth?: boolean;
+    limit?: number;
+    offset?: number;
+  } = {},
+) {
   const conds: SQL[] = [];
   if (filters.action) conds.push(eq(auditLog.action, filters.action));
   if (filters.hideAuth) conds.push(not(like(auditLog.action, 'auth.%')));
@@ -985,78 +1019,93 @@ export async function getUserDossier(userId: string, currentTokenId?: string) {
 
   const now = new Date();
 
-  const [sessionRows, activity, caseRows, payoutRows, caseCount, payoutCount, docCount, liveSessions] =
-    await Promise.all([
-      db
-        .select({
-          id: sessions.id,
-          tokenId: sessions.tokenId,
-          createdAt: sessions.createdAt,
-          expiresAt: sessions.expiresAt,
-          revokedAt: sessions.revokedAt,
-          ip: sessions.ip,
-          userAgent: sessions.userAgent,
-        })
-        .from(sessions)
-        .where(eq(sessions.userId, userId))
-        .orderBy(desc(sessions.createdAt))
-        .limit(40),
-      db
-        .select()
-        .from(auditLog)
-        .where(or(eq(auditLog.actorId, userId), and(eq(auditLog.entity, 'User'), eq(auditLog.entityId, userId))))
-        .orderBy(desc(auditLog.at))
-        .limit(200),
-      db
-        .select({
-          id: maturityCases.id,
-          caseNumber: maturityCases.caseNumber,
-          status: maturityCases.status,
-          customerName: customers.name,
-          maturityAmountPaise: maturityCases.maturityAmountPaise,
-          createdAt: maturityCases.createdAt,
-        })
-        .from(maturityCases)
-        .innerJoin(customers, eq(customers.id, maturityCases.customerId))
-        .where(eq(maturityCases.createdById, userId))
-        .orderBy(desc(maturityCases.createdAt))
-        .limit(30),
-      db
-        .select({
-          id: payoutTransactions.id,
-          caseId: payoutTransactions.caseId,
-          totalPaise: payoutTransactions.totalPaise,
-          cashPaise: payoutTransactions.cashPaise,
-          onlinePaise: payoutTransactions.onlinePaise,
-          valueDate: payoutTransactions.valueDate,
-          paidAt: payoutTransactions.paidAt,
-          reversedAt: payoutTransactions.reversedAt,
-        })
-        .from(payoutTransactions)
-        .where(eq(payoutTransactions.recordedById, userId))
-        .orderBy(desc(payoutTransactions.paidAt))
-        .limit(30),
-      db
-        .select({ n: sql<number>`count(*)::int` })
-        .from(maturityCases)
-        .where(eq(maturityCases.createdById, userId))
-        .then((r) => r[0]?.n ?? 0),
-      db
-        .select({ n: sql<number>`count(*)::int` })
-        .from(payoutTransactions)
-        .where(eq(payoutTransactions.recordedById, userId))
-        .then((r) => r[0]?.n ?? 0),
-      db
-        .select({ n: sql<number>`count(*)::int` })
-        .from(caseDocuments)
-        .where(eq(caseDocuments.uploadedById, userId))
-        .then((r) => r[0]?.n ?? 0),
-      db
-        .select({ n: sql<number>`count(*)::int` })
-        .from(sessions)
-        .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt), gte(sessions.expiresAt, now)))
-        .then((r) => r[0]?.n ?? 0),
-    ]);
+  const [
+    sessionRows,
+    activity,
+    caseRows,
+    payoutRows,
+    caseCount,
+    payoutCount,
+    docCount,
+    liveSessions,
+  ] = await Promise.all([
+    db
+      .select({
+        id: sessions.id,
+        tokenId: sessions.tokenId,
+        createdAt: sessions.createdAt,
+        expiresAt: sessions.expiresAt,
+        revokedAt: sessions.revokedAt,
+        ip: sessions.ip,
+        userAgent: sessions.userAgent,
+      })
+      .from(sessions)
+      .where(eq(sessions.userId, userId))
+      .orderBy(desc(sessions.createdAt))
+      .limit(40),
+    db
+      .select()
+      .from(auditLog)
+      .where(
+        or(
+          eq(auditLog.actorId, userId),
+          and(eq(auditLog.entity, 'User'), eq(auditLog.entityId, userId)),
+        ),
+      )
+      .orderBy(desc(auditLog.at))
+      .limit(200),
+    db
+      .select({
+        id: maturityCases.id,
+        caseNumber: maturityCases.caseNumber,
+        status: maturityCases.status,
+        customerName: customers.name,
+        maturityAmountPaise: maturityCases.maturityAmountPaise,
+        createdAt: maturityCases.createdAt,
+      })
+      .from(maturityCases)
+      .innerJoin(customers, eq(customers.id, maturityCases.customerId))
+      .where(eq(maturityCases.createdById, userId))
+      .orderBy(desc(maturityCases.createdAt))
+      .limit(30),
+    db
+      .select({
+        id: payoutTransactions.id,
+        caseId: payoutTransactions.caseId,
+        totalPaise: payoutTransactions.totalPaise,
+        cashPaise: payoutTransactions.cashPaise,
+        onlinePaise: payoutTransactions.onlinePaise,
+        valueDate: payoutTransactions.valueDate,
+        paidAt: payoutTransactions.paidAt,
+        reversedAt: payoutTransactions.reversedAt,
+      })
+      .from(payoutTransactions)
+      .where(eq(payoutTransactions.recordedById, userId))
+      .orderBy(desc(payoutTransactions.paidAt))
+      .limit(30),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(maturityCases)
+      .where(eq(maturityCases.createdById, userId))
+      .then((r) => r[0]?.n ?? 0),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(payoutTransactions)
+      .where(eq(payoutTransactions.recordedById, userId))
+      .then((r) => r[0]?.n ?? 0),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(caseDocuments)
+      .where(eq(caseDocuments.uploadedById, userId))
+      .then((r) => r[0]?.n ?? 0),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(sessions)
+      .where(
+        and(eq(sessions.userId, userId), isNull(sessions.revokedAt), gte(sessions.expiresAt, now)),
+      )
+      .then((r) => r[0]?.n ?? 0),
+  ]);
 
   return {
     user: row,
@@ -1286,12 +1335,7 @@ export async function getAllAgentCustomers(actor: Actor) {
     })
     .from(maturityCases)
     .innerJoin(customers, eq(customers.id, maturityCases.customerId))
-    .where(
-      and(
-        inArray(maturityCases.status, OPEN.concat('COMPLETED')),
-        ...(scope ? [scope] : []),
-      ),
-    )
+    .where(and(inArray(maturityCases.status, OPEN.concat('COMPLETED')), ...(scope ? [scope] : [])))
     .orderBy(asc(customers.name), asc(maturityCases.caseNumber));
 }
 
@@ -1370,6 +1414,63 @@ export async function getPlanBoardInstalments(actor: Actor) {
       ),
     )
     .orderBy(asc(payoutInstalments.dueOn), asc(payoutInstalments.seq));
+}
+
+// ── The Customers book ────────────────────────────────────────────────────
+
+/**
+ * Every customer on the register, with each of their maturities.
+ *
+ * One row per CASE, not per customer — a customer can hold several maturities and collapsing
+ * them would hide the one that has not been paid. The caller groups by `customerId`.
+ *
+ * Carries the schedule parameters as well, so the page can show the day-by-day plan for a case
+ * that has not been approved yet. Scoped like every other read.
+ */
+export async function getCustomerBook(actor: Actor) {
+  const scope = caseScope(actor);
+  return db
+    .select({
+      caseId: maturityCases.id,
+      caseNumber: maturityCases.caseNumber,
+      customerId: customers.id,
+      customerName: customers.name,
+      customerCode: customers.customerCode,
+      accountNumber: customers.accountNumber,
+      phone: customers.phone,
+      email: customers.email,
+      address: customers.address,
+      payoutBank: customers.payoutBank,
+      payoutAccount: customers.payoutAccount,
+      payoutIfsc: customers.payoutIfsc,
+      agentName: agents.name,
+      agentId: agents.id,
+      branchId: maturityCases.branchId,
+      branchName: branches.name,
+      schemeName: maturityCases.schemeName,
+      status: maturityCases.status,
+      maturityAmountPaise: maturityCases.maturityAmountPaise,
+      paidCashPaise: maturityCases.paidCashPaise,
+      paidOnlinePaise: maturityCases.paidOnlinePaise,
+      instrumentMaturityOn: maturityCases.instrumentMaturityOn,
+      formSubmittedOn: maturityCases.formSubmittedOn,
+      approvedOn: maturityCases.approvedOn,
+      deadlineOn: maturityCases.deadlineOn,
+      paymentOn: maturityCases.paymentOn,
+      windowDays: maturityCases.windowDays,
+      roundingPaise: maturityCases.roundingPaise,
+      distribution: maturityCases.distribution,
+      cadence: maturityCases.cadence,
+      cashPolicy: maturityCases.cashPolicy,
+      cashCapPerDayPaise: maturityCases.cashCapPerDayPaise,
+      startOnNextWorkingDay: maturityCases.startOnNextWorkingDay,
+    })
+    .from(maturityCases)
+    .innerJoin(customers, eq(customers.id, maturityCases.customerId))
+    .innerJoin(agents, eq(agents.id, maturityCases.agentId))
+    .innerJoin(branches, eq(branches.id, maturityCases.branchId))
+    .where(and(inArray(maturityCases.status, OPEN.concat('COMPLETED')), ...(scope ? [scope] : [])))
+    .orderBy(asc(customers.name), asc(maturityCases.caseNumber));
 }
 
 export { ne };
