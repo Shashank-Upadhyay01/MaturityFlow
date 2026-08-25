@@ -1295,4 +1295,81 @@ export async function getAllAgentCustomers(actor: Actor) {
     .orderBy(asc(customers.name), asc(maturityCases.caseNumber));
 }
 
+// ── The Register's planning board ──────────────────────────────────────────
+
+/**
+ * Every open case with the parameters its schedule is built from, plus the schedule itself
+ * where one exists.
+ *
+ * The board has to answer "what will this customer get, on which day" for cases that have NOT
+ * been approved yet — most of the register, most of the time — so it cannot just read
+ * `payout_instalments`. It returns the inputs as well, and the client runs the same pure engine
+ * the server will run at approval to project the rest. Approved cases come back with their real
+ * rows and are shown as fact; the rest are shown as a projection and labelled as one.
+ */
+export async function getPlanBoardCases(actor: Actor) {
+  const scope = caseScope(actor);
+  return db
+    .select({
+      caseId: maturityCases.id,
+      caseNumber: maturityCases.caseNumber,
+      customerName: customers.name,
+      accountNumber: customers.accountNumber,
+      phone: customers.phone,
+      agentName: agents.name,
+      agentId: agents.id,
+      branchId: maturityCases.branchId,
+      status: maturityCases.status,
+      maturityAmountPaise: maturityCases.maturityAmountPaise,
+      paidCashPaise: maturityCases.paidCashPaise,
+      paidOnlinePaise: maturityCases.paidOnlinePaise,
+      todayApprovedPaise: maturityCases.todayApprovedPaise,
+      // Everything generateSchedule needs, so the client can project an unapproved case.
+      windowDays: maturityCases.windowDays,
+      roundingPaise: maturityCases.roundingPaise,
+      distribution: maturityCases.distribution,
+      cadence: maturityCases.cadence,
+      cashPolicy: maturityCases.cashPolicy,
+      cashCapPerDayPaise: maturityCases.cashCapPerDayPaise,
+      startOnNextWorkingDay: maturityCases.startOnNextWorkingDay,
+      scheduleVersion: maturityCases.scheduleVersion,
+      approvedOn: maturityCases.approvedOn,
+      deadlineOn: maturityCases.deadlineOn,
+      formSubmittedOn: maturityCases.formSubmittedOn,
+    })
+    .from(maturityCases)
+    .innerJoin(customers, eq(customers.id, maturityCases.customerId))
+    .innerJoin(agents, eq(agents.id, maturityCases.agentId))
+    .where(and(inArray(maturityCases.status, OPEN), ...(scope ? [scope] : [])))
+    .orderBy(desc(maturityCases.maturityAmountPaise));
+}
+
+/** The live schedule rows for those cases — what has actually been planned and paid. */
+export async function getPlanBoardInstalments(actor: Actor) {
+  const scope = caseScope(actor);
+  return db
+    .select({
+      caseId: payoutInstalments.caseId,
+      seq: payoutInstalments.seq,
+      dueOn: payoutInstalments.dueOn,
+      amountPaise: payoutInstalments.amountPaise,
+      cashLegPaise: payoutInstalments.cashLegPaise,
+      onlineLegPaise: payoutInstalments.onlineLegPaise,
+      paidCashPaise: payoutInstalments.paidCashPaise,
+      paidOnlinePaise: payoutInstalments.paidOnlinePaise,
+      status: payoutInstalments.status,
+    })
+    .from(payoutInstalments)
+    .innerJoin(maturityCases, eq(maturityCases.id, payoutInstalments.caseId))
+    .where(
+      and(
+        eq(payoutInstalments.scheduleVersion, maturityCases.scheduleVersion),
+        ne(payoutInstalments.status, 'SUPERSEDED'),
+        inArray(maturityCases.status, OPEN),
+        ...(scope ? [scope] : []),
+      ),
+    )
+    .orderBy(asc(payoutInstalments.dueOn), asc(payoutInstalments.seq));
+}
+
 export { ne };

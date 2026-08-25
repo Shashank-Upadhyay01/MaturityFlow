@@ -4,8 +4,18 @@ import { getSession, toActor } from '@/lib/auth/session';
 import { parseRegisterLayout } from '@/lib/register-layout';
 import { canTypeRegister, roleCan } from '@/lib/rbac';
 import { toISODateString, todayISO } from '@/lib/working-days';
-import { getFormOptions, getRegisterDesk, listRegister } from '@/services/queries';
+import { serialize } from '@/lib/serialize';
+import { getCalendarSnapshot } from '@/services/calendar-service';
+import {
+  getFormOptions,
+  getPlanBoardCases,
+  getPlanBoardInstalments,
+  getRegisterDesk,
+  listRegister,
+} from '@/services/queries';
+import { PlanBoard } from './plan-board';
 import { RegisterSheet } from './register-sheet';
+import { RegisterTabs } from './register-tabs';
 
 export const metadata = { title: 'Register' };
 export const dynamic = 'force-dynamic';
@@ -30,6 +40,14 @@ export default async function MaturitiesPage() {
         paidTodayOnlinePaise: 0n,
       };
 
+  // The planning board's inputs. Sequential rather than parallel — parallel reads against the
+  // pooled connection were starving later pages (see the note in getDashboardStats).
+  const planCases = await getPlanBoardCases(actor);
+  const planInstalments = await getPlanBoardInstalments(actor);
+  const calendar = branch
+    ? await getCalendarSnapshot(branch.id)
+    : { holidays: [], sundaysOff: true, saturdayRule: 'SECOND_FOURTH' as const };
+
   const cashLimit = branch?.dailyCashComfortPaise ?? rows[0]?.dailyCashComfortPaise ?? 50_000_000n;
 
   /**
@@ -46,55 +64,69 @@ export default async function MaturitiesPage() {
 
   return (
     <div className="space-y-3">
-      <RegisterSheet
-        role={session.role}
-        branchLabel={branch ? `${branch.code} · ${branch.name}` : 'Register'}
-        branchId={branch?.id ?? ''}
-        today={today}
-        dayStatus={desk.dayStatus}
-        cashLimitPaise={cashLimit.toString()}
-        cashInHandPaise={desk.cashInHandPaise.toString()}
-        plannedOnlinePaise={desk.plannedOnlinePaise.toString()}
-        withdrawalsToday={desk.withdrawalsToday}
-        paidTodayPaise={desk.paidTodayPaise.toString()}
-        canEdit={canType}
-        canPay={canOnSheet('payout.record')}
-        canApprove={canOnSheet('case.approve')}
-        canSubmit={canOnSheet('case.submit')}
-        canImport={canOnSheet('data.import')}
-        canCreate={canOnSheet('case.create')}
-        canSetCash={canOnSheet('cash.setOpening')}
-        canRequestClose={canOnSheet('payout.record') || canOnSheet('settings.manage')}
-        canConfirmClose={canType && ['ADMIN', 'OPS_HEAD', 'CMD', 'CEO'].includes(session.role)}
-        canLayout={roleCan(session.role, 'settings.manage')}
-        canRemove={canOnSheet('case.cancel')}
-        columnLayout={parseRegisterLayout(branch?.registerColumnOrder)}
-        agents={options.agents.map((a) => ({ id: a.id, name: a.name }))}
-        rows={rows.map((r) => {
-          const paid = r.paidCashPaise + r.paidOnlinePaise;
-          return {
-            id: r.id,
-            accountNumber: r.accountNumber,
-            customerName: r.customerName,
-            instrumentMaturityOn: toISODateString(r.instrumentMaturityOn),
-            formSubmittedOn: toISODateString(r.formSubmittedOn) ?? r.formSubmittedOn,
-            paymentOn: toISODateString(r.paymentOn),
-            maturityPaise: r.maturityAmountPaise.toString(),
-            paidPaise: paid.toString(),
-            paidCashPaise: r.paidCashPaise.toString(),
-            paidOnlinePaise: r.paidOnlinePaise.toString(),
-            remainingPaise: (r.maturityAmountPaise - paid).toString(),
-            todayPaise: r.todayApprovedPaise.toString(),
-            todayCashPaise: r.todayCashPaise.toString(),
-            todayOnlinePaise: r.todayOnlinePaise.toString(),
-            windowDays: r.windowDays,
-            agentName: r.agentName,
-            agentId: r.agentId,
-            status: r.status,
-            formSubmitted: Boolean(r.submittedAt) || ['SUBMITTED', 'APPROVED', 'IN_PROGRESS', 'COMPLETED'].includes(r.status),
-            approved: ['APPROVED', 'IN_PROGRESS', 'COMPLETED', 'ON_HOLD'].includes(r.status),
-          };
-        })}
+      <RegisterTabs
+        plan={
+          <PlanBoard
+            cases={serialize(planCases)}
+            instalments={serialize(planInstalments)}
+            calendar={calendar}
+            today={today}
+          />
+        }
+        sheet={
+          <RegisterSheet
+            role={session.role}
+            branchLabel={branch ? `${branch.code} · ${branch.name}` : 'Register'}
+            branchId={branch?.id ?? ''}
+            today={today}
+            dayStatus={desk.dayStatus}
+            cashLimitPaise={cashLimit.toString()}
+            cashInHandPaise={desk.cashInHandPaise.toString()}
+            plannedOnlinePaise={desk.plannedOnlinePaise.toString()}
+            withdrawalsToday={desk.withdrawalsToday}
+            paidTodayPaise={desk.paidTodayPaise.toString()}
+            canEdit={canType}
+            canPay={canOnSheet('payout.record')}
+            canApprove={canOnSheet('case.approve')}
+            canSubmit={canOnSheet('case.submit')}
+            canImport={canOnSheet('data.import')}
+            canCreate={canOnSheet('case.create')}
+            canSetCash={canOnSheet('cash.setOpening')}
+            canRequestClose={canOnSheet('payout.record') || canOnSheet('settings.manage')}
+            canConfirmClose={canType && ['ADMIN', 'OPS_HEAD', 'CMD', 'CEO'].includes(session.role)}
+            canLayout={roleCan(session.role, 'settings.manage')}
+            canRemove={canOnSheet('case.cancel')}
+            columnLayout={parseRegisterLayout(branch?.registerColumnOrder)}
+            agents={options.agents.map((a) => ({ id: a.id, name: a.name }))}
+            rows={rows.map((r) => {
+              const paid = r.paidCashPaise + r.paidOnlinePaise;
+              return {
+                id: r.id,
+                accountNumber: r.accountNumber,
+                customerName: r.customerName,
+                instrumentMaturityOn: toISODateString(r.instrumentMaturityOn),
+                formSubmittedOn: toISODateString(r.formSubmittedOn) ?? r.formSubmittedOn,
+                paymentOn: toISODateString(r.paymentOn),
+                maturityPaise: r.maturityAmountPaise.toString(),
+                paidPaise: paid.toString(),
+                paidCashPaise: r.paidCashPaise.toString(),
+                paidOnlinePaise: r.paidOnlinePaise.toString(),
+                remainingPaise: (r.maturityAmountPaise - paid).toString(),
+                todayPaise: r.todayApprovedPaise.toString(),
+                todayCashPaise: r.todayCashPaise.toString(),
+                todayOnlinePaise: r.todayOnlinePaise.toString(),
+                windowDays: r.windowDays,
+                agentName: r.agentName,
+                agentId: r.agentId,
+                status: r.status,
+                formSubmitted:
+                  Boolean(r.submittedAt) ||
+                  ['SUBMITTED', 'APPROVED', 'IN_PROGRESS', 'COMPLETED'].includes(r.status),
+                approved: ['APPROVED', 'IN_PROGRESS', 'COMPLETED', 'ON_HOLD'].includes(r.status),
+              };
+            })}
+          />
+        }
       />
     </div>
   );
