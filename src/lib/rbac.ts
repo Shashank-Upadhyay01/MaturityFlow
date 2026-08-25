@@ -133,12 +133,20 @@ const HQ_OPERATIONS: Permission[] = ALL.filter((p) => !STRUCTURE.has(p));
 export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
   CMD: new Set(HQ_OPERATIONS),
   CEO: new Set(HQ_OPERATIONS),
-  ADMIN: new Set<Permission>([
-    'case.view', 'case.create', 'case.edit', 'case.cancel', 'schedule.preview', 'schedule.override',
-    'schedule.reschedule', 'cash.plan', 'cash.setOpening', 'agent.view', 'agent.manage',
-    'customer.manage', 'branch.view', 'branch.manage', 'user.manage', 'holiday.manage',
-    'settings.manage', 'report.view', 'report.export', 'data.import', 'audit.view',
-  ]),
+  /**
+   * The system administrator holds every permission there is.
+   *
+   * Deliberate, and asked for: Admin is the account that has to be able to see and do anything
+   * any other role can, including the operational half — submitting, approving, recording and
+   * reversing payouts — on top of the structural permissions (branches, users, holidays, org
+   * settings) that only this role has ever had.
+   *
+   * The consequence, stated plainly because it is a real one: an Admin can approve a case and
+   * then pay it out, so for this role alone the maker-checker separation that `case.approve`
+   * normally provides does not apply. Every one of those actions still writes an audit row in
+   * the same transaction, which is what makes it reviewable after the fact.
+   */
+  ADMIN: new Set<Permission>(ALL),
   OPS_HEAD: new Set<Permission>([
     'case.view', 'case.create', 'case.submit', 'case.edit', 'case.approve', 'case.reject',
     'case.return', 'case.hold', 'case.cancel', 'schedule.preview', 'schedule.override',

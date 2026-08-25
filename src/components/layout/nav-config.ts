@@ -18,8 +18,10 @@ export const NAV: { section: string; items: NavItem[] }[] = [
     section: 'Work',
     items: [
       { href: '/maturities', label: 'Register', icon: 'files', permission: 'case.view', description: 'The branch Excel sheet' },
+      { href: '/maturities/new', label: 'New maturity', icon: 'plus', permission: 'case.create', description: 'Take one form in, with the live schedule' },
       { href: '/dashboard', label: 'Summary', icon: 'dashboard', permission: 'case.view', description: 'Totals across the register' },
       { href: '/approvals', label: 'Approvals', icon: 'inbox', permission: 'case.approve', badge: 'approvals', description: 'Forms waiting for sign-off' },
+      { href: '/payouts', label: 'Payout desk', icon: 'wallet', permission: 'payout.record', badge: 'dueToday', description: 'Record what actually goes across the counter' },
       { href: '/follow-up', label: 'Follow-up', icon: 'shield', permission: 'case.view', description: 'Missed days, today’s counter, large cases, broken promises' },
     ],
   },
@@ -47,11 +49,9 @@ export const NAV: { section: string; items: NavItem[] }[] = [
  * whose sidebar label is not what you want printed as a page heading.
  */
 const EXTRA_TITLES: Record<string, string> = {
-  '/maturities/new': 'New maturity',
   '/account': 'My profile',
   '/account/password': 'Change password',
   '/import': 'Import',
-  '/payouts': 'Payouts',
 };
 
 /**

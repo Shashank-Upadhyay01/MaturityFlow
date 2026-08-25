@@ -183,6 +183,16 @@ Local database: `docker compose up -d db` (Postgres 16 on 5432).
   `BigInt(...)`. Money props are typed `bigint | string`.
 - New permission? Add it to the `Permission` union **and** to `ROLE_PERMISSIONS` **and**, if it
   is a write, to `WRITE_PERMISSIONS` so `AUDITOR` stays read-only. Then extend `tests/rbac.test.ts`.
+- **ADMIN holds every permission** (`new Set(ALL)`), by design — it is the account that must be
+  able to see and do anything any other role can. So for Admin alone the maker-checker split that
+  `case.approve` gives everywhere else does not apply: an Admin can approve a case and then pay it
+  out. The audit row written in the same transaction is what keeps that reviewable. A new
+  permission is therefore granted to Admin automatically; `tests/rbac.test.ts` asserts both that
+  Admin has all of them and that no other role holds one Admin lacks.
+- **Every screen belongs in `NAV`.** `/payouts` and `/maturities/new` existed for months with no
+  link anywhere — whole features reachable only by typing the URL, and `getNavBadges`' `dueToday`
+  count was computed on every page load and rendered nowhere. If a route has a `page.tsx`, give it
+  a nav entry gated on the right permission, or it does not exist to the people using this.
 - **Seeing and changing are two different scopes.** `ROLE_SCOPE` is what a role may *read* and is
   `ALL` for every role — the Register, the summary and the rollups show the whole bank to
   everyone. `ROLE_WRITE_SCOPE` is what a role may *change* and stays narrow: Branch Manager and

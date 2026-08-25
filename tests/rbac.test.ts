@@ -46,19 +46,19 @@ describe('permission grants', () => {
     }
   });
 
-  it('only CMD and CEO may edit an already-approved case', () => {
-    const allowed = (['CMD', 'CEO'] as const);
-    for (const r of ['ADMIN', 'OPS_HEAD', 'BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const) {
+  it('only CMD, CEO and Admin may edit an already-approved case', () => {
+    const allowed = (['CMD', 'CEO', 'ADMIN'] as const);
+    for (const r of ['OPS_HEAD', 'BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const) {
       expect(roleCan(r, 'case.editApproved')).toBe(false);
     }
     for (const r of allowed) expect(roleCan(r, 'case.editApproved')).toBe(true);
   });
 
-  it('only CMD, CEO and Ops Head may approve', () => {
-    expect(roleCan('OPS_HEAD', 'case.approve')).toBe(true);
-    expect(roleCan('CMD', 'case.approve')).toBe(true);
-    expect(roleCan('CEO', 'case.approve')).toBe(true);
-    for (const r of ['ADMIN', 'BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const) {
+  it('only CMD, CEO, Ops Head and Admin may approve', () => {
+    for (const r of ['OPS_HEAD', 'CMD', 'CEO', 'ADMIN'] as const) {
+      expect(roleCan(r, 'case.approve')).toBe(true);
+    }
+    for (const r of ['BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const) {
       expect(roleCan(r, 'case.approve')).toBe(false);
     }
   });
@@ -143,13 +143,23 @@ describe('permission grants', () => {
     expect(roleCan('CASHIER', 'audit.view')).toBe(false);
   });
 
-  it('an admin administers and may re-plan days, but never approves or records money', () => {
-    expect(roleCan('ADMIN', 'user.manage')).toBe(true);
-    expect(roleCan('ADMIN', 'branch.manage')).toBe(true);
-    expect(roleCan('ADMIN', 'schedule.override')).toBe(true);
-    expect(roleCan('ADMIN', 'schedule.reschedule')).toBe(true);
-    expect(roleCan('ADMIN', 'case.approve')).toBe(false);
-    expect(roleCan('ADMIN', 'payout.record')).toBe(false);
+  it('the admin holds every permission there is', () => {
+    // The account that has to be able to do anything any other role can. Asserted against the
+    // full list rather than a sample, so a permission added later is covered without anyone
+    // remembering to come back here.
+    for (const p of ALL_PERMISSIONS) {
+      expect(roleCan('ADMIN', p)).toBe(true);
+    }
+    expect(permissionsOf('ADMIN')).toHaveLength(ALL_PERMISSIONS.length);
+  });
+
+  it('no other role can do something the admin cannot', () => {
+    const admin = new Set(permissionsOf('ADMIN'));
+    for (const r of EVERY_ROLE) {
+      for (const p of permissionsOf(r)) {
+        expect(admin.has(p)).toBe(true);
+      }
+    }
   });
 });
 

@@ -10,32 +10,33 @@ Every role carries a data scope, applied at the query layer:
 
 | Scope | Roles | Effect |
 |---|---|---|
-| `ALL` | CMD, CEO, ADMIN, OPS_HEAD, AUDITOR | Every branch. |
-| `BRANCH` | BRANCH_MANAGER, CASHIER | `WHERE branchId = session.branchId`. |
-| `OWN` | AGENT | `WHERE agentId = session.agentId`. |
+| Read `ALL` | CMD, CEO, ADMIN, OPS_HEAD, BRANCH_MANAGER, CASHIER, AGENT, AUDITOR | Every branch. |
+| Write `ALL` | CMD, CEO, ADMIN, OPS_HEAD, AUDITOR | May change any branch. |
+| Write `BRANCH` | BRANCH_MANAGER, CASHIER | `WHERE branchId = session.branchId`. |
+| Write `OWN` | AGENT | `WHERE agentId = session.agentId`. |
 
 ## Permission matrix
 
 | Permission | CMD | CEO | ADMIN | OPS_HEAD | BR_MGR | CASHIER | AGENT | AUDITOR |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
 | `case.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `case.create` | ✓ | ✓ | – | ✓ | ✓ | – | ✓ | – |
-| `case.submit` | ✓ | ✓ | – | ✓ | ✓ | – | ✓ | – |
-| `case.edit` | ✓ | ✓ | – | ✓ | ✓¹ | – | ✓¹ | – |
-| `case.editApproved` | ✓ | ✓ | – | – | – | – | – | – |
-| `case.approve` | ✓ | ✓ | – | ✓ | – | – | – | – |
-| `case.reject` | ✓ | ✓ | – | ✓ | – | – | – | – |
-| `case.return` | ✓ | ✓ | – | ✓ | – | – | – | – |
-| `case.hold` | ✓ | ✓ | – | ✓ | ✓ | – | – | – |
-| `case.cancel` | ✓ | ✓ | – | ✓ | – | – | – | – |
+| `case.create` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
+| `case.submit` | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ | – |
+| `case.edit` | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ | – |
+| `case.editApproved` | ✓ | ✓ | ✓ | – | – | – | – | – |
+| `case.approve` | ✓ | ✓ | ✓ | ✓ | – | – | – | – |
+| `case.reject` | ✓ | ✓ | ✓ | ✓ | – | – | – | – |
+| `case.return` | ✓ | ✓ | ✓ | ✓ | – | – | – | – |
+| `case.hold` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – | – |
+| `case.cancel` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
 | `schedule.preview` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `schedule.override` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
 | `schedule.reschedule` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
-| `payout.record` | ✓ | ✓ | – | ✓ | ✓ | ✓ | – | – |
-| `payout.reverse` | ✓ | ✓ | – | ✓ | – | – | – | – |
+| `payout.record` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
+| `payout.reverse` | ✓ | ✓ | ✓ | ✓ | – | – | – | – |
 | `cash.plan` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ |
-| `cash.setOpening` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – | – |
-| `agent.view` | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓² | ✓ |
+| `cash.setOpening` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
+| `agent.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `agent.manage` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – | – |
 | `customer.manage` | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ | – |
 | `branch.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ |
@@ -43,16 +44,31 @@ Every role carries a data scope, applied at the query layer:
 | `user.manage` | – | – | ✓ | – | – | – | – | – |
 | `holiday.manage` | – | – | ✓ | – | – | – | – | – |
 | `settings.manage` | – | – | ✓ | – | – | – | – | – |
-| `report.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓² | ✓ |
-| `report.export` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – | ✓ |
-| `data.import` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – | – |
+| `report.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `report.export` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ |
+| `data.import` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
 | `audit.view` | ✓ | ✓ | ✓ | ✓ | – | – | – | ✓ |
 
-¹ Only while the case is `DRAFT`, `SUBMITTED` or `RETURNED` — never after approval.
-² Restricted to their own records by the `OWN` scope.
+Totals: CMD 25 · CEO 25 · ADMIN 29 · OPS_HEAD 24 · BRANCH_MANAGER 19 · CASHIER 14 · AGENT 8 · AUDITOR 8 of 29
+
+*Generated from `src/lib/rbac.ts`. Regenerate rather than hand-edit — this table had drifted from
+the code before it was last rebuilt.*
+
+**ADMIN holds every permission.** The account that has to be able to see and do anything any
+other role can. For this role alone the maker-checker separation that `case.approve` normally
+provides does not apply: an Admin can approve a case and then pay it out. Every such action still
+writes an audit row in the same transaction, which is what keeps it reviewable after the fact.
 
 **AUDITOR holds no write permission of any kind** — enforced by an explicit deny-list in
-`assertCan()`, so a future permission added by mistake still cannot grant an auditor write access.
+`assertCan()`, so a permission added by mistake later still cannot grant an auditor write access.
+Its `ALL` write scope above is therefore never reached.
+
+**Reading and writing are different scopes.** Every role reads the whole bank; only the write
+scope narrows. `inScope()` picks between `ROLE_SCOPE` and `ROLE_WRITE_SCOPE` by asking whether the
+permission is a write.
+
+**AGENT and AUDITOR cannot type in the Register** whatever permissions they hold — see
+`REGISTER_READ_ONLY_ROLES` and `assertCanTypeRegister()`.
 
 ## Implementation
 
