@@ -127,6 +127,8 @@ export default async function MaturitiesPage() {
                 todayDuePaise: r.todayDuePaise,
                 todayPaidTakenPaise: r.todayPaidPaise,
                 todayStatus: r.todayStatus,
+                todayCashDuePaise: r.todayCashDuePaise,
+                todayOnlineDuePaise: r.todayOnlineDuePaise,
                 overdueCount: r.overdueCount,
                 overduePaise: r.overduePaise,
               };

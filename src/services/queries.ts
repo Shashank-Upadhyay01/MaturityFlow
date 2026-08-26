@@ -210,6 +210,19 @@ export function getDashboardStats(actor: Actor, date = todayISO()): Promise<Dash
 }
 
 /** Statuses on the register sheet. Rejected / cancelled rows are not in the book. */
+/**
+ * The outer case, written out, for correlating a subquery back to it.
+ *
+ * `${maturityCases.id}` cannot be used inside a correlated subquery. Drizzle decides whether to
+ * qualify a column by looking at the *outer* query: with a join it emits
+ * `"maturity_cases"."id"`, without one it emits a bare `"id"`. Inside
+ * `SELECT ... FROM payout_instalments i`, a bare `"id"` resolves to the INSTALMENT's own id, so
+ * `i.case_id = "id"` is never true, the subquery returns NULL for every row, and the figure
+ * silently falls back to whatever the COALESCE names next. No error, no warning — just a wrong
+ * number on the screen the branch funds its drawer from. It cost an afternoon; do not undo it.
+ */
+const CASE_ID = sql.raw('maturity_cases.id');
+
 const REGISTER_VIEW: CaseStatus[] = [
   'DRAFT',
   'SUBMITTED',
@@ -261,9 +274,49 @@ export async function getRegisterSummary(
       givenCash: sql<string>`COALESCE(SUM(${maturityCases.paidCashPaise}), 0)`,
       givenOnline: sql<string>`COALESCE(SUM(${maturityCases.paidOnlinePaise}), 0)`,
       remaining: sql<string>`COALESCE(SUM(GREATEST(${remainingSql}, 0)), 0)`,
-      todayApproved: sql<string>`COALESCE(SUM(${maturityCases.todayApprovedPaise}), 0)`,
-      todayCash: sql<string>`COALESCE(SUM(${maturityCases.todayCashPaise}), 0)`,
-      todayOnline: sql<string>`COALESCE(SUM(${maturityCases.todayOnlinePaise}), 0)`,
+      /*
+        What the branch still has to hand over today, summed the same way the Register sheet
+        prints it — see `todayPlannedPaise` in register-view.ts.
+
+        The schedule is asked first and the typed `today_approved_paise` only answers for a row
+        that has no schedule yet. Before this, the tile summed the typed column while the sheet
+        showed the schedule, so the dashboard and the page it summarises disagreed about the
+        one figure the branch opens its drawer on.
+
+        Already-paid days drop out via the GREATEST(…, 0): money that has gone out is no longer
+        cash anybody needs to find.
+      */
+      todayApproved: sql<string>`COALESCE(SUM(COALESCE((
+        SELECT SUM(GREATEST(i.amount_paise - i.paid_cash_paise - i.paid_online_paise, 0))
+        FROM payout_instalments i
+        WHERE i.case_id = ${CASE_ID}
+          AND i.due_on = ${date}
+          AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
+      ), ${maturityCases.todayApprovedPaise})), 0)`,
+      todayCash: sql<string>`COALESCE(SUM(COALESCE((
+        SELECT SUM(LEAST(
+          GREATEST(i.cash_leg_paise, 0),
+          GREATEST(i.amount_paise - i.paid_cash_paise - i.paid_online_paise, 0)
+        ))
+        FROM payout_instalments i
+        WHERE i.case_id = ${CASE_ID}
+          AND i.due_on = ${date}
+          AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
+      ), ${maturityCases.todayCashPaise})), 0)`,
+      todayOnline: sql<string>`COALESCE(SUM(COALESCE((
+        SELECT SUM(GREATEST(
+          GREATEST(i.amount_paise - i.paid_cash_paise - i.paid_online_paise, 0)
+            - LEAST(
+                GREATEST(i.cash_leg_paise, 0),
+                GREATEST(i.amount_paise - i.paid_cash_paise - i.paid_online_paise, 0)
+              ),
+          0
+        ))
+        FROM payout_instalments i
+        WHERE i.case_id = ${CASE_ID}
+          AND i.due_on = ${date}
+          AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
+      ), ${maturityCases.todayOnlinePaise})), 0)`,
       overdueCount: sql<number>`COUNT(*) FILTER (
         WHERE ${remainingSql} > 0
           AND COALESCE(${maturityCases.deadlineOn}, ${maturityCases.paymentOn}) < ${date}
@@ -473,7 +526,7 @@ export async function listRegister(actor: Actor, date = todayISO()) {
    */
   const todayInst = (expr: ReturnType<typeof sql.raw>) => sql`(
     SELECT ${expr} FROM payout_instalments i
-    WHERE i.case_id = ${maturityCases.id}
+    WHERE i.case_id = ${CASE_ID}
       AND i.due_on = ${date}
       AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
     ORDER BY i.schedule_version DESC LIMIT 1
@@ -486,16 +539,22 @@ export async function listRegister(actor: Actor, date = todayISO()) {
       todayDuePaise: sql<string>`COALESCE(${todayInst(sql.raw('i.amount_paise::text'))}, '0')`,
       todayPaidPaise: sql<string>`COALESCE(${todayInst(sql.raw('(i.paid_cash_paise + i.paid_online_paise)::text'))}, '0')`,
       todayStatus: sql<string | null>`${todayInst(sql.raw('i.status::text'))}`,
+      /**
+       * The legs the engine planned for today, so the sheet can show the split it is about to
+       * pay rather than one a clerk typed. INV-3 guarantees they reconcile to the amount.
+       */
+      todayCashDuePaise: sql<string>`COALESCE(${todayInst(sql.raw('i.cash_leg_paise::text'))}, '0')`,
+      todayOnlineDuePaise: sql<string>`COALESCE(${todayInst(sql.raw('i.online_leg_paise::text'))}, '0')`,
       /** Earlier days that were never paid — the red half of the sheet. */
       overdueCount: sql<number>`(
         SELECT COUNT(*)::int FROM payout_instalments i
-        WHERE i.case_id = ${maturityCases.id} AND i.due_on < ${date}
+        WHERE i.case_id = ${CASE_ID} AND i.due_on < ${date}
           AND i.status IN ('PENDING', 'PARTIAL', 'MISSED')
       )`,
       overduePaise: sql<string>`(
         SELECT COALESCE(SUM(i.amount_paise - i.paid_cash_paise - i.paid_online_paise), 0)::text
         FROM payout_instalments i
-        WHERE i.case_id = ${maturityCases.id} AND i.due_on < ${date}
+        WHERE i.case_id = ${CASE_ID} AND i.due_on < ${date}
           AND i.status IN ('PENDING', 'PARTIAL', 'MISSED')
       )`,
       id: maturityCases.id,

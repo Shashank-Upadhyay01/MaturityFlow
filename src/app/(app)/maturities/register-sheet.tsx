@@ -72,6 +72,7 @@ import {
   rowInDateRange,
   summariseDueToday,
   summariseSelection,
+  todayPlannedSplit,
   type BulkTodayMode,
   type DayState,
   type DateField,
@@ -122,6 +123,9 @@ export interface RegisterRow {
   todayPaidTakenPaise: string;
   /** Its status, straight from the database: PENDING · PARTIAL · PAID · MISSED. */
   todayStatus: string | null;
+  /** The legs the engine planned for today. */
+  todayCashDuePaise: string;
+  todayOnlineDuePaise: string;
   /** Earlier days still unpaid — the backlog behind this row. */
   overdueCount: number;
   /** What that backlog is worth, in paise. */
@@ -307,6 +311,21 @@ const DAY_PILL: Partial<Record<DayState, string>> = {
   taken: 'bg-[var(--row-taken-strong)] text-[var(--row-taken-fg)]',
   missed: 'bg-[var(--row-missed-strong)] text-[var(--row-missed-fg)]',
   partial: 'bg-[var(--row-partial-strong)] text-[var(--row-partial-fg)]',
+};
+
+/**
+ * What the Today cell says about itself once the schedule owns it.
+ *
+ * The figure is not typed any more, and a cell that silently stops accepting input reads as
+ * broken unless it says why. Each state also names where the number can still be changed, so
+ * "I need to give them less today" has an answer that is not "type over it".
+ */
+const SCHEDULED_TODAY_HINT: Record<DayState, string> = {
+  due: 'The schedule\u2019s figure for today. To change it, move the money on the Plan board \u2014 the other days absorb it.',
+  taken: 'Taken in full today. Reverse it on the case page if that was wrong.',
+  partial: 'Part of today has gone out. The figure shown is what is still owed today.',
+  missed: 'Marked not taken. Still owed \u2014 it stays on the twelve-day list.',
+  none: 'The schedule plans nothing for today.',
 };
 
 type Tender = 'CASH' | 'ONLINE' | 'SPLIT';
@@ -2523,8 +2542,20 @@ export function RegisterSheet(props: {
                 const paidP = tryParseRupeesToPaise(paidDraft) ?? BigInt(r.paidPaise);
                 const amtP = tryParseRupeesToPaise(amtDraft) ?? BigInt(r.maturityPaise);
                 const liveRemaining = amtP > paidP ? amtP - paidP : 0n;
-                const recCash = BigInt(r.todayCashPaise);
-                const recOnline = BigInt(r.todayOnlinePaise);
+                /*
+                  What this row is actually going to hand over today, and how it divides.
+
+                  On a scheduled row these come from the engine, and the three cells below are
+                  read-only because of it: the ✓ button pays the instalment, so letting a clerk
+                  type a different figure into Today would show them one number and hand over
+                  another. Changing what a day pays is a change to the SCHEDULE — it has to move
+                  the difference onto the remaining days — and that lives on the Plan board,
+                  which is what schedule-edit.ts is for.
+                */
+                const planned = todayPlannedSplit(r);
+                const scheduled = Boolean(r.todayInstalmentId);
+                const recCash = scheduled ? planned.cash : BigInt(r.todayCashPaise);
+                const recOnline = scheduled ? planned.online : BigInt(r.todayOnlinePaise);
                 const edit = props.canEdit && !locked;
                 const matShown = r.instrumentMaturityOn ? formatDMY(r.instrumentMaturityOn) : '';
                 const formShown = formatDMY(r.formSubmittedOn);
@@ -2716,49 +2747,81 @@ export function RegisterSheet(props: {
                           />
                         )}
                         {c.id === 'perDay' && <span className="text-[var(--muted-fg)]">{inr(rec)}</span>}
-                        {c.id === 'today' && (
-                          <CellInput
-                            group
-                            className={cn(num, dueNow && 'font-semibold text-[var(--color-brand-700)]')}
-                            disabled={!edit}
-                            value={d(r.id, 'today', rupeesStr(BigInt(r.todayPaise)))}
-                            onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], today: v } }))}
-                            onCommit={(v) => {
-                              if (v.trim() === rupeesStr(BigInt(r.todayPaise))) return;
-                              void save(r.id, { todayRupees: v });
-                            }}
-                          />
-                        )}
-                        {c.id === 'cash' && (
-                          <CellInput
-                            group
-                            className={num}
-                            disabled={!edit}
-                            title="Cash for today"
-                            value={d(r.id, 'tcash', rupeesStr(recCash))}
-                            onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], tcash: v } }))}
-                            onCommit={(v) => {
-                              const onlineNow = d(r.id, 'tonline', rupeesStr(recOnline));
-                              if (v.trim() === rupeesStr(recCash) && onlineNow === rupeesStr(recOnline)) return;
-                              void save(r.id, { todayCashRupees: v, todayOnlineRupees: onlineNow });
-                            }}
-                          />
-                        )}
-                        {c.id === 'online' && (
-                          <CellInput
-                            group
-                            className={num}
-                            disabled={!edit}
-                            title="Online for today"
-                            value={d(r.id, 'tonline', rupeesStr(recOnline))}
-                            onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], tonline: v } }))}
-                            onCommit={(v) => {
-                              const cashNow = d(r.id, 'tcash', rupeesStr(recCash));
-                              if (cashNow === rupeesStr(recCash) && v.trim() === rupeesStr(recOnline)) return;
-                              void save(r.id, { todayCashRupees: cashNow, todayOnlineRupees: v });
-                            }}
-                          />
-                        )}
+                        {c.id === 'today' &&
+                          (scheduled ? (
+                            <span
+                              className={cn(
+                                num,
+                                'flex h-7 items-center justify-end gap-1 px-1 text-[0.7rem]',
+                                dayState === 'due' && 'font-semibold text-[var(--color-brand-700)]',
+                                dayState === 'taken' && 'text-[var(--row-taken-fg)] line-through',
+                                dayState === 'missed' && 'font-semibold text-[var(--row-missed-fg)]',
+                                dayState === 'partial' && 'font-semibold text-[var(--row-partial-fg)]',
+                              )}
+                              title={SCHEDULED_TODAY_HINT[dayState]}
+                            >
+                              {planned.total > 0n ? inr(planned.total) : inr(BigInt(r.todayDuePaise))}
+                            </span>
+                          ) : (
+                            <CellInput
+                              group
+                              className={cn(num, dueNow && 'font-semibold text-[var(--color-brand-700)]')}
+                              disabled={!edit}
+                              title="No schedule yet — submit the row and the system works this out"
+                              value={d(r.id, 'today', rupeesStr(BigInt(r.todayPaise)))}
+                              onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], today: v } }))}
+                              onCommit={(v) => {
+                                if (v.trim() === rupeesStr(BigInt(r.todayPaise))) return;
+                                void save(r.id, { todayRupees: v });
+                              }}
+                            />
+                          ))}
+                        {c.id === 'cash' &&
+                          (scheduled ? (
+                            <span
+                              className={cn(num, 'flex h-7 items-center justify-end px-1 text-[0.7rem] text-[var(--muted-fg)]')}
+                              title="The cash half the engine planned for today, inside the branch cash cap"
+                            >
+                              {inr(recCash)}
+                            </span>
+                          ) : (
+                            <CellInput
+                              group
+                              className={num}
+                              disabled={!edit}
+                              title="Cash for today"
+                              value={d(r.id, 'tcash', rupeesStr(recCash))}
+                              onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], tcash: v } }))}
+                              onCommit={(v) => {
+                                const onlineNow = d(r.id, 'tonline', rupeesStr(recOnline));
+                                if (v.trim() === rupeesStr(recCash) && onlineNow === rupeesStr(recOnline)) return;
+                                void save(r.id, { todayCashRupees: v, todayOnlineRupees: onlineNow });
+                              }}
+                            />
+                          ))}
+                        {c.id === 'online' &&
+                          (scheduled ? (
+                            <span
+                              className={cn(num, 'flex h-7 items-center justify-end px-1 text-[0.7rem] text-[var(--muted-fg)]')}
+                              title="The transfer half the engine planned for today"
+                            >
+                              {inr(recOnline)}
+                            </span>
+                          ) : (
+                            <CellInput
+                              group
+                              className={num}
+                              disabled={!edit}
+                              title="Online for today"
+                              value={d(r.id, 'tonline', rupeesStr(recOnline))}
+                              onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], tonline: v } }))}
+                              onCommit={(v) => {
+                                const cashNow = d(r.id, 'tcash', rupeesStr(recCash));
+                                if (cashNow === rupeesStr(recCash) && v.trim() === rupeesStr(recOnline)) return;
+                                void save(r.id, { todayCashRupees: cashNow, todayOnlineRupees: v });
+                              }}
+                            />
+                          ))}
                       </td>
                     ))}
                     {props.canPay && (

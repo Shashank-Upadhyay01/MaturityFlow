@@ -94,11 +94,11 @@ export default async function DashboardPage() {
             </div>
             <div className="grid sm:grid-cols-2 sm:divide-x max-sm:divide-y">
               <Figure
-                label="Approved today"
+                label="Due today"
                 value={<Money paise={book.todayApprovedPaise} decimals={false} />}
                 hint={
                   splitHint(book.todayCashPaise, book.todayOnlinePaise) ??
-                  (book.todayApprovedPaise === 0n ? 'Nothing marked for the counter yet' : null)
+                  (book.todayApprovedPaise === 0n ? 'Nothing scheduled for the counter today' : null)
                 }
               />
               <Figure

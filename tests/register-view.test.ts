@@ -20,6 +20,8 @@ import {
   startOfWeek,
   summariseDueToday,
   summariseSelection,
+  todayPlannedPaise,
+  todayPlannedSplit,
   SORT_LABEL,
   type DateField,
 } from '@/lib/register-view';
@@ -402,5 +404,136 @@ describe('dayStateOf', () => {
     for (const s of ['taken', 'partial', 'missed', 'due', 'none'] as const) {
       expect(DAY_STATE_LABEL[s]).toBeTruthy();
     }
+  });
+});
+
+describe('todayPlannedPaise — the figure the ✓ button will actually pay', () => {
+  it('follows the schedule wherever there is one', () => {
+    // The typed figure is deliberately different, and deliberately ignored. The Taken button
+    // pays the instalment, so a sheet that displayed anything else would be showing the clerk
+    // one number and handing over another.
+    expect(
+      todayPlannedPaise({
+        ...row({ todayPaise: '9900000', remainingPaise: '50000000' }),
+        todayInstalmentId: 'inst_1',
+        todayDuePaise: '2500000',
+        todayPaidTakenPaise: '0',
+      }),
+    ).toBe(2500000n);
+  });
+
+  it('counts only what is still to be handed over', () => {
+    // Half of today has already gone out, so the drawer only needs the other half.
+    expect(
+      todayPlannedPaise({
+        ...row({ remainingPaise: '50000000' }),
+        todayInstalmentId: 'inst_1',
+        todayDuePaise: '2500000',
+        todayPaidTakenPaise: '1000000',
+      }),
+    ).toBe(1500000n);
+  });
+
+  it('is nothing once today is settled', () => {
+    expect(
+      todayPlannedPaise({
+        ...row({ remainingPaise: '50000000' }),
+        todayInstalmentId: 'inst_1',
+        todayDuePaise: '2500000',
+        todayPaidTakenPaise: '2500000',
+      }),
+    ).toBe(0n);
+  });
+
+  it('falls back to the typed figure on a row with no schedule', () => {
+    // A row typed into the sheet but not yet submitted has no plan to read, and the manual
+    // figure is the only thing anyone knows about it.
+    expect(
+      todayPlannedPaise({
+        ...row({ todayPaise: '3000000', remainingPaise: '50000000' }),
+        todayInstalmentId: null,
+        todayDuePaise: '0',
+        todayPaidTakenPaise: '0',
+      }),
+    ).toBe(3000000n);
+  });
+
+  it('splits by the legs the engine planned', () => {
+    const s = todayPlannedSplit({
+      ...row({ remainingPaise: '50000000' }),
+      todayInstalmentId: 'inst_1',
+      todayDuePaise: '2500000',
+      todayPaidTakenPaise: '0',
+      todayCashDuePaise: '2000000',
+      todayOnlineDuePaise: '500000',
+      todayCashPaise: '0',
+      todayOnlinePaise: '0',
+    });
+    expect(s).toEqual({ total: 2500000n, cash: 2000000n, online: 500000n });
+  });
+
+  it('never splits further than what is left of today', () => {
+    // ₹20,000 of the ₹25,000 has gone out. Only ₹5,000 is still owed today, and the split may
+    // not add up to more than that or the branch would over-fund its drawer.
+    const s = todayPlannedSplit({
+      ...row({ remainingPaise: '50000000' }),
+      todayInstalmentId: 'inst_1',
+      todayDuePaise: '2500000',
+      todayPaidTakenPaise: '2000000',
+      todayCashDuePaise: '2000000',
+      todayOnlineDuePaise: '500000',
+      todayCashPaise: '0',
+      todayOnlinePaise: '0',
+    });
+    expect(s.total).toBe(500000n);
+    expect(s.cash + s.online).toBe(500000n);
+  });
+});
+
+describe('summariseDueToday, once the schedule exists', () => {
+  it('adds up what the schedule says, not what was typed', () => {
+    const s = summariseDueToday(
+      [
+        {
+          ...full({ todayPaise: '9900000', remainingPaise: '50000000' }),
+          todayInstalmentId: 'inst_1',
+          todayDuePaise: '2500000',
+          todayPaidTakenPaise: '0',
+          todayCashDuePaise: '2500000',
+          todayOnlineDuePaise: '0',
+        },
+        {
+          ...full({ todayPaise: '0', remainingPaise: '20000000' }),
+          todayInstalmentId: 'inst_2',
+          todayDuePaise: '1000000',
+          todayPaidTakenPaise: '0',
+          todayCashDuePaise: '600000',
+          todayOnlineDuePaise: '400000',
+        },
+      ],
+      TODAY,
+    );
+    expect(s.total).toBe(3500000n);
+    expect(s.cash).toBe(3100000n);
+    expect(s.online).toBe(400000n);
+    expect(s.count).toBe(2);
+  });
+
+  it('drops a day that has already been taken out of the opening cash', () => {
+    const s = summariseDueToday(
+      [
+        {
+          ...full({ remainingPaise: '50000000' }),
+          todayInstalmentId: 'inst_1',
+          todayDuePaise: '2500000',
+          todayPaidTakenPaise: '2500000',
+          todayCashDuePaise: '2500000',
+          todayOnlineDuePaise: '0',
+        },
+      ],
+      TODAY,
+    );
+    expect(s.total).toBe(0n);
+    expect(s.count).toBe(0);
   });
 });

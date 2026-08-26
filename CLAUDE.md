@@ -276,7 +276,7 @@ If you touch `payout-engine.ts`:
 
 ## Traps this codebase has already sprung
 
-Three real bugs that cost real time. Each is cheap to hit again.
+Four real bugs that cost real time. Each is cheap to hit again.
 
 - **`.glass` sets `position: relative`, and `globals.css` is unlayered**, so it beats Tailwind's
   layered `absolute` utility. `className="glass absolute …"` silently renders *in flow* and
@@ -286,6 +286,18 @@ Three real bugs that cost real time. Each is cheap to hit again.
   `.dark`. 50 and 100 mean "the faintest tint you can lay a surface in"; 700 means "a label that
   stays readable on top of that tint". Printing `--page-fg` on a `--color-brand-50` panel without
   those dark overrides gives light-on-light and the number simply disappears.
+- **`${table.column}` inside a correlated subquery is a silent wrong answer.** Drizzle decides
+  whether to qualify a column from the shape of the *outer* query: with a join it emits
+  `"maturity_cases"."id"`, without one it emits a bare `"id"`. Inside
+  `SELECT ... FROM payout_instalments i`, that bare `"id"` resolves to the INSTALMENT's own id,
+  so `i.case_id = "id"` is never true, the subquery returns NULL for every row and any
+  `COALESCE` around it quietly falls through to the next argument. `getRegisterSummary` shipped
+  the typed `today_approved_paise` instead of the schedule's figure this way — no error, just a
+  wrong number on the screen the branch funds its drawer from, and `listRegister` was correct
+  only by the accident of having joins. Write the correlation out: `CASE_ID` in `queries.ts` is
+  `sql.raw('maturity_cases.id')`, and every subquery there uses it. Never trust the heuristic,
+  and prove a new aggregate against the real database — `tsc` cannot see this.
+
 - **Hand-written migrations leave drizzle-kit's snapshot stale**, so the next `db:generate`
   re-emits columns that already exist and the migration fails. If you hand-write SQL, write it
   idempotently (`ADD COLUMN IF NOT EXISTS`, `DROP CONSTRAINT IF EXISTS` before `ADD`) and prove

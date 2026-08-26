@@ -74,15 +74,19 @@ export function rowOnDate(r: RegisterViewRow, field: DateField): string | null {
 }
 
 /**
- * A withdrawal is "due today" when Operations has approved an amount for today and the case
+ * A withdrawal is "due today" when something is still to be handed over today and the case
  * still owes money.
  *
- * Both halves matter. An approved amount on a fully-paid case is a leftover, not an
+ * Both halves matter. An amount standing against a fully-paid case is a leftover, not an
  * obligation — counting it would overstate the cash the branch has to open with, which is the
  * one number this page exists to get right.
+ *
+ * The first half reads `todayPlannedPaise`, so on a scheduled row this asks the schedule and
+ * on an unscheduled one it asks the typed figure. Before auto-scheduling there was only the
+ * latter, and a case whose plan said ₹25,000 counted as nothing until somebody typed it in.
  */
-export function isDueToday(r: RegisterViewRow): boolean {
-  return BigInt(r.todayPaise) > 0n && BigInt(r.remainingPaise) > 0n;
+export function isDueToday(r: TodayFigureRow): boolean {
+  return todayPlannedPaise(r) > 0n && BigInt(r.remainingPaise) > 0n;
 }
 
 /**
@@ -91,8 +95,8 @@ export function isDueToday(r: RegisterViewRow): boolean {
  * Not an error — it is the shape an omission takes. Someone scheduled the customer for today
  * and then never said how much, so the counter would never see them.
  */
-export function isTodayButUnset(r: RegisterViewRow, today: string): boolean {
-  return r.paymentOn === today && BigInt(r.todayPaise) === 0n && BigInt(r.remainingPaise) > 0n;
+export function isTodayButUnset(r: TodayFigureRow, today: string): boolean {
+  return r.paymentOn === today && todayPlannedPaise(r) === 0n && BigInt(r.remainingPaise) > 0n;
 }
 
 // ── What happened to this row today ───────────────────────────────────────
@@ -145,6 +149,69 @@ export function dayStateOf(r: DayStateRow): DayState {
   return r.overdueCount > 0 ? 'missed' : 'none';
 }
 
+/**
+ * Everything the "what goes out today" rules read.
+ *
+ * The schedule fields are optional so a caller with no schedule in hand — an unsubmitted row,
+ * a test — need not invent one. Absent, the rules fall back to the typed figure, which is all
+ * anybody knows about such a row.
+ */
+export interface TodayFigureRow extends RegisterViewRow {
+  todayInstalmentId?: string | null;
+  /** What the schedule plans for today, in paise. */
+  todayDuePaise?: string;
+  /** How much of today has already gone out. */
+  todayPaidTakenPaise?: string;
+}
+
+/**
+ * What this row is still going to hand over today — the single definition.
+ *
+ * **The schedule wins wherever there is one.** This is not a preference: the Taken button pays
+ * the instalment, so a sheet that displayed the old typed figure would show a clerk one number
+ * and hand over another. That is the whole class of error this system exists to prevent, and it
+ * is why the Today column is read-only on a scheduled row.
+ *
+ * It is what is *left* of today, not what today started as. Once the customer has been paid,
+ * the money is out of the drawer and must stop being counted as cash the branch has to find.
+ */
+export function todayPlannedPaise(r: TodayFigureRow): bigint {
+  if (r.todayInstalmentId && r.todayDuePaise != null) {
+    const due = BigInt(r.todayDuePaise);
+    const paid = BigInt(r.todayPaidTakenPaise ?? '0');
+    return due > paid ? due - paid : 0n;
+  }
+  return BigInt(r.todayPaise);
+}
+
+export interface TodaySplitRow extends TodayFigureRow {
+  todayCashPaise: string;
+  todayOnlinePaise: string;
+  /** The legs the engine planned for today. */
+  todayCashDuePaise?: string;
+  todayOnlineDuePaise?: string;
+}
+
+/**
+ * How today's figure divides between the drawer and a transfer.
+ *
+ * On a scheduled row the legs come from the engine, which already balanced them against the
+ * branch's cash cap — there is no reason to ask a clerk to re-decide it. They are then clamped
+ * to whatever is left of today, because a part-paid day must not still be funded in full: the
+ * cash half is trimmed first, since that is the leg a counter settles from.
+ */
+export function todayPlannedSplit(r: TodaySplitRow): { total: bigint; cash: bigint; online: bigint } {
+  const total = todayPlannedPaise(r);
+  if (total === 0n) return { total: 0n, cash: 0n, online: 0n };
+
+  if (r.todayInstalmentId && r.todayCashDuePaise != null && r.todayOnlineDuePaise != null) {
+    const planCash = BigInt(r.todayCashDuePaise);
+    const cash = planCash < total ? planCash : total;
+    return { total, cash, online: total - cash };
+  }
+  return { total, cash: BigInt(r.todayCashPaise), online: BigInt(r.todayOnlinePaise) };
+}
+
 export interface DueSummary {
   count: number;
   total: bigint;
@@ -160,10 +227,7 @@ export interface DueSummary {
  * branch must fund before opening, and it must not change because somebody filtered to one
  * agent to check something.
  */
-export function summariseDueToday(
-  rows: readonly (RegisterViewRow & { todayCashPaise: string; todayOnlinePaise: string })[],
-  today: string,
-): DueSummary {
+export function summariseDueToday(rows: readonly TodaySplitRow[], today: string): DueSummary {
   let count = 0;
   let total = 0n;
   let cash = 0n;
@@ -171,10 +235,14 @@ export function summariseDueToday(
   let unsetCount = 0;
   for (const r of rows) {
     if (isDueToday(r)) {
+      // Whatever the sheet prints in the Today, Cash and Online cells, this adds up the same
+      // figures. If the two ever drift apart, the branch funds its drawer from one number and
+      // pays out another.
+      const split = todayPlannedSplit(r);
       count += 1;
-      total += BigInt(r.todayPaise);
-      cash += BigInt(r.todayCashPaise);
-      online += BigInt(r.todayOnlinePaise);
+      total += split.total;
+      cash += split.cash;
+      online += split.online;
     } else if (isTodayButUnset(r, today)) {
       unsetCount += 1;
     }
