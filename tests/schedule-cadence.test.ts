@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { rescheduleRemaining } from '../src/lib/payout-engine';
+import { generateSchedule, rescheduleRemaining } from '../src/lib/payout-engine';
 import { countWorkingDaysBetween, makeCalendar } from '../src/lib/working-days';
 import { payoutPlanFor } from '../src/lib/payout-policy';
 
@@ -53,5 +53,34 @@ describe('rescheduling keeps the cadence', () => {
       payoutDays: 6,
       stride: 2,
     });
+  });
+});
+
+describe('the anchor is day one, not a processing start', () => {
+  const plan = payoutPlanFor(12_000_000n, 15);
+
+  it('pays on the anchor itself', () => {
+    const res = generateSchedule({
+      totalPaise: 12_000_000n,
+      days: plan.payoutDays,
+      roundingPaise: 100_000n,
+      startDate: '2026-09-23',
+      calendar: cal,
+      distribution: 'FRONT_LOADED',
+      cashPolicy: { kind: 'CASH_ONLY' },
+      startOnNextWorkingDay: false,
+      stride: plan.stride,
+      startOffsetWorkingDays: 0,
+      policyMaxDays: plan.payoutDays,
+    });
+    expect(res.installments[0].dueDate).toBe('2026-09-23');
+    expect(res.installments).toHaveLength(12);
+  });
+
+  it('still splits the money into twelve, unchanged', () => {
+    expect(plan.payoutDays).toBe(12);
+    expect(plan.stride).toBe(1);
+    // The constant is untouched; the service simply stops applying it as an engine offset.
+    expect(plan.processingDays).toBe(3);
   });
 });

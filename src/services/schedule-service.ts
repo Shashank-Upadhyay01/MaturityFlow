@@ -54,8 +54,11 @@ export async function persistSchedule({
   anchorDate,
   branchDailyCashComfortPaise,
 }: PersistScheduleArgs): Promise<ScheduleResult> {
+  // The anchor IS day one. `scheduleAnchorFor` has already spent the three-calendar-day gap and
+  // rolled onto an open day, so applying the working-day processing offset here as well would
+  // double-count it and push every first payout about a week past what the customer was promised.
   const anchor = anchorDate ?? caseRow.approvedOn;
-  if (!anchor) throw new Error('Cannot generate a schedule before the case is approved');
+  if (!anchor) throw new Error('Cannot generate a schedule without an anchor date');
 
   // `windowDays` is the TOTAL working-day window, not the payout count. The policy decides how
   // many of those days carry a payout and how far apart they sit: ₹1 lakh and over pays every
@@ -72,7 +75,7 @@ export async function persistSchedule({
     cashPolicy: cashPolicyOf(caseRow),
     startOnNextWorkingDay: caseRow.startOnNextWorkingDay,
     stride: plan.stride,
-    startOffsetWorkingDays: plan.processingDays,
+    startOffsetWorkingDays: 0,
     policyMaxDays: plan.payoutDays,
     branchDailyCashComfortPaise,
   });
@@ -101,9 +104,9 @@ export async function persistSchedule({
       scheduleGeneratedAt: new Date(),
       firstPayoutOn: result.firstPayoutDate,
       cadence: plan.cadence,
-      // The deadline is the end of the WHOLE window, not of the payout run — an alternate-day
-      // case finishes a working day early and is still held to the same promise.
-      deadlineOn: deriveDeadline(anchor, caseRow.windowDays, calendar, caseRow.startOnNextWorkingDay),
+      // The promise is the last day money actually moves. Measuring another `windowDays` from an
+      // anchor that is already day one would quietly extend every case by the processing days.
+      deadlineOn: result.installments[result.installments.length - 1].dueDate,
       updatedAt: new Date(),
     })
     .where(eq(maturityCases.id, caseRow.id));
@@ -174,6 +177,11 @@ export async function persistReschedule({
       .where(eq(payoutInstalments.id, p.id));
   }
 
+  // `persistSchedule` always writes `deadlineOn` now, so this fallback only ever fires for a row
+  // scheduled before the anchor moved — one whose `approvedOn` really was an approval day and
+  // whose `windowDays` really did include the processing days. The old formula is the right one
+  // for exactly those rows; do not "modernise" it, or legacy cases get a deadline three working
+  // days early.
   const deadline =
     caseRow.deadlineOn ??
     deriveDeadline(caseRow.approvedOn ?? today, caseRow.windowDays, calendar, caseRow.startOnNextWorkingDay);
