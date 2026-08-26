@@ -62,13 +62,16 @@ import {
   TAB_LABEL,
   activeDatePreset,
   autoSortFor,
+  compareTodayFigures,
   dayStateOf,
   groupIndian,
+  hasMissedPayment,
   isDueToday,
   isOnTodaysList,
   isRangeActive,
   recommendedPerDay,
   resolveDatePreset,
+  rowStateOf,
   rowInDateRange,
   summariseDueToday,
   summariseSelection,
@@ -1045,13 +1048,16 @@ export function RegisterSheet(props: {
           c = cmpBig(perDay(a), perDay(b));
           break;
         case 'today':
-          c = cmpBig(asBig(a.todayPaise), asBig(b.todayPaise));
+          // Scheduled rows display the engine's live figure, so sorting must read that same
+          // figure. Using the legacy typed field made the dropdown say "Today descending"
+          // while the numbers on screen were visibly unordered.
+          c = compareTodayFigures(a, b, 'today');
           break;
         case 'cash':
-          c = cmpBig(asBig(a.todayCashPaise), asBig(b.todayCashPaise));
+          c = compareTodayFigures(a, b, 'cash');
           break;
         case 'online':
-          c = cmpBig(asBig(a.todayOnlinePaise), asBig(b.todayOnlinePaise));
+          c = compareTodayFigures(a, b, 'online');
           break;
         case 'given':
           c = Number(asBig(a.remainingPaise) <= 0n) - Number(asBig(b.remainingPaise) <= 0n);
@@ -1069,7 +1075,7 @@ export function RegisterSheet(props: {
    * filtered to one agent would be a lie in the one place the branch cannot afford one.
    */
   const missedCount = useMemo(
-    () => props.rows.filter((r) => dayStateOf(r) === 'missed').length,
+    () => props.rows.filter(hasMissedPayment).length,
     [props.rows],
   );
 
@@ -1087,7 +1093,7 @@ export function RegisterSheet(props: {
     // Everyone who did not withdraw on a day they were due. Note this is a *view* of the same
     // rows, not a second list: the user's rule is that a missed payment is never removed from
     // the twelve-day sheet, only coloured. This tab is the shortcut to them, not their home.
-    if (tab === 'missed') list = list.filter((r) => dayStateOf(r) === 'missed');
+    if (tab === 'missed') list = list.filter(hasMissedPayment);
     if (agentId) list = list.filter((r) => r.agentId === agentId);
     if (isRangeActive(range)) list = list.filter((r) => rowInDateRange(r, dateField, range));
     if (q.trim()) {
@@ -2664,6 +2670,7 @@ export function RegisterSheet(props: {
                 const dueNow = isDueToday(r);
                 const ticked = Boolean(selected[r.id]);
                 const dayState = dayStateOf(r);
+                const rowState = rowStateOf(r);
 
                 /*
                   Exactly ONE background class, chosen here rather than layered.
@@ -2679,7 +2686,7 @@ export function RegisterSheet(props: {
                 */
                 const tint = ticked
                   ? 'bg-[var(--color-brand-100)]/80 shadow-[inset_3px_0_0_0_var(--color-brand-600)] hover:bg-[var(--color-brand-100)]'
-                  : (DAY_TINT[dayState] ??
+                  : (DAY_TINT[rowState] ??
                     (dueNow
                       ? 'bg-[var(--color-brand-50)]/70 shadow-[inset_3px_0_0_0_var(--color-brand-500)] hover:bg-[var(--color-brand-100)]/70'
                       : ''));

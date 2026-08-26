@@ -253,6 +253,7 @@ export async function markTakenAction(
     const { session, actor } = await requireActor();
     const c = await scopeByInstalment(instalmentId);
     if (!c) return fail('Row not found', 'NOT_FOUND');
+    assertCanTypeRegister(actor);
     assertCan(actor, 'payout.record', c);
     await markInstalmentTaken(session, instalmentId, tender, reference);
     revalidate();
@@ -276,6 +277,7 @@ export async function markNotTakenAction(
     const { session, actor } = await requireActor();
     const c = await scopeByInstalment(instalmentId);
     if (!c) return fail('Row not found', 'NOT_FOUND');
+    assertCanTypeRegister(actor);
     assertCan(actor, 'payout.record', c);
     await markInstalmentMissed(session, instalmentId, { clear });
     revalidate();

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addDays, daysBetween, isWorkingDay, makeCalendar } from '../src/lib/working-days';
 import {
-  AUTO_APPROVAL_CALENDAR_DAYS,
   firstPayoutOn,
   scheduleAnchorFor,
   LARGE_CASE_THRESHOLD_PAISE,

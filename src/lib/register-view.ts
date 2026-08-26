@@ -131,14 +131,7 @@ export interface DayStateRow {
   overdueCount: number;
 }
 
-/**
- * The one definition of a row's colour, its tab and what its two buttons offer.
- *
- * Today outranks the backlog while today is live: one row cannot honestly be two colours, and
- * today is the day being worked. A backlog behind a live day is reported as its own count
- * instead. Once today is quiet, the backlog is the only thing left to say, so the row goes red
- * and stays on the list — a missed payment is never dropped from the twelve-day sheet.
- */
+/** The state of today's own control. Older unpaid days are deliberately handled separately. */
 export function dayStateOf(r: DayStateRow): DayState {
   if (r.todayInstalmentId) {
     if (r.todayStatus === 'PAID') return 'taken';
@@ -146,7 +139,29 @@ export function dayStateOf(r: DayStateRow): DayState {
     if (r.todayStatus === 'PARTIAL') return 'partial';
     return 'due';
   }
-  return r.overdueCount > 0 ? 'missed' : 'none';
+  return 'none';
+}
+
+/**
+ * Whether the case belongs in the Not taken tab.
+ *
+ * This cannot be inferred from `dayStateOf`: a case may have two older unpaid days and another
+ * instalment due today. Hiding it from Not taken merely because today is also live loses the
+ * backlog the tab exists to surface.
+ */
+export function hasMissedPayment(r: DayStateRow): boolean {
+  return r.todayStatus === 'MISSED' || r.overdueCount > 0;
+}
+
+/**
+ * The verdict used to colour the whole case row.
+ *
+ * An unresolved older payment keeps the row red even if another day is due or has just been
+ * paid. Green therefore means the current day is taken *and* no earlier scheduled money is
+ * missing; it never paints over a backlog.
+ */
+export function rowStateOf(r: DayStateRow): DayState {
+  return hasMissedPayment(r) ? 'missed' : dayStateOf(r);
 }
 
 /**
@@ -210,6 +225,27 @@ export function todayPlannedSplit(r: TodaySplitRow): { total: bigint; cash: bigi
     return { total, cash, online: total - cash };
   }
   return { total, cash: BigInt(r.todayCashPaise), online: BigInt(r.todayOnlinePaise) };
+}
+
+export type TodayFigureSortKey = 'today' | 'cash' | 'online';
+
+/**
+ * Compare the exact figures the Register prints for Today, Cash or Online.
+ *
+ * Scheduled rows retain the old manually typed fields for import/history, so sorting those
+ * fields can disagree with the schedule-backed numbers on screen. Keeping the comparator beside
+ * `todayPlannedSplit` makes it impossible for display and ordering to choose different sources.
+ */
+export function compareTodayFigures(
+  a: TodaySplitRow,
+  b: TodaySplitRow,
+  key: TodayFigureSortKey,
+): number {
+  const av = todayPlannedSplit(a);
+  const bv = todayPlannedSplit(b);
+  const left = key === 'today' ? av.total : av[key];
+  const right = key === 'today' ? bv.total : bv[key];
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 /**

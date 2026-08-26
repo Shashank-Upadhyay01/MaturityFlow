@@ -5,7 +5,7 @@
 import { chromium } from 'playwright';
 import { existsSync } from 'node:fs';
 
-const base = 'http://localhost:3000';
+const base = process.env.BASE_URL ?? 'http://localhost:3000';
 const email = process.argv[2] ?? 'admin@bank.test';
 const tag = process.argv[3] ?? 'admin';
 
@@ -92,13 +92,20 @@ const payIdx = await colIndex('Payment');
 const payCells = page.locator(`table tbody tr td:nth-child(${payIdx + 1}) input`);
 const payVals = await payCells.evaluateAll((els) => els.map((e) => e.value));
 const uniq = [...new Set(payVals)];
-check('Tomorrow shows one payment date only', uniq.length === 1, `dates: ${uniq.join(' | ')} across ${payVals.length} rows`);
+const emptyTomorrow = payVals.length === 0 && await page.getByText('No rows match this filter.', { exact: false }).isVisible();
+check(
+  'Tomorrow shows one payment date only (or the honest empty state)',
+  emptyTomorrow || uniq.length === 1,
+  `dates: ${uniq.join(' | ') || 'none'} across ${payVals.length} rows`,
+);
 await page.screenshot({ path: `/tmp/chk-${tag}-3-tomorrow.png` });
 
-// ---- 6. clearing the day restores the full list -------------------------------------------
-await page.click('button:has-text("Clear day")');
+// ---- 6. clearing the date restores the full list ------------------------------------------
+// The compact filter bar now labels this action simply "Clear". Use its accessible name
+// exactly so the checker cannot accidentally click one of the Register's bulk clear actions.
+await page.getByRole('button', { name: 'Clear', exact: true }).click();
 await page.waitForTimeout(500);
-check('Clear day restores more rows', (await rowCount()) > payVals.length, `${await rowCount()} rows`);
+check('Clear date restores more rows', (await rowCount()) > payVals.length, `${await rowCount()} rows`);
 
 console.log(JSON.stringify({ results, errors: errors.slice(0, 10) }, null, 2));
 await browser.close();

@@ -255,6 +255,12 @@ export async function markInstalmentTaken(
   if (inst.status === 'SUPERSEDED' || inst.status === 'CANCELLED') {
     throw new PayoutError('This instalment is no longer part of the live schedule.', 'SUPERSEDED');
   }
+  if (inst.dueOn !== todayISO()) {
+    throw new PayoutError(
+      "The Register can only mark today's scheduled instalment as taken.",
+      'NOT_DUE_TODAY',
+    );
+  }
 
   const remaining = inst.amountPaise - inst.paidCashPaise - inst.paidOnlinePaise;
   if (remaining <= 0n) throw new PayoutError('This day is already paid in full.', 'ALREADY_PAID');

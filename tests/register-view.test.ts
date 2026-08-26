@@ -5,16 +5,19 @@ import {
   activeDatePreset,
   autoSortFor,
   bulkTodayAmount,
+  compareTodayFigures,
   dayStateOf,
   DAY_STATE_LABEL,
   endOfMonth,
   groupIndian,
+  hasMissedPayment,
   isDueToday,
   isOnTodaysList,
   isTodayButUnset,
   nextDay,
   prevDay,
   resolveDatePreset,
+  rowStateOf,
   rowInDateRange,
   rowOnDate,
   startOfMonth,
@@ -384,19 +387,15 @@ describe('dayStateOf', () => {
     expect(dayStateOf(day({ todayStatus: 'PARTIAL' }))).toBe('partial');
   });
 
-  it('shows a backlog on a day the schedule skips', () => {
-    // Below ₹1 lakh pays on alternate days. On an off day there is no instalment at all, so the
-    // only thing left to say about the row is that earlier days went unpaid.
-    expect(dayStateOf(day({ todayInstalmentId: null, overdueCount: 3 }))).toBe('missed');
+  it('does not turn an alternate-schedule off day into today\'s missed day', () => {
+    expect(dayStateOf(day({ todayInstalmentId: null, overdueCount: 3 }))).toBe('none');
   });
 
   it('says nothing about an off day with a clean history', () => {
     expect(dayStateOf(day({ todayInstalmentId: null, overdueCount: 0 }))).toBe('none');
   });
 
-  it('lets today outrank the backlog while today is still live', () => {
-    // One row cannot honestly be two colours. Today is the day being worked, so today wins and
-    // the backlog is reported separately as a count.
+  it('describes today only, leaving backlog precedence to rowStateOf', () => {
     expect(dayStateOf(day({ todayStatus: 'PAID', overdueCount: 2 }))).toBe('taken');
     expect(dayStateOf(day({ todayStatus: 'PENDING', overdueCount: 2 }))).toBe('due');
   });
@@ -405,6 +404,29 @@ describe('dayStateOf', () => {
     for (const s of ['taken', 'partial', 'missed', 'due', 'none'] as const) {
       expect(DAY_STATE_LABEL[s]).toBeTruthy();
     }
+  });
+});
+
+describe('missed-payment visibility', () => {
+  const row = (over: Partial<Parameters<typeof dayStateOf>[0]> = {}) => ({
+    todayInstalmentId: 'inst_1',
+    todayStatus: 'PENDING',
+    overdueCount: 0,
+    ...over,
+  });
+
+  it('keeps an older missed payment in the Not taken tab even when another payment is due today', () => {
+    expect(hasMissedPayment(row({ overdueCount: 2 }))).toBe(true);
+  });
+
+  it('keeps the row red until its older unpaid days are cleared', () => {
+    expect(rowStateOf(row({ overdueCount: 2 }))).toBe('missed');
+    expect(rowStateOf(row({ todayStatus: 'PAID', overdueCount: 2 }))).toBe('missed');
+  });
+
+  it('uses today\'s answer when there is no backlog', () => {
+    expect(rowStateOf(row({ todayStatus: 'PAID' }))).toBe('taken');
+    expect(rowStateOf(row({ todayStatus: 'PARTIAL' }))).toBe('partial');
   });
 });
 
@@ -488,6 +510,26 @@ describe('todayPlannedPaise — the figure the ✓ button will actually pay', ()
     });
     expect(s.total).toBe(500000n);
     expect(s.cash + s.online).toBe(500000n);
+  });
+});
+
+describe('schedule-backed Today sorting', () => {
+  const scheduled = (due: string, cash: string, online: string, legacyToday: string) => ({
+    ...full({ todayPaise: legacyToday, todayCashPaise: legacyToday, todayOnlinePaise: '0' }),
+    todayInstalmentId: `inst_${due}`,
+    todayDuePaise: due,
+    todayPaidTakenPaise: '0',
+    todayCashDuePaise: cash,
+    todayOnlineDuePaise: online,
+  });
+
+  it('orders the schedule figures printed on screen, not stale typed values', () => {
+    const smallerOnScreen = scheduled('2000000', '1500000', '500000', '9900000');
+    const largerOnScreen = scheduled('3000000', '1000000', '2000000', '1000000');
+
+    expect(compareTodayFigures(smallerOnScreen, largerOnScreen, 'today')).toBeLessThan(0);
+    expect(compareTodayFigures(smallerOnScreen, largerOnScreen, 'cash')).toBeGreaterThan(0);
+    expect(compareTodayFigures(smallerOnScreen, largerOnScreen, 'online')).toBeLessThan(0);
   });
 });
 

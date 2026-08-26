@@ -29,7 +29,11 @@ import { rupees } from '@/lib/money';
 import { payoutPlanFor } from '@/lib/payout-policy';
 import { permissionsOf } from '@/lib/rbac';
 import { createCase, submitCase } from '@/services/case-service';
-import { recordPayout } from '@/services/payout-service';
+import {
+  markInstalmentMissed,
+  markInstalmentTaken,
+  recordPayout,
+} from '@/services/payout-service';
 import { todayISO } from '@/lib/working-days';
 
 function session(id: string, name: string, role: SessionUser['role'], branchId: string): SessionUser {
@@ -234,6 +238,55 @@ describe('two cashiers, one instalment', () => {
     expect(c.paidOnlinePaise).toBe(BigInt(sums.online));
     expect(c.paidCashPaise + c.paidOnlinePaise).toBe(c.maturityAmountPaise);
     expect(c.status).toBe('COMPLETED');
+  });
+});
+
+describe('Register Taken / Not taken', () => {
+  it('records Taken against today\'s instalment through the ordinary payout ledger', async () => {
+    const caseId = await makeApprovedCase('100000');
+    const inst = await firstInstalment(caseId);
+    await db
+      .update(payoutInstalments)
+      .set({ dueOn: todayISO() })
+      .where(eq(payoutInstalments.id, inst.id));
+
+    await markInstalmentTaken(cashierA, inst.id, 'SPLIT');
+
+    const after = await firstInstalment(caseId);
+    const [txn] = await db
+      .select()
+      .from(payoutTransactions)
+      .where(eq(payoutTransactions.instalmentId, inst.id))
+      .limit(1);
+    expect(after.status).toBe('PAID');
+    expect(after.paidCashPaise + after.paidOnlinePaise).toBe(after.amountPaise);
+    expect(txn.instalmentId).toBe(inst.id);
+  });
+
+  it('refuses to mark a future instalment Taken from today\'s Register', async () => {
+    const caseId = await makeApprovedCase('100000');
+    const inst = await firstInstalment(caseId);
+    expect(inst.dueOn > todayISO()).toBe(true);
+
+    await expect(markInstalmentTaken(cashierA, inst.id, 'SPLIT')).rejects.toMatchObject({
+      code: 'NOT_DUE_TODAY',
+    });
+  });
+
+  it('marks Not taken without moving money and can undo a same-day mis-click', async () => {
+    const caseId = await makeApprovedCase('100000');
+    const inst = await firstInstalment(caseId);
+    await db
+      .update(payoutInstalments)
+      .set({ dueOn: todayISO() })
+      .where(eq(payoutInstalments.id, inst.id));
+
+    await markInstalmentMissed(cashierA, inst.id);
+    expect((await firstInstalment(caseId)).status).toBe('MISSED');
+    expect((await caseRow(caseId)).paidCashPaise).toBe(0n);
+
+    await markInstalmentMissed(cashierA, inst.id, { clear: true });
+    expect((await firstInstalment(caseId)).status).toBe('PENDING');
   });
 });
 

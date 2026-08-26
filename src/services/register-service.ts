@@ -9,7 +9,6 @@ import {
   caseEvents,
   customers,
   maturityCases,
-  payoutTransactions,
   registerDays,
 } from '@/db/schema';
 import { writeAudit } from '@/lib/audit';
