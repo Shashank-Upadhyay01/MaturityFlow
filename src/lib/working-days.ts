@@ -21,24 +21,61 @@ export type SaturdayRule =
 export interface WeekendPolicy {
   sundaysOff: boolean;
   saturdayRule: SaturdayRule;
+  /**
+   * Days at the START of every month that carry no withdrawals.
+   *
+   * The counter is closed for the month-open reconciliation, so payouts resume on the 4th.
+   * 0 switches the rule off. An admin can re-open a single month — see `monthsOpenAtStart`.
+   */
+  monthStartBlockedDays: number;
 }
 
 export interface WorkingDayCalendar {
   weekend: WeekendPolicy;
   /** Set of 'YYYY-MM-DD' declared holidays. */
   holidays: ReadonlySet<ISODate>;
+  /**
+   * 'YYYY-MM' months where the admin has opened the blocked first days.
+   *
+   * An exception only lifts the month-start rule — a Sunday or a declared holiday inside those
+   * days stays closed, because opening the counter cannot conjure staff onto a weekend.
+   */
+  monthsOpenAtStart: ReadonlySet<string>;
 }
+
+export const DEFAULT_MONTH_START_BLOCKED_DAYS = 3;
 
 export const DEFAULT_WEEKEND_POLICY: WeekendPolicy = {
   sundaysOff: true,
   saturdayRule: 'SECOND_FOURTH',
+  monthStartBlockedDays: DEFAULT_MONTH_START_BLOCKED_DAYS,
 };
 
 export function makeCalendar(
   holidays: Iterable<ISODate> = [],
-  weekend: WeekendPolicy = DEFAULT_WEEKEND_POLICY,
+  weekend: Partial<WeekendPolicy> = DEFAULT_WEEKEND_POLICY,
+  monthsOpenAtStart: Iterable<string> = [],
 ): WorkingDayCalendar {
-  return { weekend, holidays: new Set(holidays) };
+  return {
+    // Partial so a caller that predates the month-start rule still gets the default of 3 rather
+    // than silently getting 0 and re-opening every month.
+    weekend: { ...DEFAULT_WEEKEND_POLICY, ...weekend },
+    holidays: new Set(holidays),
+    monthsOpenAtStart: new Set(monthsOpenAtStart),
+  };
+}
+
+/** The 'YYYY-MM' a date belongs to. */
+export function monthKey(d: ISODate): string {
+  return d.slice(0, 7);
+}
+
+/** Inside the month-open cooldown, and not opened by an admin exception. */
+export function isMonthStartBlocked(d: ISODate, cal: WorkingDayCalendar): boolean {
+  const n = cal.weekend.monthStartBlockedDays;
+  if (!Number.isFinite(n) || n <= 0) return false;
+  if (cal.monthsOpenAtStart.has(monthKey(d))) return false;
+  return Number(d.slice(8, 10)) <= n;
 }
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -113,17 +150,21 @@ export function isWeekendOff(d: ISODate, weekend: WeekendPolicy): boolean {
 
 export function isWorkingDay(d: ISODate, cal: WorkingDayCalendar): boolean {
   if (cal.holidays.has(d)) return false;
+  if (isMonthStartBlocked(d, cal)) return false;
   return !isWeekendOff(d, cal.weekend);
 }
 
 export function whyNotWorking(
   d: ISODate,
   cal: WorkingDayCalendar,
-): 'HOLIDAY' | 'SUNDAY' | 'SATURDAY' | null {
+): 'HOLIDAY' | 'SUNDAY' | 'SATURDAY' | 'MONTH_START' | null {
   if (cal.holidays.has(d)) return 'HOLIDAY';
+  // Weekend before month-start: a Sunday is closed for the older, more obvious reason, and
+  // telling a clerk "month start" about a Sunday would just be confusing.
   const dow = parseISODate(d).getUTCDay();
   if (dow === 0 && cal.weekend.sundaysOff) return 'SUNDAY';
   if (dow === 6 && isWeekendOff(d, cal.weekend)) return 'SATURDAY';
+  if (isMonthStartBlocked(d, cal)) return 'MONTH_START';
   return null;
 }
 

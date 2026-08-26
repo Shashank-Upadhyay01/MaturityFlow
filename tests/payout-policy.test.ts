@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { addDays, daysBetween, isWorkingDay, makeCalendar } from '../src/lib/working-days';
 import {
+  AUTO_APPROVAL_CALENDAR_DAYS,
+  firstPayoutOn,
   LARGE_CASE_THRESHOLD_PAISE,
   PROCESSING_WORKING_DAYS,
   PayoutPolicyError,
@@ -78,5 +81,59 @@ describe('payoutPlanFor', () => {
   it('exposes the processing constant it used', () => {
     expect(PROCESSING_WORKING_DAYS).toBe(3);
     expect(payoutPlanFor(LAKH, 15, 0).payoutDays).toBe(15);
+  });
+});
+
+describe('auto-approval: when the first payout lands', () => {
+  const cal = makeCalendar();
+
+  it('is three calendar days after the maturity date', () => {
+    // Tue 01 Sep 2026 -> Fri 04 Sep. Sept 1-3 are the month-start cooldown anyway, and the
+    // three-day gap lands past them, so both rules agree here.
+    expect(firstPayoutOn('2026-09-01', cal)).toBe('2026-09-04');
+  });
+
+  it('rolls forward off a Sunday', () => {
+    // Fri 04 Sep + 3 = Mon 07 Sep. Sun 06 is skipped by rolling, not counted around.
+    expect(firstPayoutOn('2026-09-04', cal)).toBe('2026-09-07');
+    // Thu 03 Sep + 3 = Sun 06 -> rolls to Mon 07.
+    expect(firstPayoutOn('2026-09-03', cal)).toBe('2026-09-07');
+  });
+
+  it('rolls forward out of the month-start cooldown', () => {
+    // Sat 29 Aug + 3 = Tue 01 Sep, which is closed for month start -> Fri 04 Sep.
+    expect(firstPayoutOn('2026-08-29', cal)).toBe('2026-09-04');
+    // Sun 30 Aug + 3 = Wed 02 Sep -> also closed -> Fri 04 Sep.
+    expect(firstPayoutOn('2026-08-30', cal)).toBe('2026-09-04');
+  });
+
+  it('rolls forward off a declared holiday', () => {
+    // 5 Sept is the FIRST Saturday, so it is open under the 2nd/4th rule and takes the rollover.
+    expect(firstPayoutOn('2026-09-01', makeCalendar(['2026-09-04']))).toBe('2026-09-05');
+    // Close the Saturday too and it carries on to the Monday.
+    expect(firstPayoutOn('2026-09-01', makeCalendar(['2026-09-04', '2026-09-05']))).toBe('2026-09-07');
+  });
+
+  it('honours an admin opening the month', () => {
+    const open = makeCalendar([], {}, ['2026-09']);
+    // Sat 29 Aug + 3 = Tue 01 Sep, now open.
+    expect(firstPayoutOn('2026-08-29', open)).toBe('2026-09-01');
+  });
+
+  it('the gap is never shorter than three days', () => {
+    for (const d of ['2026-08-10', '2026-08-15', '2026-09-20', '2026-12-29', '2027-02-26']) {
+      expect(daysBetween(d, firstPayoutOn(d, cal))).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('always lands on a day the counter is open', () => {
+    for (let i = 0; i < 400; i += 7) {
+      const d = addDays('2026-01-01', i);
+      expect(isWorkingDay(firstPayoutOn(d, cal), cal)).toBe(true);
+    }
+  });
+
+  it('rejects a date it cannot read', () => {
+    expect(() => firstPayoutOn('not-a-date', cal)).toThrow();
   });
 });

@@ -387,7 +387,14 @@ describe('rescheduling after reality diverges', () => {
 
 describe('deriveDeadline', () => {
   it('returns the last working day of the promised window', () => {
-    expect(deriveDeadline('2026-08-17', 15, cal)).toBe('2026-09-03');
+    // 1-3 Sept are inside the month-start cooldown, so a window that used to end on the 3rd now
+    // runs to the 7th: the promise stretches by exactly the days the counter is shut.
+    expect(deriveDeadline('2026-08-17', 15, cal)).toBe('2026-09-07');
+  });
+
+  it('a month opened by the admin gives back the days it closed', () => {
+    const open = makeCalendar([], {}, ['2026-09']);
+    expect(deriveDeadline('2026-08-17', 15, open)).toBe('2026-09-03');
   });
   it('is consistent with the schedule it describes', () => {
     const res = generateSchedule({

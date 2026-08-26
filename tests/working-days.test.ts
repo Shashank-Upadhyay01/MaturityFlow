@@ -48,6 +48,9 @@ describe('date primitives', () => {
 });
 
 describe('Indian bank weekend rules', () => {
+  // The month-start cooldown is switched off here so these assertions test the weekend rules and
+  // nothing else — 1 Aug is a working Saturday but would otherwise be closed as a month start.
+  const cal = makeCalendar([], { monthStartBlockedDays: 0 });
   // August 2026: Sat 1st(1st), 8th(2nd), 15th(3rd), 22nd(4th), 29th(5th)
   it('identifies the ordinal Saturday of the month', () => {
     expect(saturdayOrdinal('2026-08-01')).toBe(1);
@@ -75,13 +78,13 @@ describe('Indian bank weekend rules', () => {
   });
 
   it('supports an all-Saturdays-off policy', () => {
-    const c = makeCalendar([], { sundaysOff: true, saturdayRule: 'ALL' });
+    const c = makeCalendar([], { sundaysOff: true, saturdayRule: 'ALL', monthStartBlockedDays: 0 });
     expect(isWorkingDay('2026-08-01', c)).toBe(false);
     expect(isWorkingDay('2026-08-29', c)).toBe(false);
   });
 
   it('supports a no-weekend policy', () => {
-    const c = makeCalendar([], { sundaysOff: false, saturdayRule: 'NONE' });
+    const c = makeCalendar([], { sundaysOff: false, saturdayRule: 'NONE', monthStartBlockedDays: 0 });
     expect(isWorkingDay('2026-08-16', c)).toBe(true);
   });
 });
@@ -171,5 +174,78 @@ describe('collectWorkingDays with a stride', () => {
     expect(() => collectWorkingDays('2026-08-24', 3, cal, 0)).toThrow(CalendarError);
     expect(() => collectWorkingDays('2026-08-24', 3, cal, -1)).toThrow(CalendarError);
     expect(() => collectWorkingDays('2026-08-24', 3, cal, 1.5)).toThrow(CalendarError);
+  });
+});
+
+describe('month-start cooldown', () => {
+  // Sept 2026: 1 Tue, 2 Wed, 3 Thu, 4 Fri — all ordinary working days but for this rule.
+  const blocked = makeCalendar([], { sundaysOff: true, saturdayRule: 'SECOND_FOURTH', monthStartBlockedDays: 3 });
+
+  it('closes the first three days of every month by default', () => {
+    for (const d of ['2026-09-01', '2026-09-02', '2026-09-03']) {
+      expect(isWorkingDay(d, blocked)).toBe(false);
+      expect(whyNotWorking(d, blocked)).toBe('MONTH_START');
+    }
+    expect(isWorkingDay('2026-09-04', blocked)).toBe(true);
+  });
+
+  it('applies to every month, not just one', () => {
+    for (const m of ['01', '02', '06', '10', '12']) {
+      expect(isWorkingDay(`2026-${m}-02`, blocked)).toBe(false);
+    }
+  });
+
+  it('rolls a blocked day forward to the 4th', () => {
+    expect(nextWorkingDay('2026-09-01', blocked)).toBe('2026-09-04');
+  });
+
+  it('keeps rolling when the 4th is itself closed', () => {
+    // 1 Nov 2026 is a Sunday; 1-3 blocked, and 4 Nov is declared a holiday.
+    const c = makeCalendar(['2026-11-04'], {
+      sundaysOff: true,
+      saturdayRule: 'SECOND_FOURTH',
+      monthStartBlockedDays: 3,
+    });
+    expect(nextWorkingDay('2026-11-01', c)).toBe('2026-11-05');
+  });
+
+  it('an admin can open a specific month without opening the rest', () => {
+    const open = makeCalendar(
+      [],
+      { sundaysOff: true, saturdayRule: 'SECOND_FOURTH', monthStartBlockedDays: 3 },
+      ['2026-09'],
+    );
+    expect(isWorkingDay('2026-09-01', open)).toBe(true);
+    expect(isWorkingDay('2026-09-02', open)).toBe(true);
+    // October is untouched by September's exception.
+    expect(isWorkingDay('2026-10-01', open)).toBe(false);
+  });
+
+  it('an opened month still respects weekends and holidays', () => {
+    // 1 Nov 2026 is a Sunday. Opening November must not make a Sunday payable.
+    const open = makeCalendar(
+      ['2026-11-02'],
+      { sundaysOff: true, saturdayRule: 'SECOND_FOURTH', monthStartBlockedDays: 3 },
+      ['2026-11'],
+    );
+    expect(isWorkingDay('2026-11-01', open)).toBe(false); // Sunday
+    expect(isWorkingDay('2026-11-02', open)).toBe(false); // holiday
+    expect(isWorkingDay('2026-11-03', open)).toBe(true);
+  });
+
+  it('zero blocked days switches the rule off entirely', () => {
+    const none = makeCalendar([], { sundaysOff: true, saturdayRule: 'SECOND_FOURTH', monthStartBlockedDays: 0 });
+    expect(isWorkingDay('2026-09-01', none)).toBe(true);
+  });
+
+  it('defaults to 3 when the policy does not say', () => {
+    const d = makeCalendar();
+    expect(isWorkingDay('2026-09-02', d)).toBe(false);
+    expect(isWorkingDay('2026-09-04', d)).toBe(true);
+  });
+
+  it('reports the weekend before the month-start block, so the reason is the older rule', () => {
+    // 1 Nov 2026 is a Sunday AND inside the blocked window.
+    expect(whyNotWorking('2026-11-01', blocked)).toBe('SUNDAY');
   });
 });

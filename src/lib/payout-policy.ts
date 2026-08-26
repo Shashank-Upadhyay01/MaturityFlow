@@ -6,6 +6,8 @@
  * splits money. Pure, no I/O, bigint-only.
  */
 
+import { addDays, nextWorkingDay, type ISODate, type WorkingDayCalendar } from './working-days';
+
 /**
  * At or above this, a maturity is a "large" case: paid every working day and listed on the
  * priority sheet. Below it, payouts fall on alternate working days.
@@ -31,6 +33,16 @@ export const MIN_WINDOW_DAYS = PROCESSING_WORKING_DAYS + 1;
 
 export type Cadence = 'DAILY' | 'ALTERNATE';
 
+/**
+ * Calendar days between a customer's maturity date and their first payout.
+ *
+ * This is the window that used to be a human approving a form. It is deliberately counted in
+ * CALENDAR days, not working days: "three days after your maturity" is a promise a customer can
+ * check on a wall calendar, and a Friday maturity should not quietly become a following-Wednesday
+ * payout because a weekend and a 2nd Saturday fell in between.
+ */
+export const AUTO_APPROVAL_CALENDAR_DAYS = 3;
+
 export class PayoutPolicyError extends Error {
   constructor(message: string) {
     super(message);
@@ -50,6 +62,18 @@ export function cadenceFor(maturityAmountPaise: bigint): Cadence {
 /** How many working days apart consecutive payouts sit. */
 export function strideFor(cadence: Cadence): 1 | 2 {
   return cadence === 'DAILY' ? 1 : 2;
+}
+
+/**
+ * The day a maturity's first payout falls on, with nobody approving anything.
+ *
+ * Maturity date + three calendar days, then rolled forward to the next day the counter is
+ * actually open — past a Sunday, a declared holiday, or the month-start cooldown. Rolling rather
+ * than counting is what keeps the promise honest: the gap is never less than three days, and the
+ * date it lands on is always payable.
+ */
+export function firstPayoutOn(maturityDate: ISODate, calendar: WorkingDayCalendar): ISODate {
+  return nextWorkingDay(addDays(maturityDate, AUTO_APPROVAL_CALENDAR_DAYS), calendar);
 }
 
 export interface PayoutPlan {
