@@ -10,11 +10,12 @@ import { writeAudit } from '@/lib/audit';
 import { checkPasswordStrength, hashPassword } from '@/lib/auth/password';
 import { requestMeta, requireActor, revokeAllSessions } from '@/lib/auth/session';
 import { parseDisplayName, parseEmployeeCode, parsePhone, parseUsername } from '@/lib/profile';
-import { assertCan } from '@/lib/rbac';
+import { ASSIGNABLE_ROLES, assertCan } from '@/lib/rbac';
 import { deleteStoredFile, storeAvatar } from '@/lib/storage';
 import { fail, ok, toActionError, type ActionResult } from './_result';
 
-const ROLES = ['CMD', 'CEO', 'ADMIN', 'OPS_HEAD', 'BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const;
+/** Retired roles cannot be assigned. ASSIGNABLE_ROLES is the single list. */
+const ROLES = ASSIGNABLE_ROLES;
 const emailSchema = z.string().trim().email('Enter a valid email');
 
 function revalidateUser(userId: string) {

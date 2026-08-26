@@ -278,7 +278,7 @@ export async function confirmCloseDayAction(
 ): Promise<ActionResult> {
   try {
     const { session, actor } = await requireActor();
-    if (!['ADMIN', 'OPS_HEAD', 'CMD', 'CEO'].includes(actor.role)) {
+    if (!['ADMIN', 'CMD', 'CEO'].includes(actor.role)) {
       return fail('Only Admin or Operations Head can close the day', 'FORBIDDEN');
     }
     await confirmCloseDay(session, branchId, date, approve);
@@ -292,7 +292,7 @@ export async function confirmCloseDayAction(
 export async function reopenDayAction(branchId: string, date: string): Promise<ActionResult> {
   try {
     const { session, actor } = await requireActor();
-    if (!['ADMIN', 'OPS_HEAD', 'CMD', 'CEO'].includes(actor.role)) {
+    if (!['ADMIN', 'CMD', 'CEO'].includes(actor.role)) {
       return fail('Only Admin or Operations Head can reopen a day', 'FORBIDDEN');
     }
     await reopenDay(session, branchId, date);

@@ -5,7 +5,7 @@
  * this file is the actual control. See docs/04-RBAC.md.
  */
 
-import type { Role } from '@/db/schema';
+import type { ActiveRole, Role } from '@/db/schema';
 
 export type Permission =
   | 'case.view'
@@ -50,11 +50,10 @@ export type Scope = 'ALL' | 'BRANCH' | 'OWN';
  * This is the *read* half only. It is consulted by `caseScope()` and by the screens that decide
  * whether to show a branch picker. For anything that changes a record, see ROLE_WRITE_SCOPE.
  */
-export const ROLE_SCOPE: Record<Role, Scope> = {
+export const ROLE_SCOPE: Record<ActiveRole, Scope> = {
   CMD: 'ALL',
   CEO: 'ALL',
   ADMIN: 'ALL',
-  OPS_HEAD: 'ALL',
   AUDITOR: 'ALL',
   BRANCH_MANAGER: 'ALL',
   CASHIER: 'ALL',
@@ -74,11 +73,10 @@ export const ROLE_SCOPE: Record<Role, Scope> = {
  * because `inScope` would stop objecting. Never widen a role here to match ROLE_SCOPE unless you
  * have separately decided that role should be able to alter another branch's money.
  */
-export const ROLE_WRITE_SCOPE: Record<Role, Scope> = {
+export const ROLE_WRITE_SCOPE: Record<ActiveRole, Scope> = {
   CMD: 'ALL',
   CEO: 'ALL',
   ADMIN: 'ALL',
-  OPS_HEAD: 'ALL',
   // Holds no write permission at all; READ_ONLY_ROLES rejects it before scope is ever consulted.
   AUDITOR: 'ALL',
   BRANCH_MANAGER: 'BRANCH',
@@ -86,27 +84,44 @@ export const ROLE_WRITE_SCOPE: Record<Role, Scope> = {
   AGENT: 'OWN',
 };
 
-export const ROLE_LABEL: Record<Role, string> = {
+export const ROLE_LABEL: Record<ActiveRole, string> = {
   CMD: 'Chairman & Managing Director',
   CEO: 'Chief Executive Officer',
   ADMIN: 'System Administrator',
-  OPS_HEAD: 'Operations Head',
   BRANCH_MANAGER: 'Branch Manager',
   CASHIER: 'Cashier',
   AGENT: 'Agent',
   AUDITOR: 'Auditor',
 };
 
-export const ROLE_SHORT: Record<Role, string> = {
+export const ROLE_SHORT: Record<ActiveRole, string> = {
   CMD: 'CMD',
   CEO: 'CEO',
   ADMIN: 'Admin',
-  OPS_HEAD: 'Ops Head',
   BRANCH_MANAGER: 'Branch Mgr',
   CASHIER: 'Cashier',
   AGENT: 'Agent',
   AUDITOR: 'Auditor',
 };
+
+/**
+ * The roles the user manager may assign. Order is the org chart, not the alphabet.
+ */
+export const ASSIGNABLE_ROLES = [
+  'CMD', 'CEO', 'ADMIN', 'BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR',
+] as const satisfies readonly ActiveRole[];
+
+/**
+ * Read a stored role as one the app still knows about.
+ *
+ * The database can hand back `OPS_HEAD` from any row written before the role was retired — a
+ * user, an audit line, a case event. Those rows are history and are never rewritten, so every
+ * lookup into a role table goes through here rather than casting. An Ops Head reads as the
+ * Admin their account was migrated to, which is exactly the authority they had.
+ */
+export function activeRole(role: Role): ActiveRole {
+  return role === 'OPS_HEAD' ? 'ADMIN' : role;
+}
 
 const ALL: Permission[] = [
   'case.view', 'case.create', 'case.submit', 'case.edit', 'case.editApproved', 'case.approve',
@@ -130,7 +145,7 @@ const HQ_OPERATIONS: Permission[] = ALL.filter((p) => !STRUCTURE.has(p));
  * able to take them back. It is not a licence to erase money — `cancelCase()` refuses outright
  * once a rupee has been paid against the case, whoever is asking.
  */
-export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
+export const ROLE_PERMISSIONS: Record<ActiveRole, ReadonlySet<Permission>> = {
   CMD: new Set(HQ_OPERATIONS),
   CEO: new Set(HQ_OPERATIONS),
   /**
@@ -147,13 +162,6 @@ export const ROLE_PERMISSIONS: Record<Role, ReadonlySet<Permission>> = {
    * the same transaction, which is what makes it reviewable after the fact.
    */
   ADMIN: new Set<Permission>(ALL),
-  OPS_HEAD: new Set<Permission>([
-    'case.view', 'case.create', 'case.submit', 'case.edit', 'case.approve', 'case.reject',
-    'case.return', 'case.hold', 'case.cancel', 'schedule.preview', 'schedule.override',
-    'schedule.reschedule', 'payout.record', 'payout.reverse', 'cash.plan', 'cash.setOpening',
-    'agent.view', 'agent.manage', 'customer.manage', 'branch.view',
-    'report.view', 'report.export', 'data.import', 'audit.view',
-  ]),
   BRANCH_MANAGER: new Set<Permission>([
     'case.view', 'case.create', 'case.submit', 'case.edit', 'case.hold', 'case.cancel', 'schedule.preview',
     'schedule.reschedule', 'schedule.override', 'payout.record', 'cash.plan', 'cash.setOpening',
@@ -227,7 +235,7 @@ export class ForbiddenError extends Error {
 /** Does this role hold the permission at all, ignoring the specific row? */
 export function roleCan(role: Role, permission: Permission): boolean {
   if (READ_ONLY_ROLES.has(role) && WRITE_PERMISSIONS.has(permission)) return false;
-  return ROLE_PERMISSIONS[role].has(permission);
+  return ROLE_PERMISSIONS[activeRole(role)].has(permission);
 }
 
 /**
@@ -267,7 +275,7 @@ export function assertCanTypeRegister(actor: Actor): void {
   throw new ForbiddenError(
     'case.edit',
     REGISTER_READ_ONLY_ROLES.has(actor.role) ? 'READ_ONLY_ROLE' : 'NO_PERMISSION',
-    `${ROLE_LABEL[actor.role]} accounts can read the register but not change it.`,
+    `${ROLE_LABEL[activeRole(actor.role)]} accounts can read the register but not change it.`,
   );
 }
 
@@ -281,8 +289,8 @@ export function assertCanTypeRegister(actor: Actor): void {
 export function inScope(actor: Actor, resource: ResourceRef = {}, permission?: Permission): boolean {
   const scope =
     permission !== undefined && WRITE_PERMISSIONS.has(permission)
-      ? ROLE_WRITE_SCOPE[actor.role]
-      : ROLE_SCOPE[actor.role];
+      ? ROLE_WRITE_SCOPE[activeRole(actor.role)]
+      : ROLE_SCOPE[activeRole(actor.role)];
 
   switch (scope) {
     case 'ALL':
@@ -310,7 +318,7 @@ export function assertCan(actor: Actor, permission: Permission, resource: Resour
     throw new ForbiddenError(
       permission,
       'NO_PERMISSION',
-      `${ROLE_LABEL[actor.role]} is not allowed to perform this action.`,
+      `${ROLE_LABEL[activeRole(actor.role)]} is not allowed to perform this action.`,
     );
   }
   if (!inScope(actor, resource, permission)) {

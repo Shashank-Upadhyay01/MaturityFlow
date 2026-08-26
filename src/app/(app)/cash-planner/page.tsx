@@ -4,7 +4,7 @@ import { Callout } from '@/components/ui/misc';
 import { db } from '@/db';
 import { branches } from '@/db/schema';
 import { getSession } from '@/lib/auth/session';
-import { ROLE_SCOPE, roleCan } from '@/lib/rbac';
+import { ROLE_SCOPE, roleCan, activeRole } from '@/lib/rbac';
 import { serialize } from '@/lib/serialize';
 import { todayISO } from '@/lib/working-days';
 import { getCashPlan } from '@/services/queries';
@@ -24,7 +24,7 @@ export default async function CashPlannerPage({
   if (!roleCan(session.role, 'cash.plan')) redirect('/dashboard');
 
   const sp = await searchParams;
-  const all = ROLE_SCOPE[session.role] === 'ALL';
+  const all = ROLE_SCOPE[activeRole(session.role)] === 'ALL';
 
   const loaded = await db
     .select({ id: branches.id, code: branches.code, name: branches.name })

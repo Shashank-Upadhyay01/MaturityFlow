@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/field';
 import { Glass } from '@/components/ui/glass';
 import { formatPhone } from '@/lib/profile';
-import { ROLE_LABEL } from '@/lib/rbac';
+import { ROLE_LABEL, activeRole } from '@/lib/rbac';
 import type { Role } from '@/db/schema';
 
 export function ProfileForm({
@@ -94,7 +94,7 @@ export function ProfileForm({
         <div className="min-w-0">
           <p className="truncate text-[1.0625rem] font-semibold">{name}</p>
           <p className="text-[0.8125rem] text-[var(--muted-fg)]">
-            {ROLE_LABEL[roleLabel]}
+            {ROLE_LABEL[activeRole(roleLabel)]}
             {branchName ? ` · ${branchName}` : ''}
           </p>
           {employeeCode && (

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   ALL_PERMISSIONS,
+  activeRole,
+  ASSIGNABLE_ROLES,
+  ROLE_LABEL,
+  ROLE_PERMISSIONS,
   ForbiddenError,
   ROLE_SCOPE,
   ROLE_WRITE_SCOPE,
@@ -18,7 +22,6 @@ import {
 const EVERY_ROLE = Object.keys(ROLE_SCOPE) as (keyof typeof ROLE_SCOPE)[];
 
 const cmd: Actor = { id: 'u1', role: 'CMD', branchId: null, agentId: null, name: 'CMD' };
-const ops: Actor = { id: 'u2', role: 'OPS_HEAD', branchId: null, agentId: null, name: 'Ops' };
 const mgr: Actor = { id: 'u3', role: 'BRANCH_MANAGER', branchId: 'b1', agentId: null, name: 'Mgr' };
 const cashier: Actor = { id: 'u4', role: 'CASHIER', branchId: 'b1', agentId: null, name: 'Cash' };
 const agent: Actor = { id: 'u5', role: 'AGENT', branchId: 'b1', agentId: 'a1', name: 'Agent' };
@@ -40,7 +43,7 @@ describe('permission grants', () => {
   it('only Admin may add branches, users, holidays or org settings', () => {
     for (const p of ['branch.manage', 'user.manage', 'holiday.manage', 'settings.manage'] as const) {
       expect(roleCan('ADMIN', p)).toBe(true);
-      for (const r of ['CMD', 'CEO', 'OPS_HEAD', 'BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const) {
+      for (const r of ['CMD', 'CEO', 'BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const) {
         expect(roleCan(r, p)).toBe(false);
       }
     }
@@ -48,14 +51,14 @@ describe('permission grants', () => {
 
   it('only CMD, CEO and Admin may edit an already-approved case', () => {
     const allowed = (['CMD', 'CEO', 'ADMIN'] as const);
-    for (const r of ['OPS_HEAD', 'BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const) {
+    for (const r of ['BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const) {
       expect(roleCan(r, 'case.editApproved')).toBe(false);
     }
     for (const r of allowed) expect(roleCan(r, 'case.editApproved')).toBe(true);
   });
 
   it('only CMD, CEO, Ops Head and Admin may approve', () => {
-    for (const r of ['OPS_HEAD', 'CMD', 'CEO', 'ADMIN'] as const) {
+    for (const r of ['CMD', 'CEO', 'ADMIN'] as const) {
       expect(roleCan(r, 'case.approve')).toBe(true);
     }
     for (const r of ['BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const) {
@@ -66,7 +69,7 @@ describe('permission grants', () => {
   it('the roles that can add register rows can also remove them', () => {
     // Removing a register row is a cancellation. Anyone who can create a hundred blank rows in
     // one click must be able to take them back, or the sheet fills with junk nobody can clear.
-    for (const r of ['ADMIN', 'BRANCH_MANAGER', 'OPS_HEAD', 'CMD', 'CEO', 'CASHIER'] as const) {
+    for (const r of ['ADMIN', 'BRANCH_MANAGER', 'CMD', 'CEO', 'CASHIER'] as const) {
       expect(roleCan(r, 'case.create')).toBe(true);
       expect(roleCan(r, 'case.cancel')).toBe(true);
     }
@@ -101,7 +104,6 @@ describe('permission grants', () => {
   it('staff may type the register; auditor and agent may not', () => {
     expect(canTypeRegister('CASHIER')).toBe(true);
     expect(canTypeRegister('ADMIN')).toBe(true);
-    expect(canTypeRegister('OPS_HEAD')).toBe(true);
     expect(canTypeRegister('BRANCH_MANAGER')).toBe(true);
     expect(canTypeRegister('CMD')).toBe(true);
     expect(canTypeRegister('CEO')).toBe(true);
@@ -215,7 +217,7 @@ describe('data scoping', () => {
     expect(ROLE_WRITE_SCOPE.BRANCH_MANAGER).toBe('BRANCH');
     expect(ROLE_WRITE_SCOPE.CASHIER).toBe('BRANCH');
     expect(ROLE_WRITE_SCOPE.AGENT).toBe('OWN');
-    for (const r of ['CMD', 'CEO', 'ADMIN', 'OPS_HEAD'] as const) {
+    for (const r of ['CMD', 'CEO', 'ADMIN'] as const) {
       expect(ROLE_WRITE_SCOPE[r]).toBe('ALL');
     }
   });
@@ -237,7 +239,7 @@ describe('data scoping', () => {
   });
 
   it('head-office roles reach every branch', () => {
-    for (const a of [cmd, ops, auditor]) {
+    for (const a of [cmd, auditor]) {
       expect(can(a, 'case.view', { branchId: 'anything' })).toBe(true);
     }
   });
@@ -265,5 +267,40 @@ describe('permissionsOf', () => {
     expect(list).toContain('case.approve');
     expect(list).toContain('payout.record');
     expect(list.length).toBe(ALL_PERMISSIONS.length - 4);
+  });
+});
+
+describe('OPS_HEAD is retired', () => {
+  it('is not assignable', () => {
+    expect(ASSIGNABLE_ROLES).not.toContain('OPS_HEAD');
+  });
+
+  it('appears in none of the role tables', () => {
+    for (const table of [ROLE_SCOPE, ROLE_WRITE_SCOPE, ROLE_LABEL, ROLE_PERMISSIONS]) {
+      expect(Object.keys(table)).not.toContain('OPS_HEAD');
+    }
+  });
+
+  it('leaves every other role exactly as it was', () => {
+    expect([...ASSIGNABLE_ROLES].sort()).toEqual(
+      ['ADMIN', 'AGENT', 'AUDITOR', 'BRANCH_MANAGER', 'CASHIER', 'CEO', 'CMD'],
+    );
+  });
+
+  it('still holds nobody above Admin', () => {
+    // The existing invariant, restated against the narrowed table: Admin has everything,
+    // and no other role holds a permission Admin lacks.
+    for (const role of ASSIGNABLE_ROLES) {
+      for (const p of ROLE_PERMISSIONS[role]) {
+        expect(ROLE_PERMISSIONS.ADMIN.has(p)).toBe(true);
+      }
+    }
+  });
+
+  it('a legacy row still resolves, as the Admin it was migrated to', () => {
+    // Old audit and user rows can still say OPS_HEAD; nothing may crash on reading one.
+    expect(activeRole('OPS_HEAD')).toBe('ADMIN');
+    expect(activeRole('CASHIER')).toBe('CASHIER');
+    expect(roleCan('OPS_HEAD', 'payout.record')).toBe(true);
   });
 });

@@ -21,7 +21,7 @@ import { useState } from 'react';
 
 import { NAV } from './nav-config';
 import type { SessionUser } from '@/lib/auth/session';
-import { ROLE_SCOPE, roleCan } from '@/lib/rbac';
+import { ROLE_SCOPE, roleCan, activeRole } from '@/lib/rbac';
 import { cn } from '@/lib/utils';
 
 const ICONS: Record<string, LucideIcon> = {
@@ -60,7 +60,7 @@ export function Sidebar({
     ...s,
     items: s.items.filter((i) => {
       if (!roleCan(session.role, i.permission)) return false;
-      if (i.headOfficeOnly && ROLE_SCOPE[session.role] !== 'ALL') return false;
+      if (i.headOfficeOnly && ROLE_SCOPE[activeRole(session.role)] !== 'ALL') return false;
       return true;
     }),
   })).filter((s) => s.items.length > 0);

@@ -3,7 +3,7 @@
 import { motion } from 'framer-motion';
 
 import type { CaseEventType, Role } from '@/db/schema';
-import { ROLE_SHORT } from '@/lib/rbac';
+import { ROLE_SHORT, activeRole } from '@/lib/rbac';
 import { cn } from '@/lib/utils';
 
 const DOT: Partial<Record<CaseEventType, string>> = {
@@ -88,7 +88,7 @@ export function CaseTimeline({ events }: { events: TimelineEvent[] }) {
               minute: '2-digit',
               timeZone: 'Asia/Kolkata',
             })}
-            {ev.actor && ` · ${ev.actor.name} (${ROLE_SHORT[ev.actor.role]})`}
+            {ev.actor && ` · ${ev.actor.name} (${ROLE_SHORT[activeRole(ev.actor.role)]})`}
           </p>
         </motion.li>
       ))}

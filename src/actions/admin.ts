@@ -11,7 +11,7 @@ import { checkPasswordStrength, hashPassword } from '@/lib/auth/password';
 import { requestMeta, requireActor, revokeAllSessions } from '@/lib/auth/session';
 import { newId } from '@/lib/id';
 import { formatPaise, parseRupeesToPaise } from '@/lib/money';
-import { assertCan } from '@/lib/rbac';
+import { ASSIGNABLE_ROLES, assertCan } from '@/lib/rbac';
 import { fail, ok, toActionError, type ActionResult } from './_result';
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -302,7 +302,7 @@ const userSchema = z.object({
   name: z.string().trim().min(2, 'Enter a name'),
   employeeCode: z.string().trim().optional().nullable(),
   phone: z.string().trim().optional().nullable(),
-  role: z.enum(['CMD', 'CEO', 'ADMIN', 'OPS_HEAD', 'BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR']),
+  role: z.enum(ASSIGNABLE_ROLES),
   branchId: z.string().optional().nullable(),
   password: z.string().min(10, 'Use at least 10 characters'),
 });

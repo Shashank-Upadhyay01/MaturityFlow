@@ -93,7 +93,7 @@ export default async function MaturitiesPage() {
             canCreate={canOnSheet('case.create')}
             canSetCash={canOnSheet('cash.setOpening')}
             canRequestClose={canOnSheet('payout.record') || canOnSheet('settings.manage')}
-            canConfirmClose={canType && ['ADMIN', 'OPS_HEAD', 'CMD', 'CEO'].includes(session.role)}
+            canConfirmClose={canType && ['ADMIN', 'CMD', 'CEO'].includes(session.role)}
             canLayout={roleCan(session.role, 'settings.manage')}
             canRemove={canOnSheet('case.cancel')}
             columnLayout={parseRegisterLayout(branch?.registerColumnOrder)}

@@ -13,9 +13,10 @@ import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
 import { TBody, TD, TH, THead, TR, Table } from '@/components/ui/table';
 import type { Role } from '@/db/schema';
-import { ROLE_LABEL } from '@/lib/rbac';
+import { ROLE_LABEL, ASSIGNABLE_ROLES, activeRole } from '@/lib/rbac';
 
-const ROLES: Role[] = ['CMD', 'CEO', 'ADMIN', 'OPS_HEAD', 'BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'];
+/** Retired roles are not offered. ASSIGNABLE_ROLES is the single list. */
+const ROLES = ASSIGNABLE_ROLES;
 
 interface Row {
   id: string;
@@ -212,7 +213,7 @@ export function UserManager({
                 </TD>
                 <TD className="text-[var(--muted-fg)]">@{u.username}</TD>
                 <TD>
-                  <Badge tone={u.role === 'AUDITOR' ? 'neutral' : 'brand'}>{ROLE_LABEL[u.role]}</Badge>
+                  <Badge tone={u.role === 'AUDITOR' ? 'neutral' : 'brand'}>{ROLE_LABEL[activeRole(u.role)]}</Badge>
                 </TD>
                 <TD className="text-[var(--muted-fg)]">{u.branchCode ?? '—'}</TD>
                 <TD className="text-[0.8125rem] text-[var(--muted-fg)]">

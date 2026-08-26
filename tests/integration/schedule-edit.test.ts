@@ -80,12 +80,12 @@ beforeAll(async () => {
     id,
     email: `${id}@test.local`,
     username: id.replace(/[^a-z0-9]/gi, '').toLowerCase().slice(0, 32) || `u${id.slice(-8)}`,
-    name: 'Ops Tester',
+    name: 'Ops Tester (Admin)',
     passwordHash: 'x'.repeat(60),
-    role: 'OPS_HEAD',
+    role: 'ADMIN',
     branchId,
   });
-  ops = session(id, 'Ops Tester', 'OPS_HEAD', branchId);
+  ops = session(id, 'Ops Tester (Admin)', 'ADMIN', branchId);
 
   agentId = newId('agt');
   await db.insert(agents).values({
@@ -244,7 +244,7 @@ describe('the follow-up lists', () => {
   /** Ops sees every branch, so the fixture branch's rows are in scope. */
   const actor = (): Actor => ({
     id: ops.id,
-    role: 'OPS_HEAD',
+    role: 'ADMIN',
     branchId: null,
     agentId: null,
     name: ops.name,

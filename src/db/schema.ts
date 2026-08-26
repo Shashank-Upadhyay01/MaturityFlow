@@ -122,7 +122,7 @@ export const branches = pgTable(
     ifsc: text('ifsc'),
     isActive: boolean('is_active').notNull().default(true),
 
-    // Branch policy defaults — overridable per case by OPS_HEAD / CEO / CMD.
+    // Branch policy defaults — overridable per case by ADMIN / CEO / CMD.
     defaultRoundingPaise: bigint('default_rounding_paise', { mode: 'bigint' })
       .notNull()
       .default(sql`100000`), // ₹1,000
@@ -700,6 +700,15 @@ export type BranchCashPosition = typeof branchCashPositions.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 
 export type Role = (typeof roleEnum.enumValues)[number];
+
+/**
+ * The roles a user may actually hold.
+ *
+ * `OPS_HEAD` stays in `roleEnum` because Postgres has no `ALTER TYPE ... DROP VALUE` and audit
+ * rows still name it. It is retired in the application instead: not assignable, not in the
+ * permission matrix, no login path. See docs/adr/0005.
+ */
+export type ActiveRole = Exclude<Role, 'OPS_HEAD'>;
 export type CaseStatus = (typeof caseStatusEnum.enumValues)[number];
 export type InstalmentStatus = (typeof instalmentStatusEnum.enumValues)[number];
 export type DistributionMode = (typeof distributionEnum.enumValues)[number];

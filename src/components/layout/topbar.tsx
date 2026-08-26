@@ -10,7 +10,7 @@ import { pageTitleFor } from './nav-config';
 import { Sidebar, type NavBadges } from './sidebar';
 import { ThemeToggle } from './theme-toggle';
 import type { SessionUser } from '@/lib/auth/session';
-import { ROLE_LABEL, ROLE_SHORT } from '@/lib/rbac';
+import { ROLE_LABEL, ROLE_SHORT, activeRole } from '@/lib/rbac';
 import { UserAvatar } from '@/components/domain/user-avatar';
 import { cn } from '@/lib/utils';
 
@@ -90,7 +90,7 @@ export function Topbar({
                 {session.name}
               </span>
               <span className="block text-[0.6875rem] leading-tight text-[var(--faint-fg)]">
-                {ROLE_SHORT[session.role]}
+                {ROLE_SHORT[activeRole(session.role)]}
               </span>
             </span>
           </button>
@@ -108,7 +108,7 @@ export function Topbar({
                     @{session.username} · {session.email}
                   </p>
                   <p className="mt-1 text-[0.6875rem] text-[var(--faint-fg)]">
-                    {ROLE_LABEL[session.role]}
+                    {ROLE_LABEL[activeRole(session.role)]}
                     {session.branchName ? ` · ${session.branchName}` : ''}
                   </p>
                 </div>

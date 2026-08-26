@@ -37,9 +37,10 @@ import { Money } from '@/components/ui/money';
 import { TBody, TD, TH, THead, TR, Table } from '@/components/ui/table';
 import type { Role } from '@/db/schema';
 import { formatPhone } from '@/lib/profile';
-import { ROLE_LABEL } from '@/lib/rbac';
+import { ROLE_LABEL, ASSIGNABLE_ROLES, activeRole } from '@/lib/rbac';
 
-const ROLES: Role[] = ['CMD', 'CEO', 'ADMIN', 'OPS_HEAD', 'BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'];
+/** Retired roles are not offered. ASSIGNABLE_ROLES is the single list. */
+const ROLES = ASSIGNABLE_ROLES;
 
 function when(iso: string | null | undefined) {
   if (!iso) return '—';
@@ -225,7 +226,7 @@ export function UserDossier({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-[1.125rem] font-semibold">{u.name}</h2>
-              <Badge tone={u.role === 'AUDITOR' ? 'neutral' : 'brand'}>{ROLE_LABEL[u.role]}</Badge>
+              <Badge tone={u.role === 'AUDITOR' ? 'neutral' : 'brand'}>{ROLE_LABEL[activeRole(u.role)]}</Badge>
               {u.deletedAt ? (
                 <Badge tone="danger">deleted</Badge>
               ) : u.isActive ? (

@@ -6,7 +6,7 @@ import { EmptyState } from '@/components/ui/misc';
 import { StatTile } from '@/components/ui/stat';
 import { Money } from '@/components/ui/money';
 import { getSession, toActor } from '@/lib/auth/session';
-import { ROLE_SCOPE, roleCan } from '@/lib/rbac';
+import { ROLE_SCOPE, roleCan, activeRole } from '@/lib/rbac';
 import { serialize } from '@/lib/serialize';
 import { formatISODate, todayISO } from '@/lib/working-days';
 import { getDueToday } from '@/services/payout-service';
@@ -28,7 +28,7 @@ export default async function PayoutsPage({
   const sp = await searchParams;
   const date = /^\d{4}-\d{2}-\d{2}$/.test(sp.date ?? '') ? sp.date! : todayISO();
   const actor = toActor(session);
-  const branchId = ROLE_SCOPE[session.role] === 'ALL' ? null : session.branchId;
+  const branchId = ROLE_SCOPE[activeRole(session.role)] === 'ALL' ? null : session.branchId;
 
   const [due, stats] = await Promise.all([
     getDueToday(branchId, date),

@@ -7,7 +7,7 @@ import { EmptyState } from '@/components/ui/misc';
 import { TBody, TD, TH, THead, TR, Table } from '@/components/ui/table';
 import { AUDIT_ACTION_LABEL } from '@/lib/audit';
 import { getSession } from '@/lib/auth/session';
-import { ROLE_SHORT, roleCan } from '@/lib/rbac';
+import { ROLE_SHORT, roleCan, activeRole } from '@/lib/rbac';
 import { cn } from '@/lib/utils';
 import { listAudit } from '@/services/queries';
 
@@ -90,7 +90,7 @@ export default async function AuditPage({
                   <TD>
                     <span className="block font-medium">{r.actorName}</span>
                     <span className="block text-[0.75rem] text-[var(--faint-fg)]">
-                      {ROLE_SHORT[r.actorRole]}
+                      {ROLE_SHORT[activeRole(r.actorRole)]}
                     </span>
                   </TD>
                   <TD>

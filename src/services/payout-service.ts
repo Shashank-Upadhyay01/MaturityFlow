@@ -35,7 +35,7 @@ export interface RecordPayoutInput {
   reference?: string | null;
   remarks?: string | null;
   valueDate?: string;
-  /** OPS_HEAD / CEO / CMD may exceed the planned daily amount. Never the case total. */
+  /** ADMIN / CEO / CMD may exceed the planned daily amount. Never the case total. */
   allowExceedInstalment?: boolean;
 }
 

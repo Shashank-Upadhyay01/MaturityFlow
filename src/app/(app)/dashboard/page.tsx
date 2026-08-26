@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Glass, PageHeader } from '@/components/ui/glass';
 import { Money } from '@/components/ui/money';
 import { getSession, toActor } from '@/lib/auth/session';
-import { ROLE_SCOPE, roleCan } from '@/lib/rbac';
+import { ROLE_SCOPE, roleCan, activeRole } from '@/lib/rbac';
 import { cn } from '@/lib/utils';
 import { todayISO } from '@/lib/working-days';
 import { getBranchRollup, getRegisterSummary } from '@/services/queries';
@@ -20,7 +20,7 @@ export default async function DashboardPage() {
   if (!session) redirect('/login');
   const actor = toActor(session);
   const today = todayISO();
-  const hq = ROLE_SCOPE[session.role] === 'ALL';
+  const hq = ROLE_SCOPE[activeRole(session.role)] === 'ALL';
 
   const [book, branches] = await Promise.all([
     getRegisterSummary(actor, today),

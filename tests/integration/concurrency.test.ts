@@ -85,7 +85,7 @@ beforeAll(async () => {
     return session(id, name, role, branchId);
   };
 
-  ops = await mk('OPS_HEAD', 'Ops Tester');
+  ops = await mk('ADMIN', 'Ops Tester (Admin)');
   cashierA = await mk('CASHIER', 'Cashier A');
   cashierB = await mk('CASHIER', 'Cashier B');
 

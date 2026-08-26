@@ -37,7 +37,7 @@ import {
   type CaseStatus,
 } from '@/db/schema';
 import type { Actor } from '@/lib/rbac';
-import { ROLE_SCOPE, ROLE_WRITE_SCOPE } from '@/lib/rbac';
+import { ROLE_SCOPE, ROLE_WRITE_SCOPE, activeRole } from '@/lib/rbac';
 import { buildRunway, type RunwayCase } from '@/lib/cash-runway';
 import { DEFAULT_CASH_CAP_PAISE } from '@/lib/org-settings';
 import { LARGE_CASE_THRESHOLD_PAISE } from '@/lib/payout-policy';
@@ -50,7 +50,7 @@ import { loadOrgSettings } from './org-settings';
  * every list query in the app funnels through these helpers.
  */
 export function caseScope(actor: Actor): SQL | undefined {
-  switch (ROLE_SCOPE[actor.role]) {
+  switch (ROLE_SCOPE[activeRole(actor.role)]) {
     case 'ALL':
       return undefined;
     case 'BRANCH':
@@ -656,7 +656,7 @@ export async function getAgentRollup(actor: Actor) {
 
 export async function getBranchRollup(actor: Actor) {
   const branchFilter =
-    ROLE_SCOPE[actor.role] === 'ALL' ? undefined : eq(branches.id, actor.branchId ?? '__none__');
+    ROLE_SCOPE[activeRole(actor.role)] === 'ALL' ? undefined : eq(branches.id, actor.branchId ?? '__none__');
   return db
     .select({
       branchId: branches.id,
@@ -895,7 +895,7 @@ export async function listAudit(
  * submit — a form full of choices that fail. Offer only what the actor can actually use.
  */
 export async function getFormOptions(actor: Actor) {
-  const scope = ROLE_WRITE_SCOPE[actor.role];
+  const scope = ROLE_WRITE_SCOPE[activeRole(actor.role)];
   const branchFilter = scope === 'ALL' ? undefined : eq(branches.id, actor.branchId ?? '__none__');
 
   const allBranches = await db

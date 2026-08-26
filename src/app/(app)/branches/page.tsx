@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Glass, PageHeader } from '@/components/ui/glass';
 import { Money } from '@/components/ui/money';
 import { getSession, toActor } from '@/lib/auth/session';
-import { ROLE_SCOPE, roleCan } from '@/lib/rbac';
+import { ROLE_SCOPE, roleCan, activeRole } from '@/lib/rbac';
 import { getBranchRollup } from '@/services/queries';
 import { db } from '@/db';
 import { branches as branchesTable } from '@/db/schema';
@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic';
 export default async function BranchesPage() {
   const session = await getSession();
   if (!session) redirect('/login');
-  if (!roleCan(session.role, 'branch.view') || ROLE_SCOPE[session.role] !== 'ALL') {
+  if (!roleCan(session.role, 'branch.view') || ROLE_SCOPE[activeRole(session.role)] !== 'ALL') {
     redirect('/dashboard');
   }
 
