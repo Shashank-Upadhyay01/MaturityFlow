@@ -17,3 +17,4 @@ coverage/
 
 # Vercel CLI local project link (created when resuming cloud deploy)
 .vercel
+backups/

@@ -24,6 +24,7 @@
     "db:down": "docker compose down",
     "lint": "eslint .",
     "test:db": "vitest run --config vitest.integration.config.ts",
+    "backfill:schedule": "tsx --conditions=react-server scripts/backfill-auto-schedule.ts",
     "db:check": "node scripts/check-db.mjs"
   },
   "dependencies": {

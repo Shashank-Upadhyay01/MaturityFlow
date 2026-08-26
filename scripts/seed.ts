@@ -84,7 +84,9 @@ async function main() {
     { email: 'cmd@bank.test', username: 'cmd', name: 'Ravi Prakash Tiwari', role: 'CMD' as const, branchId: null, code: 'EMP0001' },
     { email: 'ceo@bank.test', username: 'ceo', name: 'Hareram Yadav', role: 'CEO' as const, branchId: null, code: 'EMP0002' },
     { email: 'admin@bank.test', username: 'admin', name: 'Shashank Upadhyay', role: 'ADMIN' as const, branchId: null, code: 'EMP0003' },
-    { email: 'ops@bank.test', username: 'ops', name: 'Operations Head', role: 'OPS_HEAD' as const, branchId: null, code: 'EMP0004' },
+    // The Operations Head role was retired with the approval step (docs/adr/0005). The account
+    // stays so nobody loses a login; it is an Admin now, which is the authority it had.
+    { email: 'ops@bank.test', username: 'ops', name: 'Operations Head (retired role — now Admin)', role: 'ADMIN' as const, branchId: null, code: 'EMP0004' },
     { email: 'manager@bank.test', username: 'manager', name: 'Branch Manager — Bhawarnath', role: 'BRANCH_MANAGER' as const, branchId, code: 'EMP0005' },
     { email: 'cashier@bank.test', username: 'cashier', name: 'Cashier — Bhawarnath', role: 'CASHIER' as const, branchId, code: 'EMP0006' },
     { email: 'auditor@bank.test', username: 'auditor', name: 'Auditor', role: 'AUDITOR' as const, branchId: null, code: 'EMP0007' },
