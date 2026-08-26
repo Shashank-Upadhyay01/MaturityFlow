@@ -14,7 +14,6 @@ import { assertCan } from '@/lib/rbac';
 import { writeAudit } from '@/lib/audit';
 import { persistInstalmentEdit } from '@/services/schedule-service';
 import {
-  approveCase,
   cancelCase,
   createCase,
   rejectCase,
@@ -274,72 +273,6 @@ export async function submitCaseAction(caseId: string): Promise<ActionResult> {
     await submitCase(session, caseId, await requestMeta());
     revalidateCase(caseId);
     return ok();
-  } catch (e) {
-    return toActionError(e);
-  }
-}
-
-const approveSchema = z.object({
-  caseId: z.string().min(1),
-  approvedOn: isoDate,
-  windowDays: z.coerce.number().int().min(MIN_WINDOW_DAYS).max(366),
-  roundingPaise: z.string().min(1),
-  distribution: z.enum(['FRONT_LOADED', 'BACK_LOADED', 'EVEN']),
-  cashPolicy: z.enum(['CASH_ONLY', 'ONLINE_ONLY', 'CASH_CAP']),
-  cashCapPerDay: z.string().optional().nullable(),
-  startOnNextWorkingDay: z.union([z.literal('on'), z.literal('')]).optional(),
-  note: z.string().optional().nullable(),
-});
-
-export async function approveCaseAction(
-  _prev: ActionResult<{ caseNumber: string; instalments: number; lastPayoutOn: string }> | null,
-  formData: FormData,
-): Promise<ActionResult<{ caseNumber: string; instalments: number; lastPayoutOn: string }>> {
-  try {
-    const { session, actor } = await requireActor();
-    const parsed = approveSchema.safeParse(Object.fromEntries(formData));
-    if (!parsed.success) {
-      const fe: Record<string, string> = {};
-      for (const i of parsed.error.issues) fe[String(i.path[0])] = i.message;
-      return fail('Check the highlighted fields', 'VALIDATION', fe);
-    }
-    const d = parsed.data;
-
-    const c = await loadCaseScope(d.caseId);
-    if (!c) return fail('Case not found', 'NOT_FOUND');
-    assertCan(actor, 'case.approve', c);
-
-    let cashCap: bigint | null = null;
-    if (d.cashPolicy === 'CASH_CAP') {
-      try {
-        cashCap = parseRupeesToPaise(d.cashCapPerDay ?? '0');
-      } catch {
-        return fail('Enter a valid daily cash limit', 'VALIDATION', { cashCapPerDay: 'Digits only' });
-      }
-    }
-
-    const res = await approveCase(
-      session,
-      {
-        caseId: d.caseId,
-        approvedOn: d.approvedOn,
-        windowDays: d.windowDays,
-        roundingPaise: BigInt(d.roundingPaise),
-        distribution: d.distribution,
-        cashPolicy: d.cashPolicy,
-        cashCapPerDayPaise: cashCap,
-        startOnNextWorkingDay: d.startOnNextWorkingDay === 'on',
-        note: d.note || null,
-      },
-      await requestMeta(),
-    );
-
-    revalidateCase(d.caseId);
-    return ok({
-      caseNumber: res.caseNumber,
-      instalments: res.instalments,
-      lastPayoutOn: res.lastPayoutOn,
-    });
   } catch (e) {
     return toActionError(e);
   }

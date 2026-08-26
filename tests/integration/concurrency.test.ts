@@ -28,7 +28,7 @@ import { newId } from '@/lib/id';
 import { rupees } from '@/lib/money';
 import { payoutPlanFor } from '@/lib/payout-policy';
 import { permissionsOf } from '@/lib/rbac';
-import { approveCase, createCase } from '@/services/case-service';
+import { createCase, submitCase } from '@/services/case-service';
 import { recordPayout } from '@/services/payout-service';
 import { todayISO } from '@/lib/working-days';
 
@@ -135,9 +135,10 @@ async function makeApprovedCase(amount: string, days = 10) {
     roundingPaise: rupees('1000'),
     distribution: 'FRONT_LOADED',
     cashPolicy: 'CASH_ONLY',
+    // Creating with submitNow now schedules in the same transaction — there is nothing to approve.
+    instrumentMaturityOn: todayISO(),
     submitNow: true,
   });
-  await approveCase(ops, { caseId: id });
   return id;
 }
 
@@ -248,12 +249,15 @@ describe('two approvers, one case', () => {
       roundingPaise: rupees('1000'),
       distribution: 'FRONT_LOADED',
       cashPolicy: 'CASH_ONLY',
-      submitNow: true,
+      instrumentMaturityOn: todayISO(),
+      submitNow: false,
     });
 
+    // The race that used to be two Approve clicks is now two Submit clicks. Same invariant:
+    // whoever loses the case row lock must find the case already scheduled and back out.
     const results = await Promise.allSettled([
-      approveCase(ops, { caseId }),
-      approveCase(ops, { caseId }),
+      submitCase(ops, caseId),
+      submitCase(ops, caseId),
     ]);
     expect(results.filter((r) => r.status === 'fulfilled').length).toBe(1); // INV-7
 

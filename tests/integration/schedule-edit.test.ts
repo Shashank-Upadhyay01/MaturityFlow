@@ -29,7 +29,7 @@ import { newId } from '@/lib/id';
 import { rupees } from '@/lib/money';
 import { permissionsOf } from '@/lib/rbac';
 import type { Actor } from '@/lib/rbac';
-import { approveCase, createCase } from '@/services/case-service';
+import { createCase } from '@/services/case-service';
 import {
   listBreachedCases,
   listMissedInstalments,
@@ -132,9 +132,10 @@ async function approved(amount: string) {
     roundingPaise: rupees('1000'),
     distribution: 'FRONT_LOADED',
     cashPolicy: 'CASH_ONLY',
+    // Creating with submitNow now schedules in the same transaction — there is nothing to approve.
+    instrumentMaturityOn: todayISO(),
     submitNow: true,
   });
-  await approveCase(ops, { caseId: id });
   return id;
 }
 

@@ -17,7 +17,8 @@ import { writeAudit, type AuditAction } from '@/lib/audit';
 import type { SessionUser } from '@/lib/auth/session';
 import { formatPaise } from '@/lib/money';
 import { formatCaseNumber, newId } from '@/lib/id';
-import { todayISO } from '@/lib/working-days';
+import { todayISO, type WorkingDayCalendar } from '@/lib/working-days';
+import { scheduleAnchorFor } from '@/lib/payout-policy';
 import { getBranchPolicy } from './calendar-service';
 import { persistSchedule, persistReschedule, persistReplanWindow } from './schedule-service';
 
@@ -32,11 +33,17 @@ export class WorkflowError extends Error {
 }
 
 /** Which transitions the workflow permits. Anything not listed here is refused. */
+/**
+ * There is no approval step, so a submitted case goes straight to APPROVED — the status that has
+ * always meant "payable" downstream. SUBMITTED and UNDER_REVIEW survive as *sources* only: no code
+ * path moves a case into them any more, but rows written before the cutover still sit there and
+ * must be able to leave.
+ */
 const ALLOWED_TRANSITIONS: Record<CaseStatus, CaseStatus[]> = {
-  DRAFT: ['SUBMITTED', 'CANCELLED'],
-  SUBMITTED: ['UNDER_REVIEW', 'APPROVED', 'REJECTED', 'RETURNED', 'CANCELLED'],
+  DRAFT: ['APPROVED', 'CANCELLED'],
+  SUBMITTED: ['APPROVED', 'REJECTED', 'RETURNED', 'CANCELLED'],
   UNDER_REVIEW: ['APPROVED', 'REJECTED', 'RETURNED', 'CANCELLED'],
-  RETURNED: ['SUBMITTED', 'CANCELLED'],
+  RETURNED: ['APPROVED', 'CANCELLED'],
   APPROVED: ['IN_PROGRESS', 'ON_HOLD', 'CANCELLED', 'COMPLETED'],
   IN_PROGRESS: ['COMPLETED', 'ON_HOLD', 'CANCELLED'],
   ON_HOLD: ['APPROVED', 'IN_PROGRESS', 'CANCELLED'],
@@ -155,7 +162,8 @@ export async function createCase(
     const year = Number(input.formSubmittedOn.slice(0, 4));
     const caseNumber = await nextCaseNumber(tx, branch.code, year);
     const id = newId('case');
-    const status: CaseStatus = input.submitNow ? 'SUBMITTED' : 'DRAFT';
+    // `submitNow` means scheduled, not parked: there is no queue to park in any more.
+    const status: CaseStatus = input.submitNow ? 'APPROVED' : 'DRAFT';
 
     await tx.insert(maturityCases).values({
       id,
@@ -181,7 +189,7 @@ export async function createCase(
     });
 
     await logEvent(tx, id, 'CREATED', actor.id, { to: status });
-    if (input.submitNow) await logEvent(tx, id, 'SUBMITTED', actor.id, { to: 'SUBMITTED' });
+    if (input.submitNow) await logEvent(tx, id, 'SUBMITTED', actor.id, { to: 'APPROVED' });
 
     await writeAudit(tx, actor, {
       action: input.submitNow ? 'case.submitted' : 'case.created',
@@ -198,30 +206,158 @@ export async function createCase(
       ...meta,
     });
 
+    // Created *and* submitted in one go: schedule it here rather than leaving it in a status that
+    // nothing will ever pick up. Same helper as `submitCase`, so the anchor cannot drift between
+    // the two doors into the same state.
+    if (input.submitNow) {
+      const [row] = await tx
+        .select()
+        .from(maturityCases)
+        .where(eq(maturityCases.id, id))
+        .limit(1);
+      const policy = await getBranchPolicy(input.branchId, tx);
+      const anchor = anchorForCase(row, policy.calendar);
+      await tx
+        .update(maturityCases)
+        .set({ approvedOn: anchor, approvedAt: new Date(), approvedById: null, updatedAt: new Date() })
+        .where(eq(maturityCases.id, id));
+      await scheduleCaseInTx(tx, actor, row, anchor);
+    }
+
     return { id, caseNumber };
   });
 }
 
+// ── Submit — the moment the money becomes payable ─────────────────────────
+
+/**
+ * Generate and persist a case's schedule, inside a transaction that already holds its row lock.
+ *
+ * Shared by `submitCase` and by `createCase({ submitNow: true })` so there is exactly one place
+ * that decides when money becomes payable. Two paths would be two chances to get the anchor
+ * wrong, and only one of them would be covered by the tests.
+ *
+ * The caller is responsible for the status update and for its own audit row; this writes the
+ * instalments and the SCHEDULE_GENERATED event.
+ */
+async function scheduleCaseInTx(
+  tx: Tx,
+  actor: SessionUser,
+  caseRow: MaturityCase,
+  anchor: string,
+) {
+  const policy = await getBranchPolicy(caseRow.branchId, tx);
+  const schedule = await persistSchedule({
+    tx,
+    caseRow: { ...caseRow, approvedOn: anchor, status: 'APPROVED' as const },
+    calendar: policy.calendar,
+    anchorDate: anchor,
+    branchDailyCashComfortPaise: policy.dailyCashComfortPaise,
+  });
+
+  await logEvent(tx, caseRow.id, 'SCHEDULE_GENERATED', actor.id, {
+    note:
+      `${schedule.effectiveDays} instalments, ${schedule.firstPayoutDate} → ${schedule.lastPayoutDate}, ` +
+      `${formatPaise(schedule.totalCashPaise)} cash + ${formatPaise(schedule.totalOnlinePaise)} online`,
+  });
+
+  return schedule;
+}
+
+/**
+ * Work out where a case's schedule starts, or say why it cannot.
+ *
+ * The anchor comes from the customer's own maturity date, so a case without one cannot be
+ * scheduled at all. Refusing is the only honest answer — guessing a date here would put real
+ * money on a day nobody agreed to.
+ */
+function anchorForCase(caseRow: MaturityCase, calendar: WorkingDayCalendar): string {
+  if (!caseRow.instrumentMaturityOn) {
+    throw new WorkflowError(
+      `${caseRow.caseNumber} has no maturity date, so its first payout cannot be worked out. ` +
+        'Add the maturity date and submit again.',
+      'NO_MATURITY_DATE',
+    );
+  }
+  return scheduleAnchorFor(caseRow.instrumentMaturityOn, todayISO(), calendar);
+}
+
 // ── Submit / return ───────────────────────────────────────────────────────
 
-export async function submitCase(actor: SessionUser, caseId: string, meta = {}) {
+/**
+ * Submitting a maturity is now the whole workflow.
+ *
+ * There is no Ops Head to approve it. The schedule is generated here, anchored to a date the
+ * customer already knows — their maturity date plus three calendar days — rather than to the
+ * moment a member of staff happened to click a button. The case lands in APPROVED because that
+ * is what APPROVED has always meant downstream: payable. Nobody approved it, so `approvedById`
+ * stays null, and that null is how an auto-scheduled case is told apart from a historically
+ * approved one.
+ */
+export async function submitCase(
+  actor: SessionUser,
+  caseId: string,
+  meta: { ip?: string | null; userAgent?: string | null } = {},
+) {
   return db.transaction(async (tx) => {
     const c = await lockCase(tx, caseId);
-    assertTransition(c.status, 'SUBMITTED');
+
+    // Idempotent. A second click finds the case already scheduled and stops.
+    if (c.status === 'APPROVED' || c.status === 'IN_PROGRESS' || c.status === 'COMPLETED') {
+      throw new WorkflowError(
+        'This case has already been submitted and scheduled.',
+        'ALREADY_SCHEDULED',
+      );
+    }
+    assertTransition(c.status, 'APPROVED');
+
+    const policy = await getBranchPolicy(c.branchId, tx);
+    const anchor = anchorForCase(c, policy.calendar);
+
     await tx
       .update(maturityCases)
-      .set({ status: 'SUBMITTED', submittedAt: new Date(), returnReason: null, updatedAt: new Date() })
+      .set({
+        status: 'APPROVED',
+        submittedAt: new Date(),
+        approvedOn: anchor,
+        approvedAt: new Date(),
+        approvedById: null,
+        returnReason: null,
+        updatedAt: new Date(),
+      })
       .where(eq(maturityCases.id, caseId));
-    await logEvent(tx, caseId, 'SUBMITTED', actor.id, { from: c.status, to: 'SUBMITTED' });
+
+    await logEvent(tx, caseId, 'SUBMITTED', actor.id, { from: c.status, to: 'APPROVED' });
+    const schedule = await scheduleCaseInTx(tx, actor, c, anchor);
+
     await writeAudit(tx, actor, {
       action: 'case.submitted',
       entity: 'MaturityCase',
       entityId: caseId,
       branchId: c.branchId,
-      summary: `${c.caseNumber} submitted for approval`,
+      summary:
+        `${c.caseNumber} submitted and auto-scheduled from maturity ${c.instrumentMaturityOn} — ` +
+        `${formatPaise(c.maturityAmountPaise)} over ${schedule.effectiveDays} days, ` +
+        `${schedule.firstPayoutDate} → ${schedule.lastPayoutDate}`,
+      before: { status: c.status },
+      after: {
+        status: 'APPROVED',
+        anchor,
+        instalments: schedule.effectiveDays,
+        firstPayoutOn: schedule.firstPayoutDate,
+        lastPayoutOn: schedule.lastPayoutDate,
+      },
       ...meta,
     });
-    return { ok: true as const };
+
+    return {
+      ok: true as const,
+      caseNumber: c.caseNumber,
+      instalments: schedule.effectiveDays,
+      firstPayoutOn: schedule.firstPayoutDate,
+      lastPayoutOn: schedule.lastPayoutDate,
+      warnings: schedule.warnings,
+    };
   });
 }
 
@@ -243,124 +379,6 @@ export async function returnCase(actor: SessionUser, caseId: string, reason: str
       ...meta,
     });
     return { ok: true as const };
-  });
-}
-
-// ── Approve — the moment the money becomes payable ────────────────────────
-
-export interface ApproveInput {
-  caseId: string;
-  /** Defaults to today. An Ops Head may back-date to the day they actually signed. */
-  approvedOn?: string;
-  /** Last-moment overrides to the schedule parameters. */
-  windowDays?: number;
-  roundingPaise?: bigint;
-  distribution?: MaturityCase['distribution'];
-  cashPolicy?: MaturityCase['cashPolicy'];
-  cashCapPerDayPaise?: bigint | null;
-  startOnNextWorkingDay?: boolean;
-  note?: string | null;
-}
-
-export async function approveCase(
-  actor: SessionUser,
-  input: ApproveInput,
-  meta: { ip?: string | null; userAgent?: string | null } = {},
-) {
-  return db.transaction(async (tx) => {
-    const c = await lockCase(tx, input.caseId);
-
-    // INV-7 — idempotent. A second click finds the case already approved and stops.
-    if (c.status === 'APPROVED' || c.status === 'IN_PROGRESS' || c.status === 'COMPLETED') {
-      throw new WorkflowError('This case has already been approved.', 'ALREADY_APPROVED');
-    }
-    assertTransition(c.status, 'APPROVED');
-
-    const approvedOn = input.approvedOn ?? todayISO();
-    // INV-5 — approval can never predate submission.
-    if (approvedOn < c.formSubmittedOn) {
-      throw new WorkflowError(
-        `Approval date (${approvedOn}) cannot be before the form submission date (${c.formSubmittedOn}).`,
-        'APPROVAL_BEFORE_SUBMISSION',
-      );
-    }
-
-    const overrides = {
-      windowDays: input.windowDays ?? c.windowDays,
-      roundingPaise: input.roundingPaise ?? c.roundingPaise,
-      distribution: input.distribution ?? c.distribution,
-      cashPolicy: input.cashPolicy ?? c.cashPolicy,
-      cashCapPerDayPaise:
-        (input.cashPolicy ?? c.cashPolicy) === 'CASH_CAP'
-          ? (input.cashCapPerDayPaise ?? c.cashCapPerDayPaise ?? 0n)
-          : null,
-      startOnNextWorkingDay: input.startOnNextWorkingDay ?? c.startOnNextWorkingDay,
-    };
-
-    await tx
-      .update(maturityCases)
-      .set({
-        status: 'APPROVED',
-        approvedOn,
-        approvedAt: new Date(),
-        approvedById: actor.id,
-        returnReason: null,
-        ...overrides,
-        updatedAt: new Date(),
-      })
-      .where(eq(maturityCases.id, input.caseId));
-
-    const updated = { ...c, ...overrides, approvedOn, status: 'APPROVED' as const };
-    const policy = await getBranchPolicy(c.branchId, tx);
-
-    const schedule = await persistSchedule({
-      tx,
-      caseRow: updated,
-      calendar: policy.calendar,
-      anchorDate: approvedOn,
-      branchDailyCashComfortPaise: policy.dailyCashComfortPaise,
-    });
-
-    await logEvent(tx, input.caseId, 'APPROVED', actor.id, {
-      from: c.status,
-      to: 'APPROVED',
-      note: input.note ?? undefined,
-    });
-    await logEvent(tx, input.caseId, 'SCHEDULE_GENERATED', actor.id, {
-      note:
-        `${schedule.effectiveDays} instalments, ${schedule.firstPayoutDate} → ${schedule.lastPayoutDate}, ` +
-        `${formatPaise(schedule.totalCashPaise)} cash + ${formatPaise(schedule.totalOnlinePaise)} online`,
-    });
-
-    await writeAudit(tx, actor, {
-      action: 'case.approved',
-      entity: 'MaturityCase',
-      entityId: input.caseId,
-      branchId: c.branchId,
-      summary:
-        `${c.caseNumber} approved on ${approvedOn} — ${formatPaise(c.maturityAmountPaise)} scheduled over ` +
-        `${schedule.effectiveDays} working days, completing ${schedule.lastPayoutDate}`,
-      before: { status: c.status },
-      after: {
-        status: 'APPROVED',
-        approvedOn,
-        instalments: schedule.effectiveDays,
-        firstPayoutOn: schedule.firstPayoutDate,
-        lastPayoutOn: schedule.lastPayoutDate,
-        totalCashPaise: schedule.totalCashPaise,
-        totalOnlinePaise: schedule.totalOnlinePaise,
-      },
-      ...meta,
-    });
-
-    return {
-      ok: true as const,
-      caseNumber: c.caseNumber,
-      instalments: schedule.effectiveDays,
-      firstPayoutOn: schedule.firstPayoutDate,
-      lastPayoutOn: schedule.lastPayoutDate,
-      warnings: schedule.warnings,
-    };
   });
 }
 
