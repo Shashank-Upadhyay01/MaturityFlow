@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { eq } from 'drizzle-orm';
 
 import { db } from '@/db';
-import { maturityCases } from '@/db/schema';
+import { maturityCases, payoutInstalments } from '@/db/schema';
 import { requireActor } from '@/lib/auth/session';
 import { tryParseRupeesToPaise } from '@/lib/money';
 import { assertCan, assertCanTypeRegister, roleCan, type Actor, type ResourceRef } from '@/lib/rbac';
@@ -17,12 +17,12 @@ import {
   type BulkOutcome,
   type CaseRef,
 } from '@/services/register-bulk';
+import { markInstalmentMissed, markInstalmentTaken, type Tender } from '@/services/payout-service';
 import {
   MAX_BLANK_ROWS_PER_CALL,
   confirmCloseDay,
   createBlankRegisterRow,
   createBlankRegisterRows,
-  markGiven,
   reopenDay,
   requestCloseDay,
   setApproved,
@@ -47,6 +47,27 @@ async function scope(caseId: string) {
     .where(eq(maturityCases.id, caseId))
     .limit(1);
   return c;
+}
+
+/**
+ * Scope a day, not a case.
+ *
+ * The two buttons hand back an instalment id, and the case it belongs to is looked up here
+ * rather than taken from the client. A client that could name the case would only have to pair
+ * its own case id with somebody else's instalment id to walk straight past the branch check.
+ */
+async function scopeByInstalment(instalmentId: string) {
+  const [row] = await db
+    .select({
+      caseId: maturityCases.id,
+      branchId: maturityCases.branchId,
+      agentId: maturityCases.agentId,
+    })
+    .from(payoutInstalments)
+    .innerJoin(maturityCases, eq(maturityCases.id, payoutInstalments.caseId))
+    .where(eq(payoutInstalments.id, instalmentId))
+    .limit(1);
+  return row;
 }
 
 /**
@@ -221,16 +242,46 @@ export async function toggleApprovedAction(caseId: string, approved: boolean): P
   }
 }
 
-export async function markGivenAction(
-  caseId: string,
-  mode: 'CASH' | 'ONLINE' | 'SPLIT',
+/**
+ * "Taken" — the customer withdrew today's scheduled amount in full.
+ *
+ * Goes through `markInstalmentTaken`, which is the ordinary locked, INV-4-validated, audited
+ * payout path. There is no faster route for the register: a click here and a payout typed on the
+ * case page leave exactly the same trail.
+ */
+export async function markTakenAction(
+  instalmentId: string,
+  tender: Tender = 'SPLIT',
 ): Promise<ActionResult> {
   try {
     const { session, actor } = await requireActor();
-    const c = await scope(caseId);
+    const c = await scopeByInstalment(instalmentId);
     if (!c) return fail('Row not found', 'NOT_FOUND');
     assertCan(actor, 'payout.record', c);
-    await markGiven(session, caseId, mode);
+    await markInstalmentTaken(session, instalmentId, tender);
+    revalidate();
+    return ok();
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+/**
+ * "Not taken" — nobody came for today's payment. `clear` undoes a mis-click.
+ *
+ * Gated on `payout.record` rather than on a register-typing permission: it is a statement about
+ * what happened at the counter, and the person at the counter is the one who knows.
+ */
+export async function markNotTakenAction(
+  instalmentId: string,
+  clear = false,
+): Promise<ActionResult> {
+  try {
+    const { session, actor } = await requireActor();
+    const c = await scopeByInstalment(instalmentId);
+    if (!c) return fail('Row not found', 'NOT_FOUND');
+    assertCan(actor, 'payout.record', c);
+    await markInstalmentMissed(session, instalmentId, { clear });
     revalidate();
     return ok();
   } catch (e) {

@@ -6,6 +6,7 @@ import {
   ArrowUpDown,
   CalendarDays,
   CheckCheck,
+  Check,
   ChevronDown,
   ChevronUp,
   Columns3,
@@ -14,6 +15,7 @@ import {
   Plus,
   Printer,
   Search,
+  RotateCcw,
   Trash2,
   Upload,
   UserCog,
@@ -33,7 +35,8 @@ import {
   bulkSetFormSubmittedAction,
   bulkSetTodayAction,
   confirmCloseDayAction,
-  markGivenAction,
+  markNotTakenAction,
+  markTakenAction,
   removeRegisterRowsAction,
   reopenDayAction,
   requestCloseDayAction,
@@ -42,7 +45,6 @@ import {
   toggleApprovedAction,
   toggleFormSubmittedAction,
 } from '@/actions/register';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/field';
 import { Glass } from '@/components/ui/glass';
@@ -50,15 +52,18 @@ import { Callout } from '@/components/ui/misc';
 import { excelCellRaw } from '@/lib/excel-register';
 import {
   BULK_TODAY_LABEL,
+  DAY_STATE_LABEL,
   DATE_FIELD_LABEL,
   DATE_PRESETS,
   DATE_PRESET_LABEL,
   DATE_PRESET_SHORT,
   EMPTY_RANGE,
   SORT_LABEL,
+  TAB_HINT,
   TAB_LABEL,
   activeDatePreset,
   autoSortFor,
+  dayStateOf,
   groupIndian,
   isDueToday,
   isRangeActive,
@@ -68,6 +73,7 @@ import {
   summariseDueToday,
   summariseSelection,
   type BulkTodayMode,
+  type DayState,
   type DateField,
   type DateRange,
   type RegisterTab,
@@ -106,6 +112,20 @@ export interface RegisterRow {
   status: string;
   formSubmitted: boolean;
   approved: boolean;
+
+  // ── What the generated schedule says about this row ──────────────────────────
+  /** The live instalment falling due today, or null when the schedule plans nothing for today. */
+  todayInstalmentId: string | null;
+  /** What that day is meant to pay, in paise. The recommendation, not a typed figure. */
+  todayDuePaise: string;
+  /** How much of it has actually gone out. */
+  todayPaidTakenPaise: string;
+  /** Its status, straight from the database: PENDING · PARTIAL · PAID · MISSED. */
+  todayStatus: string | null;
+  /** Earlier days still unpaid — the backlog behind this row. */
+  overdueCount: number;
+  /** What that backlog is worth, in paise. */
+  overduePaise: string;
 }
 
 function inr(p: bigint) {
@@ -262,6 +282,174 @@ function Popover({
       >
         {children}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The tint a row carries, and the words that explain it.
+ *
+ * Green and red are the only meaningful colour on this sheet, so they are defined once, here,
+ * and every row, legend and tab reads them from this table. `due` and `none` are deliberately
+ * absent: an unanswered day is not a verdict, and a day the schedule skips is not a failure.
+ */
+const DAY_TINT: Partial<Record<DayState, string>> = {
+  taken:
+    'bg-[var(--row-taken)] shadow-[inset_3px_0_0_0_var(--row-taken-edge)] hover:bg-[var(--row-taken-strong)]',
+  missed:
+    'bg-[var(--row-missed)] shadow-[inset_3px_0_0_0_var(--row-missed-edge)] hover:bg-[var(--row-missed-strong)]',
+  partial:
+    'bg-[var(--row-partial)] shadow-[inset_3px_0_0_0_var(--row-partial-edge)] hover:bg-[var(--row-partial-strong)]',
+};
+
+/** The pill printed in the Today column once a day has been answered for. */
+const DAY_PILL: Partial<Record<DayState, string>> = {
+  taken: 'bg-[var(--row-taken-strong)] text-[var(--row-taken-fg)]',
+  missed: 'bg-[var(--row-missed-strong)] text-[var(--row-missed-fg)]',
+  partial: 'bg-[var(--row-partial-strong)] text-[var(--row-partial-fg)]',
+};
+
+type Tender = 'CASH' | 'ONLINE' | 'SPLIT';
+
+const TENDER_LABEL: Record<Tender, string> = {
+  SPLIT: 'As planned',
+  CASH: 'All cash',
+  ONLINE: 'All online',
+};
+
+/**
+ * The one question this page exists to ask: did this customer take today's money?
+ *
+ * It replaces the old `Given` column, which asked the wrong question in the wrong shape. That
+ * column offered `Cash` / `Online` / `Both` as three bare words wrapped onto three lines inside a
+ * 4.5rem cell — so it spilled over the next column, made tender the primary decision when tender
+ * is a detail, and gave the clerk no way at all to say the customer did NOT come, which is the
+ * fact the whole missed-payments list is built from.
+ *
+ * So: two buttons, one line, always the same width. ✓ records the full scheduled amount for
+ * today through the ordinary locked, audited payout path; ✗ records a no-show without writing
+ * the money off. Tender hides behind the caret and defaults to the split the engine already
+ * planned, so agreeing with the plan — which is the overwhelming majority of days — is one click.
+ *
+ * Once a day is answered the buttons give way to the answer, because the counter should not be
+ * able to un-take money by mis-clicking a row. A wrong ✗ is undone here; a wrong ✓ moved money
+ * and is reversed on the case page, where it leaves a reversal in the trail.
+ */
+function DayMark({
+  state,
+  instalmentId,
+  disabled,
+  busy,
+  onTaken,
+  onNotTaken,
+}: {
+  state: DayState;
+  instalmentId: string | null;
+  disabled: boolean;
+  busy: boolean;
+  onTaken: (instalmentId: string, tender: Tender) => void;
+  onNotTaken: (instalmentId: string, clear: boolean) => void;
+}) {
+  const [menu, setMenu] = useState(false);
+
+  if (state === 'none' || !instalmentId) {
+    return (
+      <span className="text-[0.65rem] text-[var(--faint-fg)]" title={DAY_STATE_LABEL.none}>
+        &mdash;
+      </span>
+    );
+  }
+
+  if (state === 'taken') {
+    return (
+      <span
+        className={cn(
+          'inline-flex h-6 w-full items-center justify-center gap-1 rounded-[6px] text-[0.65rem] font-medium',
+          DAY_PILL.taken,
+        )}
+        title={`${DAY_STATE_LABEL.taken} — reverse it on the case page if this was wrong`}
+      >
+        <Check className="h-3 w-3" />
+        Taken
+      </span>
+    );
+  }
+
+  if (state === 'missed') {
+    return (
+      <button
+        type="button"
+        disabled={disabled || busy}
+        onClick={() => onNotTaken(instalmentId, true)}
+        title={`${DAY_STATE_LABEL.missed} — click to undo`}
+        className={cn(
+          'inline-flex h-6 w-full items-center justify-center gap-1 rounded-[6px] text-[0.65rem] font-medium disabled:cursor-not-allowed disabled:opacity-70',
+          DAY_PILL.missed,
+        )}
+      >
+        <RotateCcw className="h-3 w-3" />
+        Not taken
+      </button>
+    );
+  }
+
+  // 'due' and 'partial' — still answerable.
+  return (
+    <div className="relative flex items-center gap-0.5">
+      <button
+        type="button"
+        disabled={disabled || busy}
+        onClick={() => onTaken(instalmentId, 'SPLIT')}
+        title={
+          state === 'partial'
+            ? 'Taken — records the rest of today’s planned amount'
+            : 'Taken — records today’s planned amount in full'
+        }
+        className="inline-flex h-6 flex-1 items-center justify-center rounded-[6px] bg-[var(--row-taken)] text-[var(--row-taken-fg)] transition-colors hover:bg-[var(--row-taken-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <Check className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        disabled={disabled || busy}
+        onClick={() => onNotTaken(instalmentId, false)}
+        title="Not taken — the customer did not come today. Still owed."
+        className="inline-flex h-6 flex-1 items-center justify-center rounded-[6px] bg-[var(--row-missed)] text-[var(--row-missed-fg)] transition-colors hover:bg-[var(--row-missed-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        disabled={disabled || busy}
+        aria-label="Choose how it was paid"
+        title="Cash, online, or the planned split"
+        onClick={() => setMenu((v) => !v)}
+        className="inline-flex h-6 w-3.5 items-center justify-center rounded-[5px] text-[var(--faint-fg)] transition-colors hover:bg-[var(--glass-bg-strong)] hover:text-[var(--page-fg)] disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <ChevronDown className="h-3 w-3" />
+      </button>
+
+      {/*
+        The wrapper is what is positioned; the panel inside is not `.glass`. Putting `absolute`
+        on a `.glass` element renders it in flow instead — see the trap in CLAUDE.md.
+      */}
+      <Popover open={menu} label="How it was paid" width="w-36">
+        <div className="flex flex-col gap-0.5">
+          {(['SPLIT', 'CASH', 'ONLINE'] as Tender[]).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className="rounded-[6px] px-2 py-1 text-left text-[0.7rem] hover:bg-[var(--glass-bg-strong)]"
+              onClick={() => {
+                setMenu(false);
+                onTaken(instalmentId, t);
+              }}
+            >
+              {TENDER_LABEL[t]}
+            </button>
+          ))}
+        </div>
+      </Popover>
     </div>
   );
 }
@@ -642,7 +830,7 @@ export function RegisterSheet(props: {
    * answer, so budgeting for it is the only way out of the circle, and the cost when nothing
    * overflows is a little slack.
    */
-  const reservedRem = REGISTER_GUTTER_REM + (props.canPay ? 4.5 : 0) + 2.5;
+  const reservedRem = REGISTER_GUTTER_REM + (props.canPay ? 5.5 : 0) + 2.5;
   const fit = useMemo(
     () => columnsThatFit(visCols, gridWidth, reservedRem),
     [visCols, gridWidth, reservedRem],
@@ -771,6 +959,16 @@ export function RegisterSheet(props: {
     [sortKey, sortDir, d],
   );
 
+  /**
+   * How many rows are carrying a not-taken day, counted across EVERY row rather than the
+   * filtered view — the same rule as "due today". A backlog that shrank because somebody
+   * filtered to one agent would be a lie in the one place the branch cannot afford one.
+   */
+  const missedCount = useMemo(
+    () => props.rows.filter((r) => dayStateOf(r) === 'missed').length,
+    [props.rows],
+  );
+
   const visible = useMemo(() => {
     let list: readonly RegisterRow[] = props.rows;
     // No role-specific row filter here. A cashier used to be shown approved rows only, which
@@ -780,6 +978,10 @@ export function RegisterSheet(props: {
     if (tab === 'pending') list = list.filter((r) => !r.approved);
     if (tab === 'today') list = list.filter((r) => BigInt(r.remainingPaise) > 0n);
     if (tab === 'due') list = list.filter(isDueToday);
+    // Everyone who did not withdraw on a day they were due. Note this is a *view* of the same
+    // rows, not a second list: the user's rule is that a missed payment is never removed from
+    // the twelve-day sheet, only coloured. This tab is the shortcut to them, not their home.
+    if (tab === 'missed') list = list.filter((r) => dayStateOf(r) === 'missed');
     if (agentId) list = list.filter((r) => r.agentId === agentId);
     if (isRangeActive(range)) list = list.filter((r) => rowInDateRange(r, dateField, range));
     if (q.trim()) {
@@ -973,6 +1175,40 @@ export function RegisterSheet(props: {
     const r = await saveRegisterFieldsAction(id, patch);
     if (!r.ok) toast.error(r.error);
     else router.refresh();
+  }
+
+  /**
+   * Which days are mid-flight.
+   *
+   * Marking is one click on a row in a hundred-row sheet, and the answer only lands after the
+   * server round-trip and a refresh. Without this a clerk working down the page clicks the same
+   * row twice because nothing changed yet — and the second click would be a second payout.
+   * The server would reject it on INV-4, but the right place to stop it is before it is sent.
+   */
+  const [marking, setMarking] = useState<Record<string, boolean>>({});
+
+  async function onTaken(instalmentId: string, tender: Tender) {
+    if (marking[instalmentId]) return;
+    setMarking((m) => ({ ...m, [instalmentId]: true }));
+    const r = await markTakenAction(instalmentId, tender);
+    setMarking((m) => ({ ...m, [instalmentId]: false }));
+    if (!r.ok) toast.error(r.error);
+    else {
+      toast.success('Marked taken');
+      router.refresh();
+    }
+  }
+
+  async function onNotTaken(instalmentId: string, clear: boolean) {
+    if (marking[instalmentId]) return;
+    setMarking((m) => ({ ...m, [instalmentId]: true }));
+    const r = await markNotTakenAction(instalmentId, clear);
+    setMarking((m) => ({ ...m, [instalmentId]: false }));
+    if (!r.ok) toast.error(r.error);
+    else {
+      toast.success(clear ? 'Mark cleared' : 'Marked not taken');
+      router.refresh();
+    }
   }
 
   async function onImport(file: File) {
@@ -1178,34 +1414,43 @@ export function RegisterSheet(props: {
           <div className="flex items-start gap-2">
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-2">
               <div className="flex rounded-[10px] border border-[var(--input-border)] p-0.5">
-                {(['due', 'today', 'pending', 'all'] as Tab[]).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => applyFilter({ tab: t })}
-                    className={cn(
-                      'inline-flex h-7 items-center gap-1.5 rounded-[8px] px-2 text-[0.8125rem] whitespace-nowrap',
-                      tab === t
-                        ? 'bg-[var(--glass-bg-strong)] font-medium text-[var(--page-fg)]'
-                        : 'text-[var(--muted-fg)] hover:text-[var(--page-fg)]',
-                      t === 'due' && tab !== t && dueStats.count > 0 && 'text-[var(--color-brand-600)]',
-                    )}
-                  >
-                    {TAB_LABEL[t]}
-                    {t === 'due' && dueStats.count > 0 && (
-                      <span
-                        className={cn(
-                          'rounded-full px-1.5 py-px text-[0.65rem] font-semibold tabular-nums',
-                          tab === t
-                            ? 'bg-[var(--color-brand-500)] text-white'
-                            : 'bg-[var(--color-brand-100)] text-[var(--color-brand-700)]',
-                        )}
-                      >
-                        {dueStats.count}
-                      </span>
-                    )}
-                  </button>
-                ))}
+                {(['due', 'missed', 'today', 'pending', 'all'] as Tab[]).map((t) => {
+                  const badge = t === 'due' ? dueStats.count : t === 'missed' ? missedCount : 0;
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => applyFilter({ tab: t })}
+                      title={TAB_HINT[t]}
+                      className={cn(
+                        'inline-flex h-7 items-center gap-1.5 rounded-[8px] px-2 text-[0.8125rem] whitespace-nowrap',
+                        tab === t
+                          ? 'bg-[var(--glass-bg-strong)] font-medium text-[var(--page-fg)]'
+                          : 'text-[var(--muted-fg)] hover:text-[var(--page-fg)]',
+                        t === 'due' && tab !== t && badge > 0 && 'text-[var(--color-brand-600)]',
+                        // A backlog is the one thing on this bar worth colouring red, and it
+                        // matches the rows it leads to.
+                        t === 'missed' && tab !== t && badge > 0 && 'text-[var(--row-missed-edge)]',
+                      )}
+                    >
+                      {TAB_LABEL[t]}
+                      {badge > 0 && (
+                        <span
+                          className={cn(
+                            'rounded-full px-1.5 py-px text-[0.65rem] font-semibold tabular-nums',
+                            t === 'missed'
+                              ? 'bg-[var(--row-missed-strong)] text-[var(--row-missed-fg)]'
+                              : tab === t
+                                ? 'bg-[var(--color-brand-500)] text-white'
+                                : 'bg-[var(--color-brand-100)] text-[var(--color-brand-700)]',
+                          )}
+                        >
+                          {badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
 
               {/*
@@ -2253,8 +2498,9 @@ export function RegisterSheet(props: {
                   />
                 ))}
                 {hasExtras && <th className={cn(th, 'w-9 print:hidden')} aria-label="More columns" />}
+                {/* Not "Given" — the question is whether the customer came, not how it was handed over. */}
                 {props.canPay && (
-                  <SortTh label="Given" col="given" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-[4.5rem] print:hidden" />
+                  <SortTh label="Taken?" col="given" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-[5.5rem] print:hidden" />
                 )}
               </tr>
             </thead>
@@ -2280,23 +2526,38 @@ export function RegisterSheet(props: {
                 const recCash = BigInt(r.todayCashPaise);
                 const recOnline = BigInt(r.todayOnlinePaise);
                 const edit = props.canEdit && !locked;
-                const pay = props.canPay && !locked && r.approved && remaining > 0n;
                 const matShown = r.instrumentMaturityOn ? formatDMY(r.instrumentMaturityOn) : '';
                 const formShown = formatDMY(r.formSubmittedOn);
                 const payShown = r.paymentOn ? formatDMY(r.paymentOn) : '';
                 const dueNow = isDueToday(r);
                 const ticked = Boolean(selected[r.id]);
+                const dayState = dayStateOf(r);
+
+                /*
+                  Exactly ONE background class, chosen here rather than layered.
+                  Two `bg-*` utilities on the same element do not resolve by the order they
+                  appear in the string — they resolve by their order in Tailwind’s generated
+                  stylesheet, which nothing in this file controls. So the precedence is decided
+                  in JavaScript, where it is readable and cannot silently invert:
+
+                    ticked   — while a selection is live, what is IN it is what the clerk is
+                               tracking down the page, whatever else the row says.
+                    verdict  — green if they took today’s money, red if they did not.
+                    due      — the brand tint for a day still waiting on an answer.
+                */
+                const tint = ticked
+                  ? 'bg-[var(--color-brand-100)]/80 shadow-[inset_3px_0_0_0_var(--color-brand-600)] hover:bg-[var(--color-brand-100)]'
+                  : (DAY_TINT[dayState] ??
+                    (dueNow
+                      ? 'bg-[var(--color-brand-50)]/70 shadow-[inset_3px_0_0_0_var(--color-brand-500)] hover:bg-[var(--color-brand-100)]/70'
+                      : ''));
+
                 return (
                   <tr
                     key={r.id}
                     className={cn(
                       'border-b border-[var(--hairline)] hover:bg-[var(--glass-bg-subtle)]',
-                      dueNow &&
-                        'bg-[var(--color-brand-50)]/70 shadow-[inset_3px_0_0_0_var(--color-brand-500)] hover:bg-[var(--color-brand-100)]/70',
-                      // Ticked wins over "due today": while a selection is live, what is IN it is
-                      // the thing the clerk is tracking down the page.
-                      ticked &&
-                        'bg-[var(--color-brand-100)]/80 shadow-[inset_3px_0_0_0_var(--color-brand-600)] hover:bg-[var(--color-brand-100)]',
+                      tint,
                     )}
                   >
                     <td className={cn(td, 'print:hidden')}>
@@ -2502,17 +2763,14 @@ export function RegisterSheet(props: {
                     ))}
                     {props.canPay && (
                       <td className={cn(td, 'print:hidden')}>
-                        {pay ? (
-                          <div className="flex flex-wrap gap-1">
-                            <button type="button" className="text-[0.65rem] text-[var(--muted-fg)]" onClick={() => void markGivenAction(r.id, 'CASH').then((res) => { if (!res.ok) toast.error(res.error); else { toast.success('Marked cash given'); router.refresh(); } })}>Cash</button>
-                            <button type="button" className="text-[0.65rem] text-[var(--muted-fg)]" onClick={() => void markGivenAction(r.id, 'ONLINE').then((res) => { if (!res.ok) toast.error(res.error); else { toast.success('Marked online given'); router.refresh(); } })}>Online</button>
-                            <button type="button" className="text-[0.65rem] font-medium" onClick={() => void markGivenAction(r.id, 'SPLIT').then((res) => { if (!res.ok) toast.error(res.error); else { toast.success('Marked given'); router.refresh(); } })}>Both</button>
-                          </div>
-                        ) : r.approved ? (
-                          <Badge tone="money">done</Badge>
-                        ) : (
-                          <span className="text-[var(--faint-fg)]">—</span>
-                        )}
+                        <DayMark
+                          state={dayState}
+                          instalmentId={r.todayInstalmentId}
+                          disabled={locked || !props.canPay}
+                          busy={Boolean(r.todayInstalmentId && marking[r.todayInstalmentId])}
+                          onTaken={(id, t) => void onTaken(id, t)}
+                          onNotTaken={(id, clear) => void onNotTaken(id, clear)}
+                        />
                       </td>
                     )}
                     {hasExtras && (

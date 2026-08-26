@@ -30,7 +30,7 @@ export type SortKey =
   | 'online'
   | 'given';
 
-export type RegisterTab = 'due' | 'today' | 'all' | 'pending';
+export type RegisterTab = 'due' | 'today' | 'missed' | 'all' | 'pending';
 export type DateField = 'payment' | 'form' | 'maturity';
 
 export const DATE_FIELD_LABEL: Record<DateField, string> = {
@@ -42,8 +42,18 @@ export const DATE_FIELD_LABEL: Record<DateField, string> = {
 export const TAB_LABEL: Record<RegisterTab, string> = {
   due: 'Due today',
   today: 'Live',
+  missed: 'Not taken',
   pending: 'Pending',
   all: 'All',
+};
+
+/** What each tab is actually a list of, for the title the counter reads on hover. */
+export const TAB_HINT: Record<RegisterTab, string> = {
+  due: 'Customers the schedule expects at the counter today',
+  today: 'Every case that still owes money',
+  missed: 'Customers who did not withdraw on a day they were due — still owed, still on the list',
+  pending: 'Rows typed into the sheet that have not been submitted, so nothing is scheduled yet',
+  all: 'Every row in the register, settled or not',
 };
 
 /** Only what the view rules actually read — so tests need not build a whole row. */
@@ -83,6 +93,56 @@ export function isDueToday(r: RegisterViewRow): boolean {
  */
 export function isTodayButUnset(r: RegisterViewRow, today: string): boolean {
   return r.paymentOn === today && BigInt(r.todayPaise) === 0n && BigInt(r.remainingPaise) > 0n;
+}
+
+// ── What happened to this row today ───────────────────────────────────────
+
+/**
+ * The state of a row's payment *today* — the single thing the register is asked to show.
+ *
+ * `'due'` is deliberately not a failure. The rule is that a row turns green or red only once a
+ * clerk has marked it taken or not taken; colouring an unanswered day red would tell the counter
+ * a customer failed to turn up when the truth is that nobody has looked yet.
+ *
+ * `'none'` covers a case with no schedule *and* a day the schedule skips — a maturity below
+ * ₹1 lakh pays on alternate working days, and its off day is not an omission.
+ */
+export type DayState = 'taken' | 'partial' | 'missed' | 'due' | 'none';
+
+export const DAY_STATE_LABEL: Record<DayState, string> = {
+  taken: 'Taken today',
+  partial: 'Part-taken today',
+  missed: 'Not taken',
+  due: 'Due — not marked yet',
+  none: 'Nothing due today',
+};
+
+/** Only what the state rule reads, so callers need not build a whole row. */
+export interface DayStateRow {
+  /** The live instalment falling due today, or null when the schedule has nothing for today. */
+  todayInstalmentId: string | null;
+  /** That instalment's status, straight from the database. */
+  todayStatus: string | null;
+  /** Earlier days still unpaid. */
+  overdueCount: number;
+}
+
+/**
+ * The one definition of a row's colour, its tab and what its two buttons offer.
+ *
+ * Today outranks the backlog while today is live: one row cannot honestly be two colours, and
+ * today is the day being worked. A backlog behind a live day is reported as its own count
+ * instead. Once today is quiet, the backlog is the only thing left to say, so the row goes red
+ * and stays on the list — a missed payment is never dropped from the twelve-day sheet.
+ */
+export function dayStateOf(r: DayStateRow): DayState {
+  if (r.todayInstalmentId) {
+    if (r.todayStatus === 'PAID') return 'taken';
+    if (r.todayStatus === 'MISSED') return 'missed';
+    if (r.todayStatus === 'PARTIAL') return 'partial';
+    return 'due';
+  }
+  return r.overdueCount > 0 ? 'missed' : 'none';
 }
 
 export interface DueSummary {

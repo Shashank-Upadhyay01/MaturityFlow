@@ -453,10 +453,51 @@ export async function listCases(actor: Actor, f: CaseFilters = {}) {
 }
 
 /** Full branch register — the Excel sheet, every row. */
-export async function listRegister(actor: Actor) {
+/**
+ * The register, joined to the schedule the system generated for each case.
+ *
+ * Before auto-scheduling this list knew nothing about instalments: `todayApprovedPaise` was a
+ * figure a clerk typed in by hand. Now every live case carries a day-by-day plan, so the sheet
+ * reads that plan rather than asking someone to retype it — what is due today, whether it has
+ * been taken, and what was missed on earlier days.
+ *
+ * The two correlated subqueries are per-case and hit `inst_case_status_idx` / `inst_due_status_idx`;
+ * they replace what would otherwise be a second round trip per row from the component.
+ */
+export async function listRegister(actor: Actor, date = todayISO()) {
   const scope = caseScope(actor);
+
+  /**
+   * One expression per field of today's instalment, rather than a join: a case can hold rows from
+   * an older schedule version, so each has to pick the live one deterministically.
+   */
+  const todayInst = (expr: ReturnType<typeof sql.raw>) => sql`(
+    SELECT ${expr} FROM payout_instalments i
+    WHERE i.case_id = ${maturityCases.id}
+      AND i.due_on = ${date}
+      AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
+    ORDER BY i.schedule_version DESC LIMIT 1
+  )`;
+
   return db
     .select({
+      /** The instalment today's Taken / Missed buttons act on. Null when nothing is due today. */
+      todayInstalmentId: sql<string | null>`${todayInst(sql.raw('i.id'))}`,
+      todayDuePaise: sql<string>`COALESCE(${todayInst(sql.raw('i.amount_paise::text'))}, '0')`,
+      todayPaidPaise: sql<string>`COALESCE(${todayInst(sql.raw('(i.paid_cash_paise + i.paid_online_paise)::text'))}, '0')`,
+      todayStatus: sql<string | null>`${todayInst(sql.raw('i.status::text'))}`,
+      /** Earlier days that were never paid — the red half of the sheet. */
+      overdueCount: sql<number>`(
+        SELECT COUNT(*)::int FROM payout_instalments i
+        WHERE i.case_id = ${maturityCases.id} AND i.due_on < ${date}
+          AND i.status IN ('PENDING', 'PARTIAL', 'MISSED')
+      )`,
+      overduePaise: sql<string>`(
+        SELECT COALESCE(SUM(i.amount_paise - i.paid_cash_paise - i.paid_online_paise), 0)::text
+        FROM payout_instalments i
+        WHERE i.case_id = ${maturityCases.id} AND i.due_on < ${date}
+          AND i.status IN ('PENDING', 'PARTIAL', 'MISSED')
+      )`,
       id: maturityCases.id,
       accountNumber: customers.accountNumber,
       customerName: customers.name,

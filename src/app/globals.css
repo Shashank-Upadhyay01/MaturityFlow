@@ -117,6 +117,31 @@
   --input-bg: rgba(255, 255, 255, 0.95);
   --input-border: rgba(15, 23, 42, 0.2);
   --ring: rgba(99, 102, 241, 0.45);
+
+  /*
+     Register row tints. Like the brand steps above these are ROLES, not fixed colours: -row-*
+     is "the faintest wash that still reads as a verdict from across a counter", and -row-*-fg is
+     "a label that stays legible sitting in it". Both are redefined under .dark; printing
+     --page-fg on one of these without that override is the light-on-light trap all over again.
+
+     Green and red are the only colour on this sheet that carries meaning, so nothing else may
+     borrow them: green means the customer took today's money, red means they did not. A day
+     nobody has answered for yet gets no colour at all.
+  */
+  --row-taken: #dcfce7;
+  --row-taken-strong: #bbf7d0;
+  --row-taken-edge: #16a34a;
+  --row-taken-fg: #14532d;
+
+  --row-missed: #fee2e2;
+  --row-missed-strong: #fecaca;
+  --row-missed-edge: #dc2626;
+  --row-missed-fg: #7f1d1d;
+
+  --row-partial: #fef3c7;
+  --row-partial-strong: #fde68a;
+  --row-partial-edge: #d97706;
+  --row-partial-fg: #78350f;
 }
 
 .dark {
@@ -164,6 +189,23 @@
   --input-bg: rgba(255, 255, 255, 0.05);
   --input-border: rgba(255, 255, 255, 0.12);
   --ring: rgba(129, 140, 248, 0.55);
+
+  /* The row tints inverted — a deep wash with a light label, so the verdict survives on a dark
+     page instead of glowing. Same roles, same meanings; see the light block. */
+  --row-taken: #0f2e1d;
+  --row-taken-strong: #14532d;
+  --row-taken-edge: #22c55e;
+  --row-taken-fg: #86efac;
+
+  --row-missed: #3a1113;
+  --row-missed-strong: #7f1d1d;
+  --row-missed-edge: #f87171;
+  --row-missed-fg: #fca5a5;
+
+  --row-partial: #3a2a08;
+  --row-partial-strong: #78350f;
+  --row-partial-edge: #fbbf24;
+  --row-partial-fg: #fcd34d;
 }
 
 /* ── Base ──────────────────────────────────────────────────────────────── */

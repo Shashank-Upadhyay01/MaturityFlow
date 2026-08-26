@@ -425,83 +425,16 @@ export async function setApproved(actor: SessionUser, caseId: string, approved: 
   });
 }
 
-export async function markGiven(
-  actor: SessionUser,
-  caseId: string,
-  mode: 'CASH' | 'ONLINE' | 'SPLIT',
-) {
-  return db.transaction(async (tx) => {
-    const [row] = await tx.select().from(maturityCases).where(eq(maturityCases.id, caseId)).for('update').limit(1);
-    if (!row) throw new Error('Row not found');
-    const remaining = row.maturityAmountPaise - row.paidCashPaise - row.paidOnlinePaise;
-    if (remaining <= 0n) throw new Error('Nothing left to pay');
-    let cash = 0n;
-    let online = 0n;
-    if (mode === 'CASH') cash = row.todayCashPaise > 0n ? row.todayCashPaise : row.todayApprovedPaise;
-    else if (mode === 'ONLINE') online = row.todayOnlinePaise > 0n ? row.todayOnlinePaise : row.todayApprovedPaise;
-    else {
-      cash = row.todayCashPaise;
-      online = row.todayOnlinePaise;
-      if (cash + online === 0n) {
-        const s = recommendSplit(row.todayApprovedPaise, remaining, row.cashCapPerDayPaise ?? (await defaultCashCap()));
-        cash = s.cash;
-        online = s.online;
-      }
-    }
-    if (cash + online === 0n) throw new Error('Set today’s amount first');
-    if (cash + online > remaining) {
-      const s = recommendSplit(remaining, remaining, row.cashCapPerDayPaise ?? (await defaultCashCap()));
-      cash = mode === 'ONLINE' ? 0n : s.cash;
-      online = mode === 'CASH' ? 0n : remaining - cash;
-      if (mode === 'ONLINE') online = remaining;
-    }
-    const today = todayISO();
-    await tx.insert(payoutTransactions).values({
-      id: newId('txn'),
-      caseId,
-      instalmentId: null,
-      branchId: row.branchId,
-      cashPaise: cash,
-      onlinePaise: online,
-      totalPaise: cash + online,
-      valueDate: today,
-      remarks: `Register: given as ${mode.toLowerCase()}`,
-      recordedById: actor.id,
-      reference: online > 0n ? 'ONLINE' : null,
-    });
-    const paidCash = row.paidCashPaise + cash;
-    const paidOnline = row.paidOnlinePaise + online;
-    const left = row.maturityAmountPaise - paidCash - paidOnline;
-    await tx
-      .update(maturityCases)
-      .set({
-        paidCashPaise: paidCash,
-        paidOnlinePaise: paidOnline,
-        todayApprovedPaise: 0n,
-        todayCashPaise: 0n,
-        todayOnlinePaise: 0n,
-        status: left <= 0n ? 'COMPLETED' : 'IN_PROGRESS',
-        completedAt: left <= 0n ? new Date() : null,
-        updatedAt: new Date(),
-      })
-      .where(eq(maturityCases.id, caseId));
-    await tx.insert(caseEvents).values({
-      id: newId('evt'),
-      caseId,
-      type: 'PAYMENT_RECORDED',
-      actorId: actor.id,
-      note: `Given ${mode}`,
-    });
-    await writeAudit(tx, actor, {
-      action: 'payout.recorded',
-      entity: 'MaturityCase',
-      entityId: caseId,
-      branchId: row.branchId,
-      summary: `${row.caseNumber}: given ${mode}`,
-    });
-    return { remaining: left };
-  });
-}
+/*
+ * `markGiven()` lived here.
+ *
+ * It paid the CASE, writing its transaction with `instalmentId: null`, because it predates
+ * the generated schedule — there was no day to pay against. Now every live case carries one,
+ * so a payout that ignores it leaves the schedule permanently out of step with the money and
+ * makes a missed day indistinguishable from an unpaid one. The register's buttons go through
+ * `markInstalmentTaken()` in payout-service instead, which is the ordinary locked, INV-4
+ * validated, audited path.
+ */
 
 export async function setDayCash(
   actor: SessionUser,

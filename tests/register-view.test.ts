@@ -5,6 +5,8 @@ import {
   activeDatePreset,
   autoSortFor,
   bulkTodayAmount,
+  dayStateOf,
+  DAY_STATE_LABEL,
   endOfMonth,
   groupIndian,
   isDueToday,
@@ -353,5 +355,52 @@ describe('summariseSelection', () => {
   it('is all zeroes for an empty selection', () => {
     const s = summariseSelection([]);
     expect(s).toEqual({ count: 0, maturity: 0n, paid: 0n, remaining: 0n, today: 0n, cash: 0n, online: 0n, dueCount: 0 });
+  });
+});
+
+describe('dayStateOf', () => {
+  function day(over: Partial<Parameters<typeof dayStateOf>[0]> = {}) {
+    return { todayInstalmentId: 'inst_1', todayStatus: 'PENDING', overdueCount: 0, ...over };
+  }
+
+  it('is green only once a clerk has said the customer took it', () => {
+    expect(dayStateOf(day({ todayStatus: 'PAID' }))).toBe('taken');
+  });
+
+  it('is red only once a clerk has said they did not', () => {
+    expect(dayStateOf(day({ todayStatus: 'MISSED' }))).toBe('missed');
+  });
+
+  it('leaves an unanswered day uncoloured', () => {
+    // The whole point of the two buttons: a day nobody has looked at yet must not read as a
+    // failure. 'due' is what the counter is being asked about, not a verdict on it.
+    expect(dayStateOf(day({ todayStatus: 'PENDING' }))).toBe('due');
+  });
+
+  it('distinguishes a part payment from a full one', () => {
+    expect(dayStateOf(day({ todayStatus: 'PARTIAL' }))).toBe('partial');
+  });
+
+  it('shows a backlog on a day the schedule skips', () => {
+    // Below ₹1 lakh pays on alternate days. On an off day there is no instalment at all, so the
+    // only thing left to say about the row is that earlier days went unpaid.
+    expect(dayStateOf(day({ todayInstalmentId: null, overdueCount: 3 }))).toBe('missed');
+  });
+
+  it('says nothing about an off day with a clean history', () => {
+    expect(dayStateOf(day({ todayInstalmentId: null, overdueCount: 0 }))).toBe('none');
+  });
+
+  it('lets today outrank the backlog while today is still live', () => {
+    // One row cannot honestly be two colours. Today is the day being worked, so today wins and
+    // the backlog is reported separately as a count.
+    expect(dayStateOf(day({ todayStatus: 'PAID', overdueCount: 2 }))).toBe('taken');
+    expect(dayStateOf(day({ todayStatus: 'PENDING', overdueCount: 2 }))).toBe('due');
+  });
+
+  it('has a label for every state', () => {
+    for (const s of ['taken', 'partial', 'missed', 'due', 'none'] as const) {
+      expect(DAY_STATE_LABEL[s]).toBeTruthy();
+    }
   });
 });

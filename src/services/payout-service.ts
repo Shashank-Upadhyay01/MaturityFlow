@@ -199,6 +199,173 @@ export async function recordPayout(
   });
 }
 
+// ── The register's two buttons ───────────────────────────────────────────────
+
+/**
+ * How a day that was taken in full gets split between the drawer and a transfer.
+ *
+ * `'SPLIT'` is not a free choice — it honours the legs the engine already planned for that day,
+ * so the common case is the clerk agreeing with the plan in one click. It only has to think when
+ * the day is part-paid, and then cash is filled first because that is the leg a counter settles
+ * from and the one a cash cap constrains.
+ */
+function tenderSplit(
+  tender: Tender,
+  inst: { amountPaise: bigint; cashLegPaise: bigint; paidCashPaise: bigint },
+  remainingPaise: bigint,
+): { cash: bigint; online: bigint } {
+  if (tender === 'CASH') return { cash: remainingPaise, online: 0n };
+  if (tender === 'ONLINE') return { cash: 0n, online: remainingPaise };
+  const cashDue = inst.cashLegPaise - inst.paidCashPaise;
+  const cash = cashDue <= 0n ? 0n : cashDue < remainingPaise ? cashDue : remainingPaise;
+  return { cash, online: remainingPaise - cash };
+}
+
+export type Tender = 'CASH' | 'ONLINE' | 'SPLIT';
+
+/**
+ * "Taken" — the customer withdrew everything the schedule planned for them today.
+ *
+ * All-or-nothing by design. The register exists so a clerk can answer one question per row
+ * without typing, and a box that accepts any figure is how the old sheet drifted away from the
+ * plan. A genuine part payment is a different act and is entered on the case page.
+ *
+ * The read below is deliberately NOT locked: it only proposes the amounts. `recordPayout`
+ * re-reads the instalment inside the case lock and re-validates against INV-4, so a racing
+ * cashier makes this one fail loudly rather than pay the same day twice (CLAUDE.md #7).
+ */
+export async function markInstalmentTaken(
+  actor: SessionUser,
+  instalmentId: string,
+  tender: Tender,
+  meta: { ip?: string | null; userAgent?: string | null } = {},
+) {
+  const [inst] = await db
+    .select()
+    .from(payoutInstalments)
+    .where(eq(payoutInstalments.id, instalmentId))
+    .limit(1);
+  if (!inst) throw new PayoutError('Instalment not found', 'NOT_FOUND');
+  if (inst.status === 'SUPERSEDED' || inst.status === 'CANCELLED') {
+    throw new PayoutError('This instalment is no longer part of the live schedule.', 'SUPERSEDED');
+  }
+
+  const remaining = inst.amountPaise - inst.paidCashPaise - inst.paidOnlinePaise;
+  if (remaining <= 0n) throw new PayoutError('This day is already paid in full.', 'ALREADY_PAID');
+
+  const { cash, online } = tenderSplit(tender, inst, remaining);
+  return recordPayout(
+    actor,
+    {
+      instalmentId,
+      cashPaise: cash,
+      onlinePaise: online,
+      remarks: 'Register: marked taken',
+    },
+    meta,
+  );
+}
+
+/**
+ * "Not taken" — nobody came for this day.
+ *
+ * No money moves, so this is not a payout; what it does is turn an unanswered day into an
+ * answered one, which is what the Not-taken tab and the red row are built from. The day stays on
+ * the schedule and stays owed — marking it missed never writes the money off.
+ *
+ * A future day cannot be marked: a no-show is an observation, and there is nothing yet to
+ * observe. Pass `clear` to undo a mis-click, which returns the day to whatever it was before the
+ * mark — pending, or partial if some of it had already gone out.
+ *
+ * Takes the CASE lock before the instalment, in the same order as `recordPayout`, so the two
+ * cannot deadlock against each other.
+ */
+export async function markInstalmentMissed(
+  actor: SessionUser,
+  instalmentId: string,
+  opts: { clear?: boolean; asOf?: string } = {},
+  meta: { ip?: string | null; userAgent?: string | null } = {},
+) {
+  const asOf = opts.asOf ?? todayISO();
+  const clear = opts.clear ?? false;
+
+  return db.transaction(async (tx) => {
+    const [ref] = await tx
+      .select({ caseId: payoutInstalments.caseId })
+      .from(payoutInstalments)
+      .where(eq(payoutInstalments.id, instalmentId))
+      .limit(1);
+    if (!ref) throw new PayoutError('Instalment not found', 'NOT_FOUND');
+
+    const [c] = await tx
+      .select()
+      .from(maturityCases)
+      .where(eq(maturityCases.id, ref.caseId))
+      .for('update')
+      .limit(1);
+    if (!c) throw new PayoutError('Case not found', 'NOT_FOUND');
+
+    const [inst] = await tx
+      .select()
+      .from(payoutInstalments)
+      .where(eq(payoutInstalments.id, instalmentId))
+      .for('update')
+      .limit(1);
+    if (!inst) throw new PayoutError('Instalment not found', 'NOT_FOUND');
+    if (inst.status === 'SUPERSEDED' || inst.status === 'CANCELLED') {
+      throw new PayoutError('This instalment is no longer part of the live schedule.', 'SUPERSEDED');
+    }
+
+    const paid = inst.paidCashPaise + inst.paidOnlinePaise;
+
+    if (clear) {
+      if (inst.status !== 'MISSED') {
+        throw new PayoutError('This day is not marked as not taken.', 'NOT_MISSED');
+      }
+    } else {
+      if (inst.status === 'PAID') {
+        throw new PayoutError('This day is already paid — reverse the payout instead.', 'ALREADY_PAID');
+      }
+      if (inst.status === 'MISSED') return { ok: true as const, status: 'MISSED' as const };
+      if (inst.dueOn > asOf) {
+        throw new PayoutError('That day has not arrived yet.', 'NOT_YET_DUE');
+      }
+    }
+
+    const next = clear ? (paid > 0n ? ('PARTIAL' as const) : ('PENDING' as const)) : ('MISSED' as const);
+
+    await tx
+      .update(payoutInstalments)
+      .set({ status: next, updatedAt: new Date() })
+      .where(eq(payoutInstalments.id, inst.id));
+
+    await tx.insert(caseEvents).values({
+      id: newId('evt'),
+      caseId: c.id,
+      type: 'NOTE_ADDED',
+      actorId: actor.id,
+      note: clear
+        ? `Day ${inst.seq} (${inst.dueOn}) — not-taken mark cleared`
+        : `Day ${inst.seq} (${inst.dueOn}) — not taken, ${formatPaise(inst.amountPaise - paid)} still owed`,
+    });
+
+    await writeAudit(tx, actor, {
+      action: clear ? 'payout.missed_cleared' : 'payout.missed',
+      entity: 'PayoutInstalment',
+      entityId: inst.id,
+      branchId: c.branchId,
+      summary: clear
+        ? `${c.caseNumber} day ${inst.seq}: not-taken mark cleared`
+        : `${c.caseNumber} day ${inst.seq} (${inst.dueOn}): not taken, ${formatPaise(inst.amountPaise - paid)} still owed`,
+      before: { status: inst.status },
+      after: { status: next },
+      ...meta,
+    });
+
+    return { ok: true as const, status: next };
+  });
+}
+
 /** Reverse a transaction. The row is kept and flagged — the ledger is never rewritten. */
 export async function reversePayout(
   actor: SessionUser,

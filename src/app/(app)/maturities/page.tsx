@@ -25,7 +25,7 @@ export default async function MaturitiesPage() {
   if (!session) redirect('/login');
   const actor = toActor(session);
   const today = todayISO();
-  const [rows, options] = await Promise.all([listRegister(actor), getFormOptions(actor)]);
+  const [rows, options] = await Promise.all([listRegister(actor, today), getFormOptions(actor)]);
   const branch =
     options.branches.find((b) => b.id === session.branchId) ?? options.branches[0] ?? null;
   const desk = branch
@@ -123,6 +123,12 @@ export default async function MaturitiesPage() {
                   Boolean(r.submittedAt) ||
                   ['SUBMITTED', 'APPROVED', 'IN_PROGRESS', 'COMPLETED'].includes(r.status),
                 approved: ['APPROVED', 'IN_PROGRESS', 'COMPLETED', 'ON_HOLD'].includes(r.status),
+                todayInstalmentId: r.todayInstalmentId,
+                todayDuePaise: r.todayDuePaise,
+                todayPaidTakenPaise: r.todayPaidPaise,
+                todayStatus: r.todayStatus,
+                overdueCount: r.overdueCount,
+                overduePaise: r.overduePaise,
               };
             })}
           />
