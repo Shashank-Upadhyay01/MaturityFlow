@@ -1,6 +1,12 @@
 # ADR 0003 — The schedule is anchored to the approval date
 
-**Status:** Accepted · **Date:** 2026-08-18
+> **Superseded by [ADR 0005](0005-schedule-anchored-to-maturity.md) on 2026-08-26.** The schedule
+> is no longer anchored to approval; there is no approval step and no Operations Head. The anchor
+> is the customer's maturity date plus three calendar days. The reasoning below is kept because
+> the problem it identifies — two parties counting from two different dates — is real, and ADR 0005
+> solves it by picking the date *both* parties already know rather than the one only the branch does.
+
+**Status:** Superseded · **Date:** 2026-08-18
 
 ## Context
 

@@ -1,5 +1,7 @@
 # Payout Scheduling — Phase 2 (Editable Schedules) Implementation Plan
 
+> **Partly superseded on 2026-08-26.** The cadence and ₹1 lakh work here is done and still stands. Anything in this plan that assumes an approval step or an OPS_HEAD role no longer applies — see [ADR 0005](../../adr/0005-schedule-anchored-to-maturity.md) and [the removal plan](2026-08-26-remove-approval-auto-schedule.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let a clerk change any one day's payout amount and have the difference spread automatically across the later unpaid days, live as they type, with the total never moving.

@@ -21,11 +21,11 @@ This is what allows the browser preview and the server-persisted schedule to be 
 | `totalPaise` | `bigint` | Maturity amount, in paise. `₹5,00,000` → `50000000n`. |
 | `days` | `number` | "Give within N days" — **working** days. |
 | `roundingPaise` | `bigint` | Installments are multiples of this. `₹1,000` → `100000n`. |
-| `startDate` | `ISODate` | Anchor = approval date. Rolled forward if non-working. |
+| `startDate` | `ISODate` | Anchor = **day one of payouts**, from `scheduleAnchorFor()`. Rolled forward if non-working. |
 | `calendar` | `WorkingDayCalendar` | Weekend policy + holiday set. |
 | `distribution` | `FRONT_LOADED \| BACK_LOADED \| EVEN` | Where the "heavier" days sit. Default `FRONT_LOADED`. |
 | `cashPolicy` | `CashPolicy` | `CASH_ONLY` / `ONLINE_ONLY` / `CASH_CAP` with `cashCapPerDayPaise`. |
-| `startOnNextWorkingDay` | `boolean` | `true` => first payout is the working day AFTER the anchor. Default `false` (pay from the approval day). |
+| `startOnNextWorkingDay` | `boolean` | `true` => first payout is the working day AFTER the anchor. Default `false` (pay from the anchor itself). |
 | `stride` | `number` | Working days between payouts. `1` (default) daily, `2` alternate. |
 | `startOffsetWorkingDays` | `number` | Working days after the anchor with no payout — the processing days. Default `0`. |
 
@@ -126,7 +126,7 @@ wrong, the schedule refuses to exist rather than paying out a wrong number. **IN
 engine never learns that the ₹1 lakh rule exists — that separation is why a change to the rule
 cannot reach the code that splits money.
 
-Let `W0` be the approval date rolled forward to a working day. Working days are counted
+Let `W0` be the anchor from `scheduleAnchorFor()` — already rolled onto a working day. Working days are counted
 `W0, W1, W2, …`, skipping non-working days.
 
 ```
@@ -134,7 +134,11 @@ W0  W1  W2 │ W3 ........................ W14
 └ processing┘ └──── 12 withdrawal days ────┘   deadline = W14
 ```
 
-- The window is **15 working days inclusive of the approval day**: 3 processing + 12 payout.
+- The window is **15 working days**: 3 processing + 12 payout. Since ADR 0005 the three
+  processing days are spent as *calendar* days before the anchor, by `scheduleAnchorFor()`, so the
+  service passes `startOffsetWorkingDays: 0` and `W0` is the first paying day. Passing both would
+  count the same gap twice. `payoutPlanFor()` still returns 12 daily / 6 alternate — the money
+  split is unchanged.
 - **`>= ₹1,00,000`** — `DAILY`, stride 1: payouts on `W3…W14`, 12 instalments.
 - **`< ₹1,00,000`** — `ALTERNATE`, stride 2: payouts on `W3, W5, W7, W9, W11, W13`, 6 instalments,
   finishing one working day inside the same deadline.
@@ -144,7 +148,7 @@ window, not the payout count — `payoutDays = windowDays - 3`, so a 20-day wind
 payouts or 9 alternate ones. The shortest usable window is `MIN_WINDOW_DAYS` (4); anything less
 leaves no day to pay on and `payoutPlanFor` throws rather than inventing a one-day schedule.
 
-Cadence is persisted on `maturity_cases.cadence` at approval and never re-derived, because the
+Cadence is persisted on `maturity_cases.cadence` when the case is scheduled and never re-derived, because the
 maturity amount is editable and a later correction must not move a live case onto a different
 rhythm.
 

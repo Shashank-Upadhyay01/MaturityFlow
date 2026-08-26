@@ -1,5 +1,7 @@
 # Payout Scheduling — Phase 1 (Engine) Implementation Plan
 
+> **Partly superseded on 2026-08-26.** The cadence and ₹1 lakh work here is done and still stands. Anything in this plan that assumes an approval step or an OPS_HEAD role no longer applies — see [ADR 0005](../../adr/0005-schedule-anchored-to-maturity.md) and [the removal plan](2026-08-26-remove-approval-auto-schedule.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Teach the payout engine two new ideas — a payout *cadence* (daily for maturities of ₹1 lakh and over, every other working day below that) and a *processing offset* (the first 3 working days after approval carry no payout) — without changing any of the money arithmetic.

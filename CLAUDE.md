@@ -91,8 +91,16 @@ These are enforced in code and in the database. Do not weaken them.
 4. **Every mutation starts with `requireActor()` then `assertCan()`.** No exceptions.
 5. **Every money-affecting mutation writes an audit row in the same transaction.** Never write to
    `audit_log` outside the transaction it describes; never update or delete from it.
-6. **`formSubmittedOn` and `approvedOn` are different things.** The schedule and the SLA clock are
-   anchored to `approvedOn`. Do not conflate them.
+6. **The schedule anchors to the customer's maturity date, not to any staff action.**
+   `scheduleAnchorFor()` is the single definition: maturity + 3 CALENDAR days, never earlier than
+   today, rolled to the next open day. Calendar days because it is a promise the customer checks
+   on a wall calendar; never-earlier-than-today because the register holds cases that matured in
+   2024 and a schedule generated into the past is overdue before it exists. `formSubmittedOn` is
+   when the agent handed the form in and is not an anchor. `approvedOn` survives as the column
+   holding that anchor and as the SLA clock's start; `approvedById IS NULL` marks a case the
+   system scheduled rather than a person approved. **There is no approval step and no Ops Head** —
+   `submitCase()` schedules, and `createCase({ submitNow: true })` goes through the same helper.
+   See `docs/adr/0005-schedule-anchored-to-maturity.md`.
 7. **Any writer to a case's instalments or transactions must take the CASE row lock FIRST,
    then re-read the row it is about to change with `.for('update')`.** Lock order is always
    case → instalment/transaction, so concurrent payouts cannot deadlock. Reading the
@@ -130,8 +138,9 @@ These are enforced in code and in the database. Do not weaken them.
 
 ```
 src/lib/payout-engine.ts   ★ the algorithm. Pure, deterministic, no I/O. Read the docs first.
-src/lib/payout-policy.ts   ★ the ₹1 lakh rule: cadence, processing days, payout count. Pure.
-                           The engine stays policy-free so a rule change cannot reach the money.
+src/lib/payout-policy.ts   ★ the ₹1 lakh rule: cadence, payout count — and `scheduleAnchorFor()`,
+                           which decides the day a schedule starts. Pure. The engine stays
+                           policy-free so a rule change cannot reach the money.
 src/lib/schedule-edit.ts   ★ moving money between days of a live schedule. Pure, fuzz-tested.
                            Later days absorb the change; paid days are never rewritten.
 src/lib/money.ts           BigInt paise: parsing, Indian formatting, rounding steps

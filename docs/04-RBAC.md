@@ -2,7 +2,13 @@
 
 ## Roles
 
-`CMD · CEO · ADMIN · OPS_HEAD · BRANCH_MANAGER · CASHIER · AGENT · AUDITOR`
+`CMD · CEO · ADMIN · BRANCH_MANAGER · CASHIER · AGENT · AUDITOR`
+
+`OPS_HEAD` was retired on 2026-08-26 along with the approval step it existed for
+([ADR 0005](adr/0005-schedule-anchored-to-maturity.md)). The value remains in the `role` Postgres
+enum — Postgres has no `ALTER TYPE … DROP VALUE`, and audit rows still name it — but it is not
+assignable, holds no permissions, and `activeRole()` reads a stored one as the `ADMIN` its
+account was migrated to.
 
 ## Scope
 
@@ -10,46 +16,46 @@ Every role carries a data scope, applied at the query layer:
 
 | Scope | Roles | Effect |
 |---|---|---|
-| Read `ALL` | CMD, CEO, ADMIN, OPS_HEAD, BRANCH_MANAGER, CASHIER, AGENT, AUDITOR | Every branch. |
-| Write `ALL` | CMD, CEO, ADMIN, OPS_HEAD, AUDITOR | May change any branch. |
+| Read `ALL` | CMD, CEO, ADMIN, BRANCH_MANAGER, CASHIER, AGENT, AUDITOR | Every branch. |
+| Write `ALL` | CMD, CEO, ADMIN, AUDITOR | May change any branch. |
 | Write `BRANCH` | BRANCH_MANAGER, CASHIER | `WHERE branchId = session.branchId`. |
 | Write `OWN` | AGENT | `WHERE agentId = session.agentId`. |
 
 ## Permission matrix
 
-| Permission | CMD | CEO | ADMIN | OPS_HEAD | BR_MGR | CASHIER | AGENT | AUDITOR |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `case.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `case.create` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
-| `case.submit` | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ | – |
-| `case.edit` | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ | – |
-| `case.editApproved` | ✓ | ✓ | ✓ | – | – | – | – | – |
-| `case.approve` | ✓ | ✓ | ✓ | ✓ | – | – | – | – |
-| `case.reject` | ✓ | ✓ | ✓ | ✓ | – | – | – | – |
-| `case.return` | ✓ | ✓ | ✓ | ✓ | – | – | – | – |
-| `case.hold` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – | – |
-| `case.cancel` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
-| `schedule.preview` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `schedule.override` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
-| `schedule.reschedule` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
-| `payout.record` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
-| `payout.reverse` | ✓ | ✓ | ✓ | ✓ | – | – | – | – |
-| `cash.plan` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ |
-| `cash.setOpening` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
-| `agent.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `agent.manage` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – | – |
-| `customer.manage` | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ | – |
-| `branch.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ |
-| `branch.manage` | – | – | ✓ | – | – | – | – | – |
-| `user.manage` | – | – | ✓ | – | – | – | – | – |
-| `holiday.manage` | – | – | ✓ | – | – | – | – | – |
-| `settings.manage` | – | – | ✓ | – | – | – | – | – |
-| `report.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `report.export` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ |
-| `data.import` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
-| `audit.view` | ✓ | ✓ | ✓ | ✓ | – | – | – | ✓ |
+| Permission | CMD | CEO | ADMIN | BR_MGR | CASHIER | AGENT | AUDITOR |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `case.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `case.create` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – |
+| `case.submit` | ✓ | ✓ | ✓ | ✓ | – | ✓ | – |
+| `case.edit` | ✓ | ✓ | ✓ | ✓ | – | ✓ | – |
+| `case.editApproved` | ✓ | ✓ | ✓ | – | – | – | – |
+| `case.approve` | ✓ | ✓ | ✓ | – | – | – | – |
+| `case.reject` | ✓ | ✓ | ✓ | – | – | – | – |
+| `case.return` | ✓ | ✓ | ✓ | – | – | – | – |
+| `case.hold` | ✓ | ✓ | ✓ | ✓ | – | – | – |
+| `case.cancel` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
+| `schedule.preview` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `schedule.override` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
+| `schedule.reschedule` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
+| `payout.record` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
+| `payout.reverse` | ✓ | ✓ | ✓ | – | – | – | – |
+| `cash.plan` | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ |
+| `cash.setOpening` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
+| `agent.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `agent.manage` | ✓ | ✓ | ✓ | ✓ | – | – | – |
+| `customer.manage` | ✓ | ✓ | ✓ | ✓ | – | ✓ | – |
+| `branch.view` | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ |
+| `branch.manage` | – | – | ✓ | – | – | – | – |
+| `user.manage` | – | – | ✓ | – | – | – | – |
+| `holiday.manage` | – | – | ✓ | – | – | – | – |
+| `settings.manage` | – | – | ✓ | – | – | – | – |
+| `report.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `report.export` | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ |
+| `data.import` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
+| `audit.view` | ✓ | ✓ | ✓ | – | – | – | ✓ |
 
-Totals: CMD 25 · CEO 25 · ADMIN 29 · OPS_HEAD 24 · BRANCH_MANAGER 19 · CASHIER 14 · AGENT 8 · AUDITOR 8 of 29
+Totals: CMD 25 · CEO 25 · ADMIN 29 · BRANCH_MANAGER 19 · CASHIER 14 · AGENT 8 · AUDITOR 8 of 29
 
 *Generated from `src/lib/rbac.ts`. Regenerate rather than hand-edit — this table had drifted from
 the code before it was last rebuilt.*
