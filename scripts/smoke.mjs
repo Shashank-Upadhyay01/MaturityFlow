@@ -63,8 +63,8 @@ try {
 console.log(`  target: ${BASE}`);
 
 try {
-  // ── 1. Ops Head: dashboard, approvals, approve a case ─────────────────
-  console.log('\n▸ Operations Head');
+  // ── 1. Admin: dashboard, then submit-and-schedule a case ──
+  console.log('\n▸ Admin');
   const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   const page = await ctx.newPage();
   const consoleErrors = [];
@@ -78,13 +78,14 @@ try {
     if (r.status() === 404) notFound.push(new URL(r.url()).pathname);
   });
 
+  // ops@bank.test is an ADMIN now — the role it was migrated to when OPS_HEAD retired.
   await login(page, 'ops@bank.test');
-  check('ops head signs in', page.url().includes('/dashboard'));
+  check('the migrated ops account signs in', page.url().includes('/dashboard'));
 
-  await page.waitForSelector('text=Today at a glance', { timeout: 15000 });
+  await page.waitForSelector('h2:has-text("Today")', { timeout: 15000 });
   const dashText = await page.locator('main').innerText();
   check('dashboard renders rupee figures', /₹/.test(dashText));
-  check('dashboard shows live payout position', /live payout position/i.test(dashText));
+  check('dashboard shows the day’s position', /due today|still to give|remaining/i.test(dashText));
   await page.screenshot({ path: `${SHOTS}/01-dashboard-light.png`, fullPage: false });
 
   // dark mode
@@ -94,38 +95,21 @@ try {
   await page.click('button[aria-label*="light theme"]').catch(() => {});
   await page.waitForTimeout(400);
 
-  // Approvals
-  await page.goto(`${BASE}/approvals`, { waitUntil: 'networkidle' });
-  await page.waitForSelector('text=Approvals', { timeout: 15000 });
-  const queueCount = await page.locator('button:has-text("/")').count();
-  check('approval queue has items', queueCount > 0, `${queueCount} rows`);
+  // The approvals queue is gone with the approval step (ADR 0005).
+  const goneRes = await page.goto(`${BASE}/approvals`, { waitUntil: 'networkidle' });
+  check('the approvals screen no longer exists', goneRes?.status() === 404, String(goneRes?.status()));
 
-  // First card opens by default; capture the live schedule preview
-  await page.waitForSelector('text=What approving commits to', { timeout: 15000 });
-  const previewText = await page.locator('main').innerText();
-  check('approval shows a live schedule preview', previewText.includes('per day'));
-  check('preview lists a Day-by-day table', previewText.includes('Day by day'));
-  await page.screenshot({ path: `${SHOTS}/03-approvals.png`, fullPage: false });
+  // A scheduled case carries its instalments and a promised completion date.
+  await page.goto(`${BASE}/maturities`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('tbody tr', { timeout: 15000 });
 
-  const caseNumber = (await page.locator('main span.font-semibold').first().innerText()).trim();
-  const queueBefore = await page.locator('button:has-text("/")').count();
-  await page.click('button:has-text("Approve & generate schedule")');
-  await page.waitForTimeout(4000);
-  await page.goto(`${BASE}/approvals`, { waitUntil: 'networkidle' });
-  const queueAfter = await page.locator('button:has-text("/")').count();
-  check('approving removes the case from the queue', queueAfter < queueBefore, `${queueBefore} -> ${queueAfter}`);
-
-  // The approved case must now carry a generated schedule anchored to today.
-  await page.goto(`${BASE}/maturities?q=${encodeURIComponent(caseNumber)}`, { waitUntil: 'networkidle' });
-  const found = await page.locator('tbody tr').count();
-  check('approved case is findable in the register', found > 0, caseNumber);
-  if (found > 0) {
-    await page.locator('tbody tr a').first().click();
-    await page.waitForURL(/\/maturities\/case_/, { timeout: 15000 });
-    const approvedDetail = await page.locator('main').innerText();
-    check('approved case has a schedule with instalments', /instalments/i.test(approvedDetail));
-    check('approved case shows a promised completion date', /promised by/i.test(approvedDetail));
-  }
+  // Read the sidebar from a real page — the 404 above renders no nav.
+  const navText = await page.locator('nav').first().innerText();
+  check('no Approvals entry in the sidebar', !/approvals/i.test(navText));
+  check('the register has rows', (await page.locator('tbody tr').count()) > 0);
+  const sheetText = await page.locator('main').innerText();
+  check('the register no longer offers an approval affordance', !/awaiting approval/i.test(sheetText));
+  await page.screenshot({ path: `${SHOTS}/03-register-after-cutover.png`, fullPage: false });
 
   // ── 2. Register + case detail ─────────────────────────────────────────
   console.log('\n▸ Register & case detail');
@@ -222,11 +206,12 @@ try {
   await page.waitForTimeout(600);
   check('agent form opens', /agent code/i.test(await page.locator('main').innerText()));
 
-  // Branch administration is CMD/CEO/ADMIN only — an Ops Head must NOT see it.
+  // Branch administration is CMD/CEO/ADMIN only. This session is ops@bank.test, which IS an
+  // Admin since the role was retired — so it must now SEE the control it used to be denied.
   await page.goto(`${BASE}/branches`, { waitUntil: 'networkidle' });
   check(
-    'ops head cannot create branches',
-    !(await page.locator('main').innerText()).includes('New branch'),
+    'the migrated ops account has Admin branch rights',
+    (await page.locator('main').innerText()).includes('New branch'),
   );
 
   // ── 5. Reports & audit ────────────────────────────────────────────────
@@ -308,9 +293,9 @@ try {
     check('recording a payout clears it from the desk', afterRows < beforeRows, `${beforeRows} -> ${afterRows}`);
   }
 
-  // Cashier must not see approvals
-  await page.goto(`${BASE}/approvals`, { waitUntil: 'networkidle' });
-  check('cashier is redirected away from approvals', page.url().includes('/dashboard'), page.url());
+  // The approvals route is gone for everyone, not merely hidden from the cashier.
+  const cashierRes = await page.goto(`${BASE}/approvals`, { waitUntil: 'networkidle' });
+  check('approvals is a 404 for the cashier too', cashierRes?.status() === 404, String(cashierRes?.status()));
   await logout(page);
 
   // ── 7. Auditor is read-only ───────────────────────────────────────────
@@ -330,8 +315,8 @@ try {
   await page.goto(`${BASE}/maturities`, { waitUntil: 'networkidle' });
   const agentText = await page.locator('main').innerText();
   check('agent sees the register', agentText.includes('All maturities'));
-  await page.goto(`${BASE}/approvals`, { waitUntil: 'networkidle' });
-  check('agent cannot approve', page.url().includes('/dashboard'), page.url());
+  const agentRes = await page.goto(`${BASE}/approvals`, { waitUntil: 'networkidle' });
+  check('there is no approvals route for the agent either', agentRes?.status() === 404, String(agentRes?.status()));
   await page.goto(`${BASE}/maturities/new`, { waitUntil: 'networkidle' });
   check('agent can open the intake form', page.url().includes('/maturities/new'));
   await page.screenshot({ path: `${SHOTS}/12-agent-new-maturity.png`, fullPage: false });

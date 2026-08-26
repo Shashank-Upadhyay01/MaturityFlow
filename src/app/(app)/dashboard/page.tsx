@@ -29,7 +29,7 @@ export default async function DashboardPage() {
 
   const empty = book.rowCount === 0;
   const canImport = roleCan(session.role, 'data.import');
-  const showAttention = book.awaitingCount > 0 || book.overdueCount > 0;
+  const showAttention = book.overdueCount > 0;
   const branchLines = branches.filter((b) => BigInt(b.totalPaise) - BigInt(b.paidPaise) > 0n || b.liveCases > 0);
   const showBranches = hq && branches.length > 1 && branchLines.length > 0;
 
@@ -123,13 +123,6 @@ export default async function DashboardPage() {
                 <h2 className="text-[0.9375rem] font-semibold tracking-tight">Needs you</h2>
               </div>
               <ul className="divide-y">
-                {book.awaitingCount > 0 && (
-                  <AttentionRow
-                    href="/maturities"
-                    label={`${book.awaitingCount} form${book.awaitingCount === 1 ? '' : 's'} waiting to be scheduled`}
-                    amount={book.awaitingPaise}
-                  />
-                )}
                 {book.overdueCount > 0 && (
                   <AttentionRow
                     href="/maturities"

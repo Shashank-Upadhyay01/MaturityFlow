@@ -91,8 +91,6 @@ export interface DashboardStats {
   paidTodayOnlinePaise: bigint;
   overdueCount: number;
   overduePaise: bigint;
-  awaitingApprovalCount: number;
-  awaitingApprovalPaise: bigint;
   breachRiskCount: number;
 }
 
@@ -113,8 +111,6 @@ async function loadDashboardStats(actor: Actor, date: string): Promise<Dashboard
       liveN: sql<number>`COUNT(*) FILTER (WHERE ${maturityCases.status} IN ('APPROVED','IN_PROGRESS'))::int`,
       liveTotal: sql<string>`COALESCE(SUM(${maturityCases.maturityAmountPaise}) FILTER (WHERE ${maturityCases.status} IN ('APPROVED','IN_PROGRESS')), 0)`,
       livePaid: sql<string>`COALESCE(SUM(${maturityCases.paidCashPaise} + ${maturityCases.paidOnlinePaise}) FILTER (WHERE ${maturityCases.status} IN ('APPROVED','IN_PROGRESS')), 0)`,
-      awaitingN: sql<number>`COUNT(*) FILTER (WHERE ${maturityCases.status} IN ('SUBMITTED','UNDER_REVIEW'))::int`,
-      awaitingSum: sql<string>`COALESCE(SUM(${maturityCases.maturityAmountPaise}) FILTER (WHERE ${maturityCases.status} IN ('SUBMITTED','UNDER_REVIEW')), 0)`,
       breachN: sql<number>`COUNT(*) FILTER (WHERE ${maturityCases.status} IN ('APPROVED','IN_PROGRESS') AND ${maturityCases.deadlineOn} < ${date} AND ${maturityCases.paidCashPaise} + ${maturityCases.paidOnlinePaise} < ${maturityCases.maturityAmountPaise})::int`,
     })
     .from(maturityCases)
@@ -191,8 +187,6 @@ async function loadDashboardStats(actor: Actor, date: string): Promise<Dashboard
     paidTodayOnlinePaise: big(paidToday.online),
     overdueCount: Number(overdue.n),
     overduePaise: big(overdue.sum),
-    awaitingApprovalCount: Number(cases.awaitingN),
-    awaitingApprovalPaise: big(cases.awaitingSum),
     breachRiskCount: Number(cases.breachN),
   };
 }
@@ -242,8 +236,6 @@ export interface RegisterSummary {
   paidTodayCashPaise: bigint;
   paidTodayOnlinePaise: bigint;
   paidTodayCount: number;
-  awaitingCount: number;
-  awaitingPaise: bigint;
   overdueCount: number;
   overduePaise: bigint;
 }
@@ -272,8 +264,6 @@ export async function getRegisterSummary(
       todayApproved: sql<string>`COALESCE(SUM(${maturityCases.todayApprovedPaise}), 0)`,
       todayCash: sql<string>`COALESCE(SUM(${maturityCases.todayCashPaise}), 0)`,
       todayOnline: sql<string>`COALESCE(SUM(${maturityCases.todayOnlinePaise}), 0)`,
-      awaitingCount: sql<number>`COUNT(*) FILTER (WHERE ${maturityCases.status} IN ('SUBMITTED','UNDER_REVIEW'))::int`,
-      awaitingPaise: sql<string>`COALESCE(SUM(${maturityCases.maturityAmountPaise}) FILTER (WHERE ${maturityCases.status} IN ('SUBMITTED','UNDER_REVIEW')), 0)`,
       overdueCount: sql<number>`COUNT(*) FILTER (
         WHERE ${remainingSql} > 0
           AND COALESCE(${maturityCases.deadlineOn}, ${maturityCases.paymentOn}) < ${date}
@@ -319,8 +309,6 @@ export async function getRegisterSummary(
     paidTodayCashPaise: big(paidToday?.cash),
     paidTodayOnlinePaise: big(paidToday?.online),
     paidTodayCount: Number(paidToday?.n ?? 0),
-    awaitingCount: Number(book?.awaitingCount ?? 0),
-    awaitingPaise: big(book?.awaitingPaise),
     overdueCount: Number(book?.overdueCount ?? 0),
     overduePaise: big(book?.overduePaise),
   };
@@ -663,7 +651,6 @@ export async function getBranchRollup(actor: Actor) {
       cashPaise: sql<string>`COALESCE(SUM(${maturityCases.paidCashPaise}),0)`,
       onlinePaise: sql<string>`COALESCE(SUM(${maturityCases.paidOnlinePaise}),0)`,
       liveCases: sql<number>`COUNT(*) FILTER (WHERE ${maturityCases.status} IN ('APPROVED','IN_PROGRESS'))::int`,
-      awaitingApproval: sql<number>`COUNT(*) FILTER (WHERE ${maturityCases.status} IN ('SUBMITTED','UNDER_REVIEW'))::int`,
       overdueCases: sql<number>`COUNT(*) FILTER (WHERE ${maturityCases.status} IN ('APPROVED','IN_PROGRESS') AND ${maturityCases.deadlineOn} < ${todayISO()})::int`,
     })
     .from(branches)
