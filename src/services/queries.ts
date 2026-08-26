@@ -330,14 +330,9 @@ export async function getRegisterSummary(
 export async function getNavBadges(
   actor: Actor,
   date = todayISO(),
-): Promise<{ approvals: number; dueToday: number; overdue: number }> {
+): Promise<{ dueToday: number; overdue: number }> {
   const scope = caseScope(actor);
   const and_ = (...xs: (SQL | undefined)[]) => and(...(xs.filter(Boolean) as SQL[]));
-
-  const [waiting] = await db
-    .select({ n: count() })
-    .from(maturityCases)
-    .where(and_(inArray(maturityCases.status, ['SUBMITTED', 'UNDER_REVIEW']), scope));
 
   const [due] = await db
     .select({
@@ -349,7 +344,6 @@ export async function getNavBadges(
     .where(and_(inArray(maturityCases.status, LIVE), scope));
 
   return {
-    approvals: waiting.n,
     dueToday: Number(due?.dueToday ?? 0),
     overdue: Number(due?.overdue ?? 0),
   };

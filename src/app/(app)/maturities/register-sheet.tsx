@@ -1841,7 +1841,7 @@ export function RegisterSheet(props: {
 
       {closed && (
         <Callout tone="warn" title="This day is closed">
-          Entries are read-only until Admin or Operations Head reopens the day.
+          Entries are read-only until Admin, CMD or CEO reopens the day.
           {props.canConfirmClose && (
             <Button
               className="mt-2"
@@ -1863,7 +1863,7 @@ export function RegisterSheet(props: {
       )}
       {closeRequested && !closed && (
         <Callout tone="warn" title="Close requested — waiting for Admin / Ops">
-          The day will not close until Admin or Operations Head confirms.
+          The day will not close until Admin, CMD or CEO confirms.
           {props.canConfirmClose && (
             <div className="mt-2 flex gap-2">
               <Button

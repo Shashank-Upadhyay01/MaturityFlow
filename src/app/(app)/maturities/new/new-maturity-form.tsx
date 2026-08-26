@@ -129,7 +129,7 @@ export function NewMaturityForm({
   useEffect(() => {
     if (state?.ok && state.data) {
       toast.success(`Maturity ${state.data.caseNumber} created`, {
-        description: submitNow ? 'Sent to the Operations Head for approval.' : 'Saved as a draft.',
+        description: submitNow ? 'Scheduled — the payout dates are set.' : 'Saved as a draft.',
       });
       router.push(`/maturities/${state.data.id}`);
     } else if (state && !state.ok) {
@@ -272,7 +272,7 @@ export function NewMaturityForm({
               required
               error={fe.formSubmittedOn}
               htmlFor="submittedOn"
-              hint="The date the agent handed in the form — not the approval date."
+              hint="The date the agent handed in the form. The schedule is anchored to the maturity date, not to this."
             >
               <Input
                 id="submittedOn"
@@ -409,7 +409,7 @@ export function NewMaturityForm({
         <Glass className="sticky bottom-4 z-20 flex flex-wrap items-center gap-3 p-4">
           <div className="min-w-0 flex-1 text-[0.8125rem] text-[var(--muted-fg)]">
             {submitNow
-              ? 'This will go straight to the Operations Head for approval.'
+              ? 'This schedules the payouts straight away.'
               : 'Saved as a draft — you can submit it later.'}
           </div>
           <Button
@@ -428,7 +428,7 @@ export function NewMaturityForm({
             onClick={() => setSubmitNow(true)}
             disabled={!customerId || !agentId || !totalPaise || totalPaise <= 0n}
           >
-            Submit for approval
+            Submit &amp; schedule
             <ArrowRight className="h-4 w-4" />
           </Button>
         </Glass>
@@ -451,8 +451,8 @@ export function NewMaturityForm({
         />
         <p className="mt-3 flex items-start gap-2 px-1 text-[0.75rem] leading-relaxed text-[var(--faint-fg)]">
           <Building2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          Dates shown assume approval on the submission date. The real schedule is anchored to the
-          day the Operations Head actually approves — that is when the money becomes payable.
+          The schedule is anchored to the customer&rsquo;s maturity date plus three days, rolled to
+          the next day the counter is open. A maturity already in the past starts from today.
         </p>
       </div>
     </div>

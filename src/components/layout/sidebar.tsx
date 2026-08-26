@@ -39,7 +39,6 @@ const ICONS: Record<string, LucideIcon> = {
 };
 
 export interface NavBadges {
-  approvals?: number;
   dueToday?: number;
   overdue?: number;
 }

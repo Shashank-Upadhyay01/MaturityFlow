@@ -33,7 +33,7 @@ export default async function NewMaturityPage() {
       <PageHeader
         eyebrow="Intake"
         title="New maturity"
-        description="Fill the form and the exact day-by-day payout plan builds itself as you type. What you see here is what the system will commit the moment it is approved."
+        description="Fill the form and the exact day-by-day payout plan builds itself as you type. What you see here is what the system will commit the moment you submit it."
       />
       <NewMaturityForm
         session={{ role: session.role, branchId: session.branchId, agentId: session.agentId }}

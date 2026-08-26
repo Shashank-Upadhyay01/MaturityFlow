@@ -17,6 +17,7 @@ import {
   permissionsOf,
   roleCan,
 } from '../src/lib/rbac';
+import { NAV } from '../src/components/layout/nav-config';
 
 /** Read off the table itself, so a role added later is covered here without anyone remembering. */
 const EVERY_ROLE = Object.keys(ROLE_SCOPE) as (keyof typeof ROLE_SCOPE)[];
@@ -302,5 +303,17 @@ describe('OPS_HEAD is retired', () => {
     expect(activeRole('OPS_HEAD')).toBe('ADMIN');
     expect(activeRole('CASHIER')).toBe('CASHIER');
     expect(roleCan('OPS_HEAD', 'payout.record')).toBe(true);
+  });
+});
+
+describe('the approvals screen is gone', () => {
+  it('has no nav entry', () => {
+    const hrefs = NAV.flatMap((s) => s.items.map((i) => i.href));
+    expect(hrefs).not.toContain('/approvals');
+  });
+
+  it('and nothing still asks for the approvals badge', () => {
+    const badges = NAV.flatMap((s) => s.items.map((i) => i.badge)).filter(Boolean);
+    expect(badges).not.toContain('approvals');
   });
 });

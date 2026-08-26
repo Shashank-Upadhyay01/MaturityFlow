@@ -29,7 +29,6 @@ export default async function DashboardPage() {
 
   const empty = book.rowCount === 0;
   const canImport = roleCan(session.role, 'data.import');
-  const canApprove = roleCan(session.role, 'case.approve');
   const showAttention = book.awaitingCount > 0 || book.overdueCount > 0;
   const branchLines = branches.filter((b) => BigInt(b.totalPaise) - BigInt(b.paidPaise) > 0n || b.liveCases > 0);
   const showBranches = hq && branches.length > 1 && branchLines.length > 0;
@@ -126,8 +125,8 @@ export default async function DashboardPage() {
               <ul className="divide-y">
                 {book.awaitingCount > 0 && (
                   <AttentionRow
-                    href={canApprove ? '/approvals' : '/maturities'}
-                    label={`${book.awaitingCount} form${book.awaitingCount === 1 ? '' : 's'} waiting for approval`}
+                    href="/maturities"
+                    label={`${book.awaitingCount} form${book.awaitingCount === 1 ? '' : 's'} waiting to be scheduled`}
                     amount={book.awaitingPaise}
                   />
                 )}

@@ -190,14 +190,16 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
             >
               <p className="flex items-center gap-2 text-[0.75rem] font-semibold uppercase tracking-[0.08em] text-[var(--faint-fg)]">
                 <CalendarCheck2 className="h-3.5 w-3.5" />
-                Approved — money payable from
+                Scheduled — money payable from
               </p>
               <p className="mt-2 text-[1.125rem] font-semibold">
-                {c.approvedOn ? formatISODate(c.approvedOn) : 'Not yet approved'}
+                {c.approvedOn ? formatISODate(c.approvedOn) : 'Not yet scheduled'}
               </p>
               <p className="mt-1 text-[0.8125rem] text-[var(--muted-fg)]">
                 {c.approvedOn
-                  ? `${detail.approver?.name ?? 'Operations'} · ${approvalLag === 0 ? 'same day' : `${approvalLag} day${approvalLag === 1 ? '' : 's'} after submission`}`
+                  ? `${detail.approver ? `${detail.approver.name} · ` : 'Scheduled automatically · '}${
+                      approvalLag === 0 ? 'same day' : `${approvalLag} day${approvalLag === 1 ? '' : 's'} after submission`
+                    }`
                   : 'The payout clock has not started.'}
               </p>
             </div>
@@ -342,8 +344,9 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           <div className="flex items-start gap-3 text-[0.875rem] text-[var(--muted-fg)]">
             <CalendarClock className="mt-0.5 h-5 w-5 shrink-0 text-[var(--faint-fg)]" />
             <p>
-              No schedule yet. One is generated automatically the moment this case is approved —
-              anchored to the approval date, because that is when the money becomes payable.
+              No schedule yet. One is generated the moment this case is submitted — anchored to the
+              customer&rsquo;s maturity date plus three days, so the first payout is a date they can
+              work out for themselves.
             </p>
           </div>
         </GlassCard>

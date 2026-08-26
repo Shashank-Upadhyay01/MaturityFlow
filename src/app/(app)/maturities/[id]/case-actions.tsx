@@ -52,10 +52,10 @@ export function CaseActions({
           <Button
             variant="primary"
             loading={busy}
-            onClick={() => run(() => submitCaseAction(caseId), 'Submitted for approval')}
+            onClick={() => run(() => submitCaseAction(caseId), 'Submitted and scheduled')}
           >
             <Send className="h-4 w-4" />
-            Submit for approval
+            Submit &amp; schedule
           </Button>
         )}
 

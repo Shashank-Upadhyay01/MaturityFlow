@@ -18,7 +18,7 @@ export interface NavItem {
   permission: Permission;
   /** Only shown to roles whose scope spans every branch. */
   headOfficeOnly?: boolean;
-  badge?: 'approvals' | 'dueToday' | 'overdue';
+  badge?: 'dueToday' | 'overdue';
   description: string;
 }
 
@@ -46,14 +46,6 @@ export const NAV: { section: string; items: NavItem[] }[] = [
         icon: 'dashboard',
         permission: 'case.view',
         description: 'Totals across the register',
-      },
-      {
-        href: '/approvals',
-        label: 'Approvals',
-        icon: 'inbox',
-        permission: 'case.approve',
-        badge: 'approvals',
-        description: 'Forms waiting for sign-off',
       },
       {
         href: '/payouts',
