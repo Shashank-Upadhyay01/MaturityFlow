@@ -377,53 +377,15 @@ export async function setFormSubmitted(actor: SessionUser, caseId: string, submi
   });
 }
 
-export async function setApproved(actor: SessionUser, caseId: string, approved: boolean) {
-  return db.transaction(async (tx) => {
-    const [row] = await tx.select().from(maturityCases).where(eq(maturityCases.id, caseId)).for('update').limit(1);
-    if (!row) throw new Error('Row not found');
-    const today = todayISO();
-    if (approved) {
-      const paid = row.paidCashPaise + row.paidOnlinePaise;
-      const remaining = row.maturityAmountPaise - paid;
-      await tx
-        .update(maturityCases)
-        .set({
-          status: remaining <= 0n ? 'COMPLETED' : paid > 0n ? 'IN_PROGRESS' : 'APPROVED',
-          approvedOn: row.approvedOn ?? today,
-          approvedAt: new Date(),
-          approvedById: actor.id,
-          updatedAt: new Date(),
-        })
-        .where(eq(maturityCases.id, caseId));
-      await tx.insert(caseEvents).values({
-        id: newId('evt'),
-        caseId,
-        type: 'APPROVED',
-        fromStatus: row.status,
-        toStatus: remaining <= 0n ? 'COMPLETED' : 'APPROVED',
-        actorId: actor.id,
-      });
-    } else {
-      await tx
-        .update(maturityCases)
-        .set({
-          status: 'SUBMITTED',
-          approvedOn: null,
-          approvedAt: null,
-          approvedById: null,
-          updatedAt: new Date(),
-        })
-        .where(eq(maturityCases.id, caseId));
-    }
-    await writeAudit(tx, actor, {
-      action: approved ? 'case.approved' : 'case.updated',
-      entity: 'MaturityCase',
-      entityId: caseId,
-      branchId: row.branchId,
-      summary: `${row.caseNumber}: ${approved ? 'approved' : 'approval cleared'}`,
-    });
-  });
-}
+/*
+ * `setApproved()` lived here.
+ *
+ * It set status to APPROVED and stamped approvedById without generating a schedule, and its
+ * un-tick reset the case to SUBMITTED while leaving any instalments already generated in
+ * place. Approval is gone (docs/adr/0005): the schedule is made by `submitCase()`, anchored
+ * to the customer's maturity date, and `approvedById IS NULL` is what marks a case the
+ * system scheduled rather than a person approved.
+ */
 
 /*
  * `markGiven()` lived here.

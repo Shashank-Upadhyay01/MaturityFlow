@@ -238,6 +238,12 @@ export async function markInstalmentTaken(
   actor: SessionUser,
   instalmentId: string,
   tender: Tender,
+  /**
+   * UTR / NEFT / IMPS reference. Mandatory the moment any of the day goes out online — INV-4,
+   * enforced in `validatePayout` and not negotiable from the register. A cash-only day needs
+   * none, which is why marking one is a single click and marking a transfer is not.
+   */
+  reference: string | null = null,
   meta: { ip?: string | null; userAgent?: string | null } = {},
 ) {
   const [inst] = await db
@@ -254,12 +260,19 @@ export async function markInstalmentTaken(
   if (remaining <= 0n) throw new PayoutError('This day is already paid in full.', 'ALREADY_PAID');
 
   const { cash, online } = tenderSplit(tender, inst, remaining);
+  if (online > 0n && !reference?.trim()) {
+    throw new PayoutError(
+      'A UTR / transaction reference is required for the online portion.',
+      'ONLINE_LEG_NEEDS_REFERENCE',
+    );
+  }
   return recordPayout(
     actor,
     {
       instalmentId,
       cashPaise: cash,
       onlinePaise: online,
+      reference: reference?.trim() || null,
       remarks: 'Register: marked taken',
     },
     meta,

@@ -52,23 +52,74 @@ export interface RegisterColDef {
    * Required columns carry a priority too, but `columnsThatFit` never drops them.
    */
   priority: number;
+  /**
+   * One line saying what this column is for, shown on hover over its heading.
+   *
+   * Not decoration. This sheet is read by clerks who did not design it, and a heading like
+   * "Days" or "Per day" is only obvious to whoever wrote it — the difference between the total
+   * window and the days that actually pay is exactly the kind of thing that gets a payout wrong.
+   * A column with nothing useful to say here should probably not be a column.
+   */
+  hint: string;
 }
 
 export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
-  account: { id: 'account', label: 'A/c no.', excel: 'Savings Account Number', w: 'w-[6.25rem]', priority: 3 },
-  customer: { id: 'customer', label: 'Customer', excel: 'Customer Name', required: true, w: 'w-[9.75rem]', priority: 1 },
-  maturityDate: { id: 'maturityDate', label: 'Maturity', excel: 'Date of Maturity', w: 'w-[5.25rem]', priority: 5 },
-  formDate: { id: 'formDate', label: 'Form in', excel: 'Form Submission Date', required: true, w: 'w-[5.25rem]', priority: 4 },
-  paymentDate: { id: 'paymentDate', label: 'Payment', excel: 'Payment Date', w: 'w-[5.25rem]', priority: 4 },
-  amount: { id: 'amount', label: 'Amount', excel: 'Maturity Amount', right: true, required: true, w: 'w-[5.75rem]', priority: 2 },
-  paid: { id: 'paid', label: 'Paid', excel: 'Paid Maturity', right: true, w: 'w-[5.5rem]', priority: 3 },
-  remaining: { id: 'remaining', label: 'Remaining', excel: 'Remaining Amount', right: true, w: 'w-[6rem]', priority: 1 },
-  agent: { id: 'agent', label: 'Agent', excel: "Customer's Agent Name", w: 'w-[8rem]', priority: 3 },
-  days: { id: 'days', label: 'Days', excel: 'Window Days', right: true, w: 'w-[3.25rem]', priority: 6 },
-  perDay: { id: 'perDay', label: 'Per day', excel: 'Recommended Per Day', right: true, w: 'w-[5.25rem]', priority: 6 },
-  today: { id: 'today', label: 'Today', excel: "Today's Approved Withdrawalable Amount", right: true, w: 'w-[5.75rem]', priority: 1 },
-  cash: { id: 'cash', label: 'Cash', excel: 'Today Cash', right: true, w: 'w-[5.25rem]', priority: 3 },
-  online: { id: 'online', label: 'Online', excel: 'Today Online', right: true, w: 'w-[5.25rem]', priority: 3 },
+  account: {
+    id: 'account', label: 'A/c no.', excel: 'Savings Account Number', w: 'w-[6.25rem]', priority: 3,
+    hint: 'The customer\u2019s savings account number \u2014 what the payout is checked against.',
+  },
+  customer: {
+    id: 'customer', label: 'Customer', excel: 'Customer Name', required: true, w: 'w-[9.75rem]', priority: 1,
+    hint: 'Who the money belongs to. Never dropped, however narrow the screen.',
+  },
+  maturityDate: {
+    id: 'maturityDate', label: 'Maturity', excel: 'Date of Maturity', w: 'w-[5.25rem]', priority: 5,
+    hint: 'The day the deposit matured. Everything else hangs off this: payouts start three calendar days later.',
+  },
+  formDate: {
+    id: 'formDate', label: 'Form in', excel: 'Form Submission Date', required: true, w: 'w-[5.25rem]', priority: 4,
+    hint: 'The day the agent handed the form in. A record, not a deadline \u2014 it does not move the schedule.',
+  },
+  paymentDate: {
+    id: 'paymentDate', label: 'Payment', excel: 'Payment Date', w: 'w-[5.25rem]', priority: 4,
+    hint: 'The first day of this case\u2019s payout window.',
+  },
+  amount: {
+    id: 'amount', label: 'Amount', excel: 'Maturity Amount', right: true, required: true, w: 'w-[5.75rem]', priority: 2,
+    hint: 'The full maturity amount owed to the customer.',
+  },
+  paid: {
+    id: 'paid', label: 'Paid', excel: 'Paid Maturity', right: true, w: 'w-[5.5rem]', priority: 3,
+    hint: 'How much has gone out so far, cash and online together.',
+  },
+  remaining: {
+    id: 'remaining', label: 'Remaining', excel: 'Remaining Amount', right: true, w: 'w-[6rem]', priority: 1,
+    hint: 'Amount minus paid \u2014 what the bank still owes this customer.',
+  },
+  agent: {
+    id: 'agent', label: 'Agent', excel: "Customer's Agent Name", w: 'w-[8rem]', priority: 3,
+    hint: 'The agent who brought this customer in.',
+  },
+  days: {
+    id: 'days', label: 'Days', excel: 'Window Days', right: true, w: 'w-[3.25rem]', priority: 6,
+    hint: 'The TOTAL window in working days \u2014 15 means 3 processing days plus 12 that pay.',
+  },
+  perDay: {
+    id: 'perDay', label: 'Per day', excel: 'Recommended Per Day', right: true, w: 'w-[5.25rem]', priority: 6,
+    hint: 'Remaining spread over the days that actually pay \u2014 not over the whole window.',
+  },
+  today: {
+    id: 'today', label: 'Today', excel: "Today's Withdrawalable Amount", right: true, w: 'w-[5.75rem]', priority: 1,
+    hint: 'What the schedule plans to hand over today. Read-only once a case is scheduled \u2014 change it on the Plan board.',
+  },
+  cash: {
+    id: 'cash', label: 'Cash', excel: 'Today Cash', right: true, w: 'w-[5.25rem]', priority: 3,
+    hint: 'The cash half of today\u2019s figure, kept inside the branch\u2019s daily cash cap.',
+  },
+  online: {
+    id: 'online', label: 'Online', excel: 'Today Online', right: true, w: 'w-[5.25rem]', priority: 3,
+    hint: 'The transfer half of today\u2019s figure.',
+  },
 };
 
 export interface RegisterLayout {

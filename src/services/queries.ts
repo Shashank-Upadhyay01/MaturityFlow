@@ -545,6 +545,17 @@ export async function listRegister(actor: Actor, date = todayISO()) {
        */
       todayCashDuePaise: sql<string>`COALESCE(${todayInst(sql.raw('i.cash_leg_paise::text'))}, '0')`,
       todayOnlineDuePaise: sql<string>`COALESCE(${todayInst(sql.raw('i.online_leg_paise::text'))}, '0')`,
+      /**
+       * Whether this case has a live schedule at all.
+       *
+       * Not the same question as "is anything due today": a maturity below ₹1 lakh pays on
+       * alternate days, so it is fully scheduled and has nothing due on half of them. This is
+       * what the Sched. column reports.
+       */
+      liveInstalmentCount: sql<number>`(
+        SELECT COUNT(*)::int FROM payout_instalments i
+        WHERE i.case_id = ${CASE_ID} AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
+      )`,
       /** Earlier days that were never paid — the red half of the sheet. */
       overdueCount: sql<number>`(
         SELECT COUNT(*)::int FROM payout_instalments i

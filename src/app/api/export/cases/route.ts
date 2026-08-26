@@ -20,7 +20,7 @@ const COLUMNS = [
   'Paid Maturity',
   'Remaining Amount',
   "Customer's Agent Name",
-  "Today's Approved Withdrawalable Amount",
+  "Today's Withdrawalable Amount",
   'Window Days',
 ] as const;
 

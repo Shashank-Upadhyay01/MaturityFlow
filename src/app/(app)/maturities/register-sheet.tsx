@@ -4,9 +4,10 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  CalendarCheck,
   CalendarDays,
-  CheckCheck,
   Check,
+  CheckCheck,
   ChevronDown,
   ChevronUp,
   Columns3,
@@ -14,8 +15,8 @@ import {
   FileSpreadsheet,
   Plus,
   Printer,
-  Search,
   RotateCcw,
+  Search,
   Trash2,
   Upload,
   UserCog,
@@ -31,7 +32,6 @@ import { importRegisterAction } from '@/actions/import';
 import {
   createRegisterRowWithFieldsAction,
   bulkAssignAgentAction,
-  bulkSetApprovedAction,
   bulkSetFormSubmittedAction,
   bulkSetTodayAction,
   confirmCloseDayAction,
@@ -42,7 +42,6 @@ import {
   requestCloseDayAction,
   saveDayCashAction,
   saveRegisterFieldsAction,
-  toggleApprovedAction,
   toggleFormSubmittedAction,
 } from '@/actions/register';
 import { Button } from '@/components/ui/button';
@@ -66,6 +65,7 @@ import {
   dayStateOf,
   groupIndian,
   isDueToday,
+  isOnTodaysList,
   isRangeActive,
   recommendedPerDay,
   resolveDatePreset,
@@ -113,6 +113,8 @@ export interface RegisterRow {
   status: string;
   formSubmitted: boolean;
   approved: boolean;
+  /** The case has a live schedule. A fact, not a checkbox — see the Sched. column. */
+  scheduled: boolean;
 
   // ── What the generated schedule says about this row ──────────────────────────
   /** The live instalment falling due today, or null when the schedule plans nothing for today. */
@@ -148,6 +150,7 @@ const cell =
 
 function SortTh({
   label,
+  hint,
   col,
   sortKey,
   sortDir,
@@ -156,6 +159,14 @@ function SortTh({
   className,
 }: {
   label: string;
+  /**
+   * What this column is for, on hover.
+   *
+   * Headings on this sheet are abbreviated to four or five characters because fourteen of them
+   * have to fit across a branch monitor, and an abbreviation only reads to whoever chose it.
+   * The sort control keeps its own tooltip when there is nothing better to say.
+   */
+  hint?: string;
   col: SortKey;
   sortKey: SortKey;
   sortDir: 'asc' | 'desc';
@@ -165,7 +176,7 @@ function SortTh({
 }) {
   const active = sortKey === col;
   return (
-    <th className={cn(th, right && num, className)}>
+    <th className={cn(th, right && num, className)} title={hint}>
       <button
         type="button"
         onClick={() => onSort(col)}
@@ -357,6 +368,7 @@ const TENDER_LABEL: Record<Tender, string> = {
 function DayMark({
   state,
   instalmentId,
+  onlineDuePaise,
   disabled,
   busy,
   onTaken,
@@ -364,12 +376,35 @@ function DayMark({
 }: {
   state: DayState;
   instalmentId: string | null;
+  /** How much of today is planned to go out online. Decides whether ✓ needs a UTR first. */
+  onlineDuePaise: bigint;
   disabled: boolean;
   busy: boolean;
-  onTaken: (instalmentId: string, tender: Tender) => void;
+  onTaken: (instalmentId: string, tender: Tender, reference: string | null) => void;
   onNotTaken: (instalmentId: string, clear: boolean) => void;
 }) {
   const [menu, setMenu] = useState(false);
+  const [utr, setUtr] = useState<Tender | null>(null);
+  const [ref, setRef] = useState('');
+
+  /**
+   * A transfer cannot be recorded without its UTR — INV-4, and the bank's own rule.
+   *
+   * So ✓ is one click on a cash day and two steps on a day with an online leg, which is the
+   * honest shape of the work rather than a shortcut that the server would refuse. "All cash"
+   * skips it because there is then nothing to reference.
+   */
+  const needsRef = (t: Tender) => (t === 'CASH' ? false : t === 'ONLINE' || onlineDuePaise > 0n);
+
+  const go = (t: Tender) => {
+    if (!instalmentId) return;
+    if (needsRef(t)) {
+      setUtr(t);
+      setRef('');
+      return;
+    }
+    onTaken(instalmentId, t, null);
+  };
 
   if (state === 'none' || !instalmentId) {
     return (
@@ -383,7 +418,7 @@ function DayMark({
     return (
       <span
         className={cn(
-          'inline-flex h-6 w-full items-center justify-center gap-1 rounded-[6px] text-[0.65rem] font-medium',
+          'inline-flex h-6 w-full items-center justify-center gap-1 whitespace-nowrap rounded-[6px] text-[0.65rem] font-medium',
           DAY_PILL.taken,
         )}
         title={`${DAY_STATE_LABEL.taken} — reverse it on the case page if this was wrong`}
@@ -402,7 +437,7 @@ function DayMark({
         onClick={() => onNotTaken(instalmentId, true)}
         title={`${DAY_STATE_LABEL.missed} — click to undo`}
         className={cn(
-          'inline-flex h-6 w-full items-center justify-center gap-1 rounded-[6px] text-[0.65rem] font-medium disabled:cursor-not-allowed disabled:opacity-70',
+          'inline-flex h-6 w-full items-center justify-center gap-0.5 whitespace-nowrap rounded-[6px] px-1 text-[0.62rem] font-medium disabled:cursor-not-allowed disabled:opacity-70',
           DAY_PILL.missed,
         )}
       >
@@ -418,11 +453,12 @@ function DayMark({
       <button
         type="button"
         disabled={disabled || busy}
-        onClick={() => onTaken(instalmentId, 'SPLIT')}
+        onClick={() => go('SPLIT')}
         title={
-          state === 'partial'
+          (state === 'partial'
             ? 'Taken — records the rest of today’s planned amount'
-            : 'Taken — records today’s planned amount in full'
+            : 'Taken — records today’s planned amount in full') +
+          (onlineDuePaise > 0n ? '. Part of it goes out online, so it needs a UTR.' : '')
         }
         className="inline-flex h-6 flex-1 items-center justify-center rounded-[6px] bg-[var(--row-taken)] text-[var(--row-taken-fg)] transition-colors hover:bg-[var(--row-taken-strong)] disabled:cursor-not-allowed disabled:opacity-50"
       >
@@ -461,12 +497,58 @@ function DayMark({
               className="rounded-[6px] px-2 py-1 text-left text-[0.7rem] hover:bg-[var(--glass-bg-strong)]"
               onClick={() => {
                 setMenu(false);
-                onTaken(instalmentId, t);
+                go(t);
               }}
             >
               {TENDER_LABEL[t]}
             </button>
           ))}
+        </div>
+      </Popover>
+
+      {/* The reference step. Enter commits, Escape backs out — this is a counter, not a form. */}
+      <Popover open={utr !== null} label="Transaction reference" width="w-56">
+        <div className="flex flex-col gap-1.5">
+          <p className="text-[0.7rem] text-[var(--muted-fg)]">
+            UTR / NEFT / IMPS reference for the online part.
+          </p>
+          <input
+            autoFocus
+            value={ref}
+            onChange={(e) => setRef(e.target.value)}
+            placeholder="e.g. UTR123456789"
+            className={cell}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setUtr(null);
+              if (e.key === 'Enter' && ref.trim() && instalmentId) {
+                const t = utr ?? 'SPLIT';
+                setUtr(null);
+                onTaken(instalmentId, t, ref.trim());
+              }
+            }}
+          />
+          <div className="flex justify-end gap-1">
+            <button
+              type="button"
+              className="rounded-[6px] px-2 py-1 text-[0.7rem] text-[var(--muted-fg)] hover:bg-[var(--glass-bg-strong)]"
+              onClick={() => setUtr(null)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!ref.trim()}
+              className="rounded-[6px] bg-[var(--row-taken-strong)] px-2 py-1 text-[0.7rem] font-medium text-[var(--row-taken-fg)] disabled:opacity-50"
+              onClick={() => {
+                if (!ref.trim() || !instalmentId) return;
+                const t = utr ?? 'SPLIT';
+                setUtr(null);
+                onTaken(instalmentId, t, ref.trim());
+              }}
+            >
+              Taken
+            </button>
+          </div>
         </div>
       </Popover>
     </div>
@@ -757,7 +839,6 @@ export function RegisterSheet(props: {
   paidTodayPaise: string;
   canEdit: boolean;
   canPay: boolean;
-  canApprove: boolean;
   canSubmit: boolean;
   canImport: boolean;
   canCreate: boolean;
@@ -773,7 +854,11 @@ export function RegisterSheet(props: {
 }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [tab, setTab] = useState<Tab>(props.canPay && !props.canApprove ? 'due' : props.canApprove ? 'pending' : 'today');
+  /*
+    Whoever records payouts opens on the work: who is expected at the counter today. Everybody
+    else opens on the live book. Nothing keys off approval any more — there is no approval.
+  */
+  const [tab, setTab] = useState<Tab>(props.canPay ? 'due' : 'today');
   const [extraMode, setExtraMode] = useState<ExtraMode>('today');
   const [agentId, setAgentId] = useState('');
   const [range, setRange] = useState<DateRange>(EMPTY_RANGE);
@@ -793,7 +878,7 @@ export function RegisterSheet(props: {
   const [onlinePlan, setOnlinePlan] = useState(rupeesStr(BigInt(props.plannedOnlinePaise)));
   const [draft, setDraft] = useState<Record<string, Partial<Record<string, string>>>>({});
   const initialSort = autoSortFor(
-    props.canPay && !props.canApprove ? 'due' : props.canApprove ? 'pending' : 'today',
+    props.canPay ? 'due' : 'today',
     '',
     'payment',
   );
@@ -849,7 +934,7 @@ export function RegisterSheet(props: {
    * answer, so budgeting for it is the only way out of the circle, and the cost when nothing
    * overflows is a little slack.
    */
-  const reservedRem = REGISTER_GUTTER_REM + (props.canPay ? 5.5 : 0) + 2.5;
+  const reservedRem = REGISTER_GUTTER_REM + 6.5 + 2.5;
   const fit = useMemo(
     () => columnsThatFit(visCols, gridWidth, reservedRem),
     [visCols, gridWidth, reservedRem],
@@ -924,7 +1009,7 @@ export function RegisterSheet(props: {
           c = Number(a.formSubmitted) - Number(b.formSubmitted);
           break;
         case 'approved':
-          c = Number(a.approved) - Number(b.approved);
+          c = Number(a.scheduled) - Number(b.scheduled);
           break;
         case 'account':
           c = cmpStr(a.accountNumber ?? '', b.accountNumber ?? '');
@@ -992,11 +1077,13 @@ export function RegisterSheet(props: {
     let list: readonly RegisterRow[] = props.rows;
     // No role-specific row filter here. A cashier used to be shown approved rows only, which
     // emptied the whole sheet whenever nothing had been approved yet — the register is the
-    // branch's book and everyone reads all of it. Paying is still gated on `r.approved` at the
-    // row's own Pay control, so seeing an unapproved row does not make it payable.
-    if (tab === 'pending') list = list.filter((r) => !r.approved);
+    // branch's book and everyone reads all of it. Marking a day is still gated on the row
+    // having a live instalment, so seeing an unscheduled row does not make it payable.
+    if (tab === 'pending') list = list.filter((r) => !r.scheduled);
     if (tab === 'today') list = list.filter((r) => BigInt(r.remainingPaise) > 0n);
-    if (tab === 'due') list = list.filter(isDueToday);
+    // The whole of today's work, including the rows already answered for — see isOnTodaysList.
+    // The cash figure in the header still sums only what is left to find.
+    if (tab === 'due') list = list.filter(isOnTodaysList);
     // Everyone who did not withdraw on a day they were due. Note this is a *view* of the same
     // rows, not a second list: the user's rule is that a missed payment is never removed from
     // the twelve-day sheet, only coloured. This tab is the shortcut to them, not their home.
@@ -1206,10 +1293,10 @@ export function RegisterSheet(props: {
    */
   const [marking, setMarking] = useState<Record<string, boolean>>({});
 
-  async function onTaken(instalmentId: string, tender: Tender) {
+  async function onTaken(instalmentId: string, tender: Tender, reference: string | null) {
     if (marking[instalmentId]) return;
     setMarking((m) => ({ ...m, [instalmentId]: true }));
-    const r = await markTakenAction(instalmentId, tender);
+    const r = await markTakenAction(instalmentId, tender, reference);
     setMarking((m) => ({ ...m, [instalmentId]: false }));
     if (!r.ok) toast.error(r.error);
     else {
@@ -2347,21 +2434,7 @@ export function RegisterSheet(props: {
             </Button>
           )}
 
-          {props.canApprove && !locked && (
-            <Button
-              className="shrink-0"
-              variant="ghost"
-              size="sm"
-              loading={busy === 'bulk-appr'}
-              onClick={() =>
-                void runBulkAction('bulk-appr', 'approved', () => bulkSetApprovedAction(selIds, true))
-              }
-              title="Approve every selected row"
-            >
-              <CheckCheck className="h-3.5 w-3.5" />
-              Approve
-            </Button>
-          )}
+
 
           {props.canEdit && !locked && props.agents.length > 0 && (
             <div className="relative shrink-0">
@@ -2500,14 +2573,31 @@ export function RegisterSheet(props: {
                     }
                   />
                 </th>
-                {/* Both columns render for every role. Whether the tick *moves* is a separate
+                {/* Every column renders for every role. Whether its control *moves* is a separate
                     question, answered per row below — hiding the column hid the data with it. */}
-                <SortTh label="Form" col="formTick" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-10 print:hidden" />
-                <SortTh label="Appr." col="approved" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-10 print:hidden" />
+                <SortTh
+                  label="Form"
+                  hint="The agent has handed the maturity form in. Ticking it submits the row, and the system builds its schedule."
+                  col="formTick"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  className="w-10 print:hidden"
+                />
+                <SortTh
+                  label="Sched."
+                  hint="The system has built this case a day-by-day payout plan. Reported, not set — submitting the row is what makes it true."
+                  col="approved"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  className="w-12 print:hidden"
+                />
                 {shownCols.map((c) => (
                   <SortTh
                     key={c.id}
                     label={c.label}
+                    hint={c.hint}
                     col={c.id}
                     sortKey={sortKey}
                     sortDir={sortDir}
@@ -2517,10 +2607,21 @@ export function RegisterSheet(props: {
                   />
                 ))}
                 {hasExtras && <th className={cn(th, 'w-9 print:hidden')} aria-label="More columns" />}
-                {/* Not "Given" — the question is whether the customer came, not how it was handed over. */}
-                {props.canPay && (
-                  <SortTh label="Taken?" col="given" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-[5.5rem] print:hidden" />
-                )}
+                {/*
+                  Not "Given" — the question is whether the customer came, not how it was handed
+                  over. Rendered for every role, including the ones that cannot answer it: this
+                  is the column that puts a word next to the green and the red, and a role that
+                  saw the colours without it would be looking at a sheet nobody had explained.
+                */}
+                <SortTh
+                  label="Taken?"
+                  hint="Did the customer withdraw today's amount? Green means they did, red means they did not — and still being owed it, they stay on the list."
+                  col="given"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  className="w-[6.5rem] print:hidden"
+                />
               </tr>
             </thead>
             <tbody>
@@ -2619,18 +2720,26 @@ export function RegisterSheet(props: {
                         }}
                       />
                     </td>
-                    <td className={cn(td, 'print:hidden')}>
-                      <input
-                        type="checkbox"
-                        disabled={locked || !props.canApprove}
-                        checked={r.approved}
-                        title={props.canApprove ? undefined : 'Read-only'}
-                        onChange={async (e) => {
-                          const res = await toggleApprovedAction(r.id, e.target.checked);
-                          if (!res.ok) toast.error(res.error);
-                          else router.refresh();
-                        }}
-                      />
+                    {/*
+                      Reported, never set. This was a checkbox wired to `toggleApprovedAction`,
+                      which flipped the case to APPROVED without generating anything — under
+                      auto-scheduling that produced a row that looked live forever with nothing
+                      due on it. A schedule is made by submitting the row, and by nothing else.
+                    */}
+                    <td className={cn(td, 'print:hidden text-center')}>
+                      {r.scheduled ? (
+                        <CalendarCheck
+                          className="mx-auto h-3.5 w-3.5 text-[var(--row-taken-edge)]"
+                          aria-label="Scheduled"
+                        />
+                      ) : (
+                        <span
+                          className="text-[0.65rem] text-[var(--faint-fg)]"
+                          title="No schedule yet — tick Form in and the system builds one"
+                        >
+                          &mdash;
+                        </span>
+                      )}
                     </td>
                     {shownCols.map((c) => (
                       <td key={c.id} className={cn(td, c.right && num)}>
@@ -2824,18 +2933,17 @@ export function RegisterSheet(props: {
                           ))}
                       </td>
                     ))}
-                    {props.canPay && (
-                      <td className={cn(td, 'print:hidden')}>
-                        <DayMark
-                          state={dayState}
-                          instalmentId={r.todayInstalmentId}
-                          disabled={locked || !props.canPay}
-                          busy={Boolean(r.todayInstalmentId && marking[r.todayInstalmentId])}
-                          onTaken={(id, t) => void onTaken(id, t)}
-                          onNotTaken={(id, clear) => void onNotTaken(id, clear)}
-                        />
-                      </td>
-                    )}
+                    <td className={cn(td, 'print:hidden')}>
+                      <DayMark
+                        state={dayState}
+                        instalmentId={r.todayInstalmentId}
+                        onlineDuePaise={recOnline}
+                        disabled={locked || !props.canPay}
+                        busy={Boolean(r.todayInstalmentId && marking[r.todayInstalmentId])}
+                        onTaken={(id, t, reference) => void onTaken(id, t, reference)}
+                        onNotTaken={(id, clear) => void onNotTaken(id, clear)}
+                      />
+                    </td>
                     {hasExtras && (
                       <td className={cn(td, 'print:hidden')}>
                         <button

@@ -87,7 +87,6 @@ export default async function MaturitiesPage() {
             paidTodayPaise={desk.paidTodayPaise.toString()}
             canEdit={canType}
             canPay={canOnSheet('payout.record')}
-            canApprove={canOnSheet('case.approve')}
             canSubmit={canOnSheet('case.submit')}
             canImport={canOnSheet('data.import')}
             canCreate={canOnSheet('case.create')}
@@ -123,6 +122,12 @@ export default async function MaturitiesPage() {
                   Boolean(r.submittedAt) ||
                   ['SUBMITTED', 'APPROVED', 'IN_PROGRESS', 'COMPLETED'].includes(r.status),
                 approved: ['APPROVED', 'IN_PROGRESS', 'COMPLETED', 'ON_HOLD'].includes(r.status),
+                /*
+                  "Scheduled" is a fact about the case, read off the instalment table, not a box
+                  anybody ticks. Approval is gone (ADR-0005): submitting a row generates its
+                  schedule, and that is the only thing that can make this true.
+                */
+                scheduled: r.liveInstalmentCount > 0,
                 todayInstalmentId: r.todayInstalmentId,
                 todayDuePaise: r.todayDuePaise,
                 todayPaidTakenPaise: r.todayPaidPaise,

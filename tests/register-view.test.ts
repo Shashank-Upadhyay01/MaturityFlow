@@ -10,6 +10,7 @@ import {
   endOfMonth,
   groupIndian,
   isDueToday,
+  isOnTodaysList,
   isTodayButUnset,
   nextDay,
   prevDay,
@@ -535,5 +536,57 @@ describe('summariseDueToday, once the schedule exists', () => {
     );
     expect(s.total).toBe(0n);
     expect(s.count).toBe(0);
+  });
+});
+
+describe("isOnTodaysList — the day's worklist, not just what is still owed", () => {
+  function sched(over: Record<string, unknown> = {}) {
+    return {
+      ...full({ remainingPaise: '50000000' }),
+      todayInstalmentId: 'inst_1',
+      todayDuePaise: '2500000',
+      todayPaidTakenPaise: '0',
+      todayStatus: 'PENDING',
+      overdueCount: 0,
+      ...over,
+    };
+  }
+
+  it('keeps a row on the list after the customer has taken it', () => {
+    // The whole point of the green tint is that the clerk sees it. A row that vanished the
+    // moment it was marked would never be green on the screen anybody is looking at.
+    const r = sched({ todayStatus: 'PAID', todayPaidTakenPaise: '2500000' });
+    expect(isDueToday(r)).toBe(false); // nothing left to fund
+    expect(isOnTodaysList(r)).toBe(true); // still today's work
+  });
+
+  it('keeps a row on the list after it is marked not taken', () => {
+    expect(isOnTodaysList(sched({ todayStatus: 'MISSED' }))).toBe(true);
+  });
+
+  it('includes an unscheduled row that has money marked against today', () => {
+    expect(
+      isOnTodaysList({
+        ...full({ todayPaise: '3000000', remainingPaise: '50000000' }),
+        todayInstalmentId: null,
+        todayDuePaise: '0',
+        todayPaidTakenPaise: '0',
+        todayStatus: null,
+        overdueCount: 0,
+      }),
+    ).toBe(true);
+  });
+
+  it('leaves out a day the schedule skips', () => {
+    expect(
+      isOnTodaysList({
+        ...full({ todayPaise: '0', remainingPaise: '50000000' }),
+        todayInstalmentId: null,
+        todayDuePaise: '0',
+        todayPaidTakenPaise: '0',
+        todayStatus: null,
+        overdueCount: 0,
+      }),
+    ).toBe(false);
   });
 });

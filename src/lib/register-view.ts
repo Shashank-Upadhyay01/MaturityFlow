@@ -212,6 +212,24 @@ export function todayPlannedSplit(r: TodaySplitRow): { total: bigint; cash: bigi
   return { total, cash: BigInt(r.todayCashPaise), online: BigInt(r.todayOnlinePaise) };
 }
 
+/**
+ * Everything the counter has to deal with today — answered or not.
+ *
+ * Deliberately NOT the same question as `isDueToday`, and the difference matters. `isDueToday`
+ * asks "is there money still to find for this row", which is what the branch funds its drawer
+ * on, so a row drops out of it the moment the customer has been paid. That is right for a
+ * total and wrong for a list: a row that vanished as soon as it was marked would mean the green
+ * tint never appeared on the screen anybody was looking at, and a clerk working down the page
+ * would watch their own work disappear instead of accumulate.
+ *
+ * So the Due today TAB shows this, and the Due today FIGURE sums `isDueToday`. One is the work,
+ * the other is the cash.
+ */
+export function isOnTodaysList(r: TodayFigureRow & DayStateRow): boolean {
+  if (r.todayInstalmentId) return true;
+  return isDueToday(r);
+}
+
 export interface DueSummary {
   count: number;
   total: bigint;

@@ -25,7 +25,6 @@ import {
   createBlankRegisterRows,
   reopenDay,
   requestCloseDay,
-  setApproved,
   setDayCash,
   setFormSubmitted,
   setTodayAmount,
@@ -228,19 +227,15 @@ export async function toggleFormSubmittedAction(caseId: string, submitted: boole
   }
 }
 
-export async function toggleApprovedAction(caseId: string, approved: boolean): Promise<ActionResult> {
-  try {
-    const { session, actor } = await requireActor();
-    const c = await scope(caseId);
-    if (!c) return fail('Row not found', 'NOT_FOUND');
-    assertCan(actor, 'case.approve', c);
-    await setApproved(session, caseId, approved);
-    revalidate();
-    return ok();
-  } catch (e) {
-    return toActionError(e);
-  }
-}
+/*
+ * `toggleApprovedAction` lived here, with `bulkSetApprovedAction` below it.
+ *
+ * Both flipped a case to APPROVED without generating anything. Under auto-scheduling that
+ * produced a row the register showed as live forever with nothing ever due on it, and the
+ * un-tick left any instalments already generated stranded behind a SUBMITTED status. A schedule
+ * is made by submitting the row — `submitCase()` — and by nothing else. The Sched. column
+ * reports the result; it does not set it.
+ */
 
 /**
  * "Taken" — the customer withdrew today's scheduled amount in full.
@@ -252,13 +247,14 @@ export async function toggleApprovedAction(caseId: string, approved: boolean): P
 export async function markTakenAction(
   instalmentId: string,
   tender: Tender = 'SPLIT',
+  reference: string | null = null,
 ): Promise<ActionResult> {
   try {
     const { session, actor } = await requireActor();
     const c = await scopeByInstalment(instalmentId);
     if (!c) return fail('Row not found', 'NOT_FOUND');
     assertCan(actor, 'payout.record', c);
-    await markInstalmentTaken(session, instalmentId, tender);
+    await markInstalmentTaken(session, instalmentId, tender, reference);
     revalidate();
     return ok();
   } catch (e) {
@@ -432,29 +428,7 @@ export async function bulkSetFormSubmittedAction(
   }
 }
 
-/** Approve or un-approve the ticked rows. */
-export async function bulkSetApprovedAction(
-  caseIds: string[],
-  approved: boolean,
-): Promise<ActionResult<BulkOutcome>> {
-  try {
-    const { session, actor, ids, refs } = await openBulk(caseIds);
-    const outcome = await runBulk(ids, refs, async (id, ref) => {
-      assertCan(actor, 'case.approve', ref);
-      await setApproved(session, id, approved);
-    });
-    return bulkResult(outcome);
-  } catch (e) {
-    return bulkFailure(e);
-  }
-}
-
-/**
- * Move the ticked rows to one agent.
- *
- * Routed through `updateRegisterRow` so it behaves exactly like typing the agent's name into the
- * cell — same matching, same audit line, and the customer record follows the case.
- */
+/** Put every ticked row under one agent. */
 export async function bulkAssignAgentAction(
   caseIds: string[],
   agentName: string,
