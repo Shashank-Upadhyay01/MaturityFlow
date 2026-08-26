@@ -3,6 +3,7 @@ import { addDays, daysBetween, isWorkingDay, makeCalendar } from '../src/lib/wor
 import {
   AUTO_APPROVAL_CALENDAR_DAYS,
   firstPayoutOn,
+  scheduleAnchorFor,
   LARGE_CASE_THRESHOLD_PAISE,
   PROCESSING_WORKING_DAYS,
   PayoutPolicyError,
@@ -135,5 +136,46 @@ describe('auto-approval: when the first payout lands', () => {
 
   it('rejects a date it cannot read', () => {
     expect(() => firstPayoutOn('not-a-date', cal)).toThrow();
+  });
+});
+
+describe('scheduleAnchorFor', () => {
+  const cal = makeCalendar();
+
+  it('is the ordinary first-payout date when the maturity is in the future', () => {
+    // Maturity 20 Sept 2026, today 1 Sept -> 23 Sept, an ordinary Wednesday.
+    expect(scheduleAnchorFor('2026-09-20', '2026-09-01', cal)).toBe('2026-09-23');
+  });
+
+  it('never schedules into the past', () => {
+    // Matured June 2024 and never paid. It starts now, not in 2024.
+    const anchor = scheduleAnchorFor('2024-06-22', '2026-09-10', cal);
+    expect(anchor >= '2026-09-10').toBe(true);
+    expect(anchor).toBe('2026-09-10'); // a Thursday, already open
+  });
+
+  it('rolls a today that is itself closed', () => {
+    // Today is Sun 6 Sept 2026; a long-matured case starts Mon 7th.
+    expect(scheduleAnchorFor('2024-06-22', '2026-09-06', cal)).toBe('2026-09-07');
+    // Today is 1 Sept, inside the month-start cooldown -> 4 Sept.
+    expect(scheduleAnchorFor('2024-06-22', '2026-09-01', cal)).toBe('2026-09-04');
+  });
+
+  it('keeps the three-day promise for a maturity that is only just past', () => {
+    // Matured yesterday: the customer is still owed their three days.
+    expect(scheduleAnchorFor('2026-09-09', '2026-09-10', cal)).toBe('2026-09-14');
+  });
+
+  it('always lands on an open day, and never before today', () => {
+    for (let i = 0; i < 400; i += 11) {
+      const maturity = addDays('2024-01-01', i);
+      const anchor = scheduleAnchorFor(maturity, '2026-09-10', cal);
+      expect(isWorkingDay(anchor, cal)).toBe(true);
+      expect(anchor >= '2026-09-10').toBe(true);
+    }
+  });
+
+  it('rejects a date it cannot read', () => {
+    expect(() => scheduleAnchorFor('not-a-date', '2026-09-10', cal)).toThrow();
   });
 });

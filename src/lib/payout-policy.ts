@@ -76,6 +76,29 @@ export function firstPayoutOn(maturityDate: ISODate, calendar: WorkingDayCalenda
   return nextWorkingDay(addDays(maturityDate, AUTO_APPROVAL_CALENDAR_DAYS), calendar);
 }
 
+/**
+ * The day a case's schedule actually starts.
+ *
+ * `firstPayoutOn` answers "three days after maturity", which is the right answer only while the
+ * maturity is still ahead of us. The live register carries cases that matured as long ago as 2024
+ * and were never paid; anchoring those on their own maturity date would generate a schedule that
+ * was overdue the moment it was written, with a deadline in the past and every instalment already
+ * missed. So the anchor is the later of the promised date and today, rolled onto an open day.
+ *
+ * Pure: "today" is a parameter, never `Date.now()`. That is what lets the browser preview and the
+ * server-persisted schedule agree.
+ */
+export function scheduleAnchorFor(
+  maturityDate: ISODate,
+  today: ISODate,
+  calendar: WorkingDayCalendar,
+): ISODate {
+  const promised = firstPayoutOn(maturityDate, calendar);
+  // `nextWorkingDay` returns its argument untouched when that day is already open, so a case whose
+  // promised date has passed starts today when today is open and on the next open day when it is not.
+  return promised >= today ? promised : nextWorkingDay(today, calendar);
+}
+
 export interface PayoutPlan {
   cadence: Cadence;
   /** Working days after approval with no payout. */
