@@ -98,8 +98,10 @@ These are enforced in code and in the database. Do not weaken them.
    2024 and a schedule generated into the past is overdue before it exists. `formSubmittedOn` is
    when the agent handed the form in and is not an anchor. `approvedOn` survives as the column
    holding that anchor and as the SLA clock's start; `approvedById IS NULL` marks a case the
-   system scheduled rather than a person approved. **There is no approval step and no Ops Head** —
-   `submitCase()` schedules, and `createCase({ submitNow: true })` goes through the same helper.
+   system scheduled rather than a person approved. **Operations review is an acknowledgement,
+   never a payment gate**: `opsReviewedOn` / `opsReviewedById` record the human Day-3 check, while
+   an empty value is derived into the Maturities “Not reviewed” list and payment still progresses
+   automatically. `submitCase()` schedules, and `createCase({ submitNow: true })` goes through the same helper.
    See `docs/adr/0005-schedule-anchored-to-maturity.md`.
 7. **Any writer to a case's instalments or transactions must take the CASE row lock FIRST,
    then re-read the row it is about to change with `.for('update')`.** Lock order is always

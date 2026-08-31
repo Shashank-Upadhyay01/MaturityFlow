@@ -356,6 +356,14 @@ export const maturityCases = pgTable(
     paymentOn: date('payment_on', { mode: 'string' }),
     submittedAt: timestamp('submitted_at', { withTimezone: true }),
 
+    /**
+     * Human acknowledgement by Operations. This never gates or anchors the payout schedule:
+     * an empty value means the automatic day-three progression was not acknowledged by staff.
+     */
+    opsReviewedOn: date('ops_reviewed_on', { mode: 'string' }),
+    opsReviewedAt: timestamp('ops_reviewed_at', { withTimezone: true }),
+    opsReviewedById: text('ops_reviewed_by_id').references(() => users.id, { onDelete: 'set null' }),
+
     /** THE anchor. Schedule and SLA clock both start here. */
     approvedOn: date('approved_on', { mode: 'string' }),
     approvedAt: timestamp('approved_at', { withTimezone: true }),
@@ -415,6 +423,7 @@ export const maturityCases = pgTable(
     index('cases_status_idx').on(t.status),
     index('cases_approved_on_idx').on(t.approvedOn),
     index('cases_submitted_on_idx').on(t.formSubmittedOn),
+    index('cases_ops_reviewed_on_idx').on(t.opsReviewedOn),
     index('cases_deadline_idx').on(t.deadlineOn),
     index('cases_customer_idx').on(t.customerId),
     // INV-1 / sanity

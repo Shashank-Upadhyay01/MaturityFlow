@@ -22,6 +22,9 @@ export const REGISTER_COL_IDS = [
   'online',
   'days',
   'perDay',
+  'paidToday',
+  'paidCashToday',
+  'paidOnlineToday',
   'paymentDate',
   'formDate',
   'maturityDate',
@@ -65,11 +68,11 @@ export interface RegisterColDef {
 
 export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
   account: {
-    id: 'account', label: 'A/c no.', excel: 'Savings Account Number', w: 'w-[6.25rem]', priority: 3,
+    id: 'account', label: 'A/c no.', excel: 'Savings Account Number', w: 'w-[5.5rem]', priority: 3,
     hint: 'The customer\u2019s savings account number \u2014 what the payout is checked against.',
   },
   customer: {
-    id: 'customer', label: 'Customer', excel: 'Customer Name', required: true, w: 'w-[9.75rem]', priority: 1,
+    id: 'customer', label: 'Customer', excel: 'Customer Name', required: true, w: 'w-[8.2rem]', priority: 1,
     hint: 'Who the money belongs to. Never dropped, however narrow the screen.',
   },
   maturityDate: {
@@ -77,15 +80,15 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
     hint: 'The day the deposit matured. Everything else hangs off this: payouts start three calendar days later.',
   },
   formDate: {
-    id: 'formDate', label: 'Form in', excel: 'Form Submission Date', required: true, w: 'w-[5.25rem]', priority: 4,
+    id: 'formDate', label: 'Form in', excel: 'Form Submission Date', w: 'w-[5.25rem]', priority: 4,
     hint: 'The day the agent handed the form in. A record, not a deadline \u2014 it does not move the schedule.',
   },
   paymentDate: {
-    id: 'paymentDate', label: 'Payment', excel: 'Payment Date', w: 'w-[5.25rem]', priority: 4,
+    id: 'paymentDate', label: 'Payment', excel: 'Payment Date', w: 'w-[5.2rem]', priority: 1,
     hint: 'The first day of this case\u2019s payout window.',
   },
   amount: {
-    id: 'amount', label: 'Amount', excel: 'Maturity Amount', right: true, required: true, w: 'w-[5.75rem]', priority: 2,
+    id: 'amount', label: 'Amount', excel: 'Maturity Amount', right: true, required: true, w: 'w-[5.2rem]', priority: 1,
     hint: 'The full maturity amount owed to the customer.',
   },
   paid: {
@@ -93,11 +96,11 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
     hint: 'How much has gone out so far, cash and online together.',
   },
   remaining: {
-    id: 'remaining', label: 'Remaining', excel: 'Remaining Amount', right: true, w: 'w-[6rem]', priority: 1,
+    id: 'remaining', label: 'Due payment', excel: 'Remaining Amount', right: true, required: true, w: 'w-[5.4rem]', priority: 1,
     hint: 'Amount minus paid \u2014 what the bank still owes this customer.',
   },
   agent: {
-    id: 'agent', label: 'Agent', excel: "Customer's Agent Name", w: 'w-[8rem]', priority: 3,
+    id: 'agent', label: 'Agent', excel: "Customer's Agent Name", w: 'w-[6.5rem]', priority: 1,
     hint: 'The agent who brought this customer in.',
   },
   days: {
@@ -105,11 +108,11 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
     hint: 'The TOTAL window in working days \u2014 15 means 3 processing days plus 12 that pay.',
   },
   perDay: {
-    id: 'perDay', label: 'Per day', excel: 'Recommended Per Day', right: true, w: 'w-[5.25rem]', priority: 6,
+    id: 'perDay', label: 'Recommended', excel: 'Recommended Payment', right: true, w: 'w-[6rem]', priority: 1,
     hint: 'Remaining spread over the days that actually pay \u2014 not over the whole window.',
   },
   today: {
-    id: 'today', label: 'Today', excel: "Today's Withdrawalable Amount", right: true, w: 'w-[5.75rem]', priority: 1,
+    id: 'today', label: 'Due today', excel: 'Due Payment', right: true, w: 'w-[5.3rem]', priority: 1,
     hint: 'What the schedule plans to hand over today. Read-only once a case is scheduled \u2014 change it on the Plan board.',
   },
   cash: {
@@ -120,6 +123,18 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
     id: 'online', label: 'Online', excel: 'Today Online', right: true, w: 'w-[5.25rem]', priority: 3,
     hint: 'The transfer half of today\u2019s figure.',
   },
+  paidToday: {
+    id: 'paidToday', label: 'Paid today', excel: 'Paid Today', right: true, w: 'w-[5rem]', priority: 2,
+    hint: 'The amount actually recorded today, cash and online together.',
+  },
+  paidCashToday: {
+    id: 'paidCashToday', label: 'Paid cash', excel: 'Paid in Cash', right: true, w: 'w-[5rem]', priority: 2,
+    hint: 'Cash actually handed over today.',
+  },
+  paidOnlineToday: {
+    id: 'paidOnlineToday', label: 'Paid online', excel: 'Paid Online', right: true, w: 'w-[5rem]', priority: 2,
+    hint: 'Online payment actually recorded today.',
+  },
 };
 
 export interface RegisterLayout {
@@ -128,8 +143,12 @@ export interface RegisterLayout {
 }
 
 export const DEFAULT_REGISTER_LAYOUT: RegisterLayout = {
-  order: [...REGISTER_COL_IDS],
-  hidden: [],
+  order: [
+    'account', 'customer', 'agent', 'amount', 'paymentDate', 'remaining', 'perDay',
+    'paidToday', 'paidCashToday', 'paidOnlineToday',
+    'today', 'paid', 'cash', 'online', 'days', 'formDate', 'maturityDate',
+  ],
+  hidden: ['today', 'paid', 'cash', 'online', 'days', 'formDate', 'maturityDate'],
 };
 
 const ID_SET = new Set<string>(REGISTER_COL_IDS);
@@ -185,7 +204,7 @@ export function colWidthRem(col: RegisterColDef): number {
  * via `reservedRem` — leaving them out of the budget lets the fitted columns fill the table and
  * squeeze the trailing ones to zero width, which is exactly what `table-fixed` will do.
  */
-export const REGISTER_GUTTER_REM = 6.5;
+export const REGISTER_GUTTER_REM = 1.75;
 
 export interface ColumnFit {
   shown: RegisterColDef[];

@@ -28,12 +28,16 @@ export type SortKey =
   | 'today'
   | 'cash'
   | 'online'
+  | 'paidToday'
+  | 'paidCashToday'
+  | 'paidOnlineToday'
   | 'given';
 
 export type RegisterTab = 'due' | 'today' | 'missed' | 'all' | 'pending';
-export type DateField = 'payment' | 'form' | 'maturity';
+export type DateField = 'payout' | 'payment' | 'form' | 'maturity';
 
 export const DATE_FIELD_LABEL: Record<DateField, string> = {
+  payout: 'Payout date',
   payment: 'Payment date',
   form: 'Form in',
   maturity: 'Maturity date',
@@ -56,6 +60,20 @@ export const TAB_HINT: Record<RegisterTab, string> = {
   all: 'Every row in the register, settled or not',
 };
 
+/**
+ * One live instalment, as the sheet receives it. Money is a decimal string of paise so the
+ * client never sees a Number.
+ */
+export interface PayoutDayView {
+  dueOn: string;
+  id: string;
+  amountPaise: string;
+  cashPaise: string;
+  onlinePaise: string;
+  paidPaise: string;
+  status: string;
+}
+
 /** Only what the view rules actually read — so tests need not build a whole row. */
 export interface RegisterViewRow {
   paymentOn: string | null;
@@ -65,12 +83,55 @@ export interface RegisterViewRow {
   todayPaise: string;
   /** Paise, as a decimal string. */
   remainingPaise: string;
+  /** Live instalments. Absent on an unscheduled row. */
+  payoutDays?: PayoutDayView[];
 }
 
 export function rowOnDate(r: RegisterViewRow, field: DateField): string | null {
+  if (field === 'payout') return null;
   if (field === 'payment') return r.paymentOn;
   if (field === 'form') return r.formSubmittedOn;
   return r.instrumentMaturityOn;
+}
+
+export function parsePayoutDays(raw: unknown): PayoutDayView[] {
+  if (raw == null) return [];
+  try {
+    const v = typeof raw === 'string' ? (JSON.parse(raw) as unknown) : raw;
+    if (!Array.isArray(v)) return [];
+    const out: PayoutDayView[] = [];
+    for (const item of v) {
+      if (!item || typeof item !== 'object') continue;
+      const o = item as Record<string, unknown>;
+      const dueOn = typeof o.dueOn === 'string' ? o.dueOn.slice(0, 10) : null;
+      const id = typeof o.id === 'string' ? o.id : null;
+      const amountPaise = o.amountPaise != null ? String(o.amountPaise) : null;
+      if (!dueOn || !id || !amountPaise) continue;
+      out.push({
+        dueOn,
+        id,
+        amountPaise,
+        cashPaise: o.cashPaise != null ? String(o.cashPaise) : '0',
+        onlinePaise: o.onlinePaise != null ? String(o.onlinePaise) : '0',
+        paidPaise: o.paidPaise != null ? String(o.paidPaise) : '0',
+        status: typeof o.status === 'string' ? o.status : 'PENDING',
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+export function payoutOnDate(r: { payoutDays?: PayoutDayView[] }, day: string): PayoutDayView | null {
+  return (r.payoutDays ?? []).find((d) => d.dueOn === day) ?? null;
+}
+
+function leftoverOnDay(d: PayoutDayView): bigint {
+  if (d.status === 'PAID' || d.status === 'SUPERSEDED' || d.status === 'CANCELLED') return 0n;
+  const due = BigInt(d.amountPaise);
+  const paid = BigInt(d.paidPaise);
+  return due > paid ? due - paid : 0n;
 }
 
 /**
@@ -227,6 +288,27 @@ export function todayPlannedSplit(r: TodaySplitRow): { total: bigint; cash: bigi
   return { total, cash: BigInt(r.todayCashPaise), online: BigInt(r.todayOnlinePaise) };
 }
 
+/**
+ * What a row hands over on a chosen payout day.
+ *
+ * Used when the clerk is looking at tomorrow, or the 4th, rather than at the calendar's
+ * today. Absent a day, this is `todayPlannedSplit` so the Taken button and the figure
+ * still read the same source.
+ */
+export function plannedOnDate(
+  r: TodaySplitRow & { payoutDays?: PayoutDayView[] },
+  day: string | null,
+): { total: bigint; cash: bigint; online: bigint } {
+  if (!day) return todayPlannedSplit(r);
+  const inst = payoutOnDate(r, day);
+  if (!inst) return { total: 0n, cash: 0n, online: 0n };
+  const total = leftoverOnDay(inst);
+  if (total === 0n) return { total: 0n, cash: 0n, online: 0n };
+  const planCash = BigInt(inst.cashPaise);
+  const cash = planCash < total ? planCash : total;
+  return { total, cash, online: total - cash };
+}
+
 export type TodayFigureSortKey = 'today' | 'cash' | 'online';
 
 /**
@@ -318,7 +400,9 @@ export function autoSortFor(
   dateField: DateField,
 ): { key: SortKey; dir: 'asc' | 'desc' } {
   if (onDate) {
-    return dateField === 'payment' ? { key: 'today', dir: 'desc' } : { key: 'remaining', dir: 'desc' };
+    return dateField === 'form' || dateField === 'maturity'
+      ? { key: 'remaining', dir: 'desc' }
+      : { key: 'today', dir: 'desc' };
   }
   if (tab === 'due') return { key: 'today', dir: 'desc' };
   if (tab === 'pending') return { key: 'formDate', dir: 'asc' };
@@ -487,13 +571,92 @@ export function isRangeActive(range: DateRange): boolean {
  *
  * ISO dates compare correctly as strings, so no Date objects are built per row.
  */
-export function rowInDateRange(r: RegisterViewRow, field: DateField, range: DateRange): boolean {
-  if (!isRangeActive(range)) return true;
-  const v = rowOnDate(r, field);
-  if (!v) return false;
+function isoInRange(v: string, range: DateRange): boolean {
   if (range.from && v < range.from) return false;
   if (range.to && v > range.to) return false;
   return true;
+}
+
+export function rowInDateRange(r: RegisterViewRow, field: DateField, range: DateRange): boolean {
+  if (!isRangeActive(range)) return true;
+  if (field === 'payout') {
+    const days = r.payoutDays ?? [];
+    if (days.length === 0) return false;
+    return days.some((d) => isoInRange(d.dueOn, range));
+  }
+  const v = rowOnDate(r, field);
+  if (!v) return false;
+  return isoInRange(v, range);
+}
+
+export interface NextPayout {
+  date: string;
+  count: number;
+  totalPaise: bigint;
+}
+
+/**
+ * The next day any live schedule still has money to hand over, on or after `from`.
+ *
+ * This is what the register shows when today is empty: August maturities do not pay on
+ * 31 Aug — they wait for maturity + 3 calendar days, rolled past the month-start close.
+ */
+export function nextPayoutDay(
+  rows: readonly { payoutDays?: PayoutDayView[]; remainingPaise: string }[],
+  from: string,
+): NextPayout | null {
+  const byDate = new Map<string, { count: number; total: bigint }>();
+  for (const r of rows) {
+    if (BigInt(r.remainingPaise) <= 0n) continue;
+    for (const d of r.payoutDays ?? []) {
+      if (d.dueOn < from) continue;
+      const left = leftoverOnDay(d);
+      if (left <= 0n) continue;
+      const cur = byDate.get(d.dueOn) ?? { count: 0, total: 0n };
+      cur.count += 1;
+      cur.total += left;
+      byDate.set(d.dueOn, cur);
+    }
+  }
+  const dates = [...byDate.keys()].sort();
+  if (dates.length === 0) return null;
+  const date = dates[0]!;
+  const s = byDate.get(date)!;
+  return { date, count: s.count, totalPaise: s.total };
+}
+
+export interface AgentDayTotal {
+  agentId: string;
+  agentName: string;
+  count: number;
+  totalPaise: bigint;
+}
+
+/** What each agent must collect on one payout day, largest first. */
+export function summariseAgentsForDay(
+  rows: readonly { agentId: string; agentName: string; payoutDays?: PayoutDayView[] }[],
+  day: string,
+): AgentDayTotal[] {
+  const map = new Map<string, AgentDayTotal>();
+  for (const r of rows) {
+    const inst = payoutOnDate(r, day);
+    if (!inst) continue;
+    const left = leftoverOnDay(inst);
+    if (left <= 0n) continue;
+    const cur = map.get(r.agentId) ?? {
+      agentId: r.agentId,
+      agentName: r.agentName,
+      count: 0,
+      totalPaise: 0n,
+    };
+    cur.count += 1;
+    cur.totalPaise += left;
+    map.set(r.agentId, cur);
+  }
+  return [...map.values()].sort((a, b) => {
+    if (a.totalPaise === b.totalPaise) return a.agentName.localeCompare(b.agentName);
+    return a.totalPaise < b.totalPaise ? 1 : -1;
+  });
 }
 
 // ── Selection ──────────────────────────────────────────────────────────────

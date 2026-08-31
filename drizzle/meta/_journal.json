@@ -57,6 +57,13 @@
       "when": 1788005437874,
       "tag": "0007_vengeful_mephistopheles",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788206581692,
+      "tag": "0008_jittery_kingpin",
+      "breakpoints": true
     }
   ]
 }

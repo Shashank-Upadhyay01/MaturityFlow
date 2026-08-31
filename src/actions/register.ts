@@ -34,6 +34,7 @@ import { fail, ok, toActionError, type ActionResult } from './_result';
 
 function revalidate() {
   revalidatePath('/maturities');
+  revalidatePath('/maturity-operations');
   revalidatePath('/cash-planner');
   revalidatePath('/dashboard');
   revalidatePath('/payouts');
@@ -172,7 +173,12 @@ export async function saveRegisterFieldsAction(
     const { session, actor } = await requireActor();
     const c = await scope(caseId);
     if (!c) return fail('Row not found', 'NOT_FOUND');
-    assertCanTypeRow(actor, c);
+    if (patch.opsReviewedOn !== undefined) {
+      assertCanTypeRegister(actor);
+      assertCan(actor, 'case.approve', c);
+    } else {
+      assertCanTypeRow(actor, c);
+    }
     await updateRegisterRow(session, caseId, patch);
     revalidate();
     return ok();

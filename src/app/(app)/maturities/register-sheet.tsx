@@ -4,7 +4,6 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
-  CalendarCheck,
   CalendarDays,
   Check,
   CheckCheck,
@@ -42,7 +41,6 @@ import {
   requestCloseDayAction,
   saveDayCashAction,
   saveRegisterFieldsAction,
-  toggleFormSubmittedAction,
 } from '@/actions/register';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/field';
@@ -81,6 +79,7 @@ import {
   type DateField,
   type DateRange,
   type RegisterTab,
+  type PayoutDayView,
   type SortKey,
 } from '@/lib/register-view';
 import {
@@ -126,6 +125,10 @@ export interface RegisterRow {
   todayDuePaise: string;
   /** How much of it has actually gone out. */
   todayPaidTakenPaise: string;
+  /** Transactions recorded on the selected working day. */
+  paidTodayActualPaise: string;
+  paidCashTodayPaise: string;
+  paidOnlineTodayPaise: string;
   /** Its status, straight from the database: PENDING · PARTIAL · PAID · MISSED. */
   todayStatus: string | null;
   /** The legs the engine planned for today. */
@@ -135,6 +138,7 @@ export interface RegisterRow {
   overdueCount: number;
   /** What that backlog is worth, in paise. */
   overduePaise: string;
+  payoutDays: PayoutDayView[];
 }
 
 function inr(p: bigint) {
@@ -248,6 +252,10 @@ function CellInput({
         const direction = e.key === 'Enter' ? 'ArrowDown' : e.key;
         if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(direction)) return;
 
+        // Arrow keys belong to the spreadsheet while a cell has focus. Even at an edge there is
+        // nowhere for the page to scroll to and no reason to drop the cell selection.
+        e.preventDefault();
+
         const current = e.currentTarget;
         const table = current.closest('table');
         if (!table) return;
@@ -262,7 +270,6 @@ function CellInput({
         const delta = direction === 'ArrowUp' || direction === 'ArrowLeft' ? -1 : 1;
         const next = peers[at + delta];
         if (!next) return;
-        e.preventDefault();
         next.focus();
         next.select();
       }}
@@ -657,8 +664,6 @@ function BlankRow({
       }}
     >
       <td className={cn(td, 'print:hidden')} />
-      <td className={cn(td, 'print:hidden')} />
-      <td className={cn(td, 'print:hidden')} />
       {cols.map((c) => {
         const typed = COL_PATCH_FIELD[c.id] != null;
         return (
@@ -681,6 +686,8 @@ function BlankRow({
           </td>
         );
       })}
+      <td className={cn(td, 'print:hidden')} />
+      <td className={cn(td, 'print:hidden')} />
       {extrasCol && <td className={cn(td, 'print:hidden')} />}
     </tr>
   );
@@ -919,6 +926,7 @@ export function RegisterSheet(props: {
   const [cashHand, setCashHand] = useState(rupeesStr(BigInt(props.cashInHandPaise)));
   const [onlinePlan, setOnlinePlan] = useState(rupeesStr(BigInt(props.plannedOnlinePaise)));
   const [draft, setDraft] = useState<Record<string, Partial<Record<string, string>>>>({});
+  const restoreFocusRef = useRef<{ row: string; column: string } | null>(null);
   const initialSort = autoSortFor(initialTab, '', 'payment');
   const [sortKey, setSortKey] = useState<SortKey>(initialSort.key);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(initialSort.dir);
@@ -927,6 +935,19 @@ export function RegisterSheet(props: {
   const [addCount, setAddCount] = useState('5');
   const [draftLayout, setDraftLayout] = useState<RegisterLayout>(props.columnLayout);
   const visCols = visibleRegisterCols(props.columnLayout);
+
+  useEffect(() => {
+    const target = restoreFocusRef.current;
+    if (!target) return;
+    restoreFocusRef.current = null;
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLInputElement>(
+        `input[data-register-row="${CSS.escape(target.row)}"][data-register-column="${CSS.escape(target.column)}"]`,
+      );
+      el?.focus({ preventScroll: true });
+      el?.select();
+    });
+  }, [props.rows]);
 
   /**
    * How long the sheet should be, counting the rows that already exist.
@@ -972,7 +993,7 @@ export function RegisterSheet(props: {
    * answer, so budgeting for it is the only way out of the circle, and the cost when nothing
    * overflows is a little slack.
    */
-  const reservedRem = REGISTER_GUTTER_REM + 6.5 + 2.5;
+  const reservedRem = REGISTER_GUTTER_REM + 8 + 2.5;
   const fit = useMemo(
     () => columnsThatFit(visCols, gridWidth, reservedRem),
     [visCols, gridWidth, reservedRem],
@@ -1093,6 +1114,15 @@ export function RegisterSheet(props: {
           break;
         case 'online':
           c = compareTodayFigures(a, b, 'online');
+          break;
+        case 'paidToday':
+          c = cmpBig(asBig(a.paidTodayActualPaise), asBig(b.paidTodayActualPaise));
+          break;
+        case 'paidCashToday':
+          c = cmpBig(asBig(a.paidCashTodayPaise), asBig(b.paidCashTodayPaise));
+          break;
+        case 'paidOnlineToday':
+          c = cmpBig(asBig(a.paidOnlineTodayPaise), asBig(b.paidOnlineTodayPaise));
           break;
         case 'given':
           c = Number(asBig(a.remainingPaise) <= 0n) - Number(asBig(b.remainingPaise) <= 0n);
@@ -1321,7 +1351,16 @@ export function RegisterSheet(props: {
   async function save(id: string, patch: Parameters<typeof saveRegisterFieldsAction>[1]) {
     const r = await saveRegisterFieldsAction(id, patch);
     if (!r.ok) toast.error(r.error);
-    else router.refresh();
+    else {
+      const active = document.activeElement as HTMLInputElement | null;
+      if (active?.dataset.registerRow && active.dataset.registerColumn) {
+        restoreFocusRef.current = {
+          row: active.dataset.registerRow,
+          column: active.dataset.registerColumn,
+        };
+      }
+      router.refresh();
+    }
   }
 
   /**
@@ -1417,6 +1456,12 @@ export function RegisterSheet(props: {
         return inr(BigInt(r.todayCashPaise));
       case 'online':
         return inr(BigInt(r.todayOnlinePaise));
+      case 'paidToday':
+        return inr(BigInt(r.paidTodayActualPaise));
+      case 'paidCashToday':
+        return inr(BigInt(r.paidCashTodayPaise));
+      case 'paidOnlineToday':
+        return inr(BigInt(r.paidOnlineTodayPaise));
     }
   }
 
@@ -1567,7 +1612,13 @@ export function RegisterSheet(props: {
                     <button
                       key={t}
                       type="button"
-                      onClick={() => applyFilter({ tab: t })}
+                      onClick={() =>
+                        applyFilter(
+                          t === 'due'
+                            ? { tab: t, range: EMPTY_RANGE }
+                            : { tab: t },
+                        )
+                      }
                       title={TAB_HINT[t]}
                       className={cn(
                         'inline-flex h-7 items-center gap-1.5 rounded-[8px] px-2 text-[0.8125rem] whitespace-nowrap',
@@ -1815,10 +1866,9 @@ export function RegisterSheet(props: {
               </select>
 
               {/*
-                One control, two shapes. Setting only "from" narrows to a single day — the common
-                case, and what the Today / Tomorrow chips write — while filling both gives a span.
-                The chips and the boxes are the same state, so a preset always shows you the dates
-                it actually applied rather than hiding them behind a label.
+                Picking a from-date with an empty to-date is a single day (to follows from). Fill
+                both boxes for a span. The chips write both ends, so a preset always shows the
+                dates it actually applied rather than hiding them behind a label.
               */}
               <div className="flex items-center gap-1">
                 <input
@@ -1826,7 +1876,12 @@ export function RegisterSheet(props: {
                   className="mf-input !h-7 !w-[7.9rem] !py-1 !text-[0.75rem] !leading-none tabular-nums"
                   value={range.from}
                   max={range.to || undefined}
-                  onChange={(e) => applyFilter({ range: { from: e.target.value, to: range.to } })}
+                  onChange={(e) => {
+                    const from = e.target.value;
+                    // An empty "to" means a single day, which is what picking one date is for.
+                    const wasSingle = !range.to || range.to === range.from;
+                    applyFilter({ range: { from, to: wasSingle ? from : range.to } });
+                  }}
                   aria-label="From date"
                   title="From this date"
                 />
@@ -1838,7 +1893,7 @@ export function RegisterSheet(props: {
                   min={range.from || undefined}
                   onChange={(e) => applyFilter({ range: { from: range.from, to: e.target.value } })}
                   aria-label="To date"
-                  title="To this date — leave empty for a single day"
+                  title="To this date — leave empty to include every later date"
                 />
               </div>
 
@@ -1849,6 +1904,8 @@ export function RegisterSheet(props: {
                     type="button"
                     onClick={() =>
                       applyFilter({
+                        tab: 'all',
+                        dateField: 'payout',
                         range: preset === p ? EMPTY_RANGE : resolveDatePreset(p, props.today),
                       })
                     }
@@ -2615,26 +2672,6 @@ export function RegisterSheet(props: {
                     }
                   />
                 </th>
-                {/* Every column renders for every role. Whether its control *moves* is a separate
-                    question, answered per row below — hiding the column hid the data with it. */}
-                <SortTh
-                  label="Form"
-                  hint="The agent has handed the maturity form in. Ticking it submits the row, and the system builds its schedule."
-                  col="formTick"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  className="w-10 print:hidden"
-                />
-                <SortTh
-                  label="Sched."
-                  hint="The system has built this case a day-by-day payout plan. Reported, not set — submitting the row is what makes it true."
-                  col="approved"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  className="w-12 print:hidden"
-                />
                 {shownCols.map((c) => (
                   <SortTh
                     key={c.id}
@@ -2655,36 +2692,40 @@ export function RegisterSheet(props: {
                   is the column that puts a word next to the green and the red, and a role that
                   saw the colours without it would be looking at a sheet nobody had explained.
                 */}
-                <SortTh
-                  label="Paid today?"
-                  hint="Did the customer receive today's scheduled amount? Green records payment; red records that it remains unpaid."
-                  col="given"
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={toggleSort}
-                  className="w-[6.5rem] print:hidden"
-                />
+                <th className={cn(th, 'w-16 text-center text-[var(--row-taken-fg)] print:hidden')}>Taken</th>
+                <th className={cn(th, 'w-16 text-center text-[var(--row-missed-fg)] print:hidden')}>Not taken</th>
               </tr>
             </thead>
             <tbody>
               {tableRows.length === 0 && (
                 <tr>
                   <td className="px-4 py-10 text-center text-[var(--muted-fg)]" colSpan={18}>
-                    {dateFilterOn || q.trim() || agentId
-                      ? 'No rows match this filter. Clear the date or the search to see the rest.'
-                      : 'No rows. Add a row or import the Excel template.'}
+                    {dateFilterOn
+                      ? `No rows with ${DATE_FIELD_LABEL[dateField].toLowerCase()} ${
+                          range.from && range.from === range.to
+                            ? formatDMY(range.from)
+                            : [range.from ? formatDMY(range.from) : null, range.to ? formatDMY(range.to) : null]
+                                .filter(Boolean)
+                                .join(' – ')
+                        }. Clear the date, or switch the date column.`
+                      : q.trim() || agentId
+                        ? 'No rows match this filter. Clear the search to see the rest.'
+                        : tab === 'due'
+                          ? 'Nothing is due today. Open All to see the rest of the register.'
+                          : tab !== 'all'
+                            ? `No ${TAB_LABEL[tab].toLowerCase()} rows.`
+                            : 'No rows. Add a row or import the Excel template.'}
                   </td>
                 </tr>
               )}
               {tableRows.map((r) => {
-                const remaining = BigInt(r.remainingPaise);
                 const daysN = Math.max(1, Number(d(r.id, 'windowDays', String(r.windowDays))) || 1);
-                const rec = remaining > 0n ? remaining / BigInt(daysN) : 0n;
                 const paidDraft = d(r.id, 'paid', rupeesStr(BigInt(r.paidPaise)));
                 const amtDraft = d(r.id, 'amount', rupeesStr(BigInt(r.maturityPaise)));
                 const paidP = tryParseRupeesToPaise(paidDraft) ?? BigInt(r.paidPaise);
                 const amtP = tryParseRupeesToPaise(amtDraft) ?? BigInt(r.maturityPaise);
                 const liveRemaining = amtP > paidP ? amtP - paidP : 0n;
+                const rec = recommendedPerDay(liveRemaining, amtP, daysN);
                 /*
                   What this row is actually going to hand over today, and how it divides.
 
@@ -2750,41 +2791,6 @@ export function RegisterSheet(props: {
                           toggleRow(r.id, e.target.checked, Boolean(native.shiftKey));
                         }}
                       />
-                    </td>
-                    <td className={cn(td, 'print:hidden')}>
-                      <input
-                        type="checkbox"
-                        disabled={locked || !props.canSubmit}
-                        checked={r.formSubmitted}
-                        aria-label={`${r.formSubmitted ? 'Form submitted' : 'Submit form'} for ${r.customerName}`}
-                        title={props.canSubmit ? undefined : 'Read-only'}
-                        onChange={async (e) => {
-                          const res = await toggleFormSubmittedAction(r.id, e.target.checked);
-                          if (!res.ok) toast.error(res.error);
-                          else router.refresh();
-                        }}
-                      />
-                    </td>
-                    {/*
-                      Reported, never set. This was a checkbox wired to `toggleApprovedAction`,
-                      which flipped the case to APPROVED without generating anything — under
-                      auto-scheduling that produced a row that looked live forever with nothing
-                      due on it. A schedule is made by submitting the row, and by nothing else.
-                    */}
-                    <td className={cn(td, 'print:hidden text-center')}>
-                      {r.scheduled ? (
-                        <CalendarCheck
-                          className="mx-auto h-3.5 w-3.5 text-[var(--row-taken-edge)]"
-                          aria-label="Scheduled"
-                        />
-                      ) : (
-                        <span
-                          className="text-[0.65rem] text-[var(--faint-fg)]"
-                          title="No schedule yet — tick Form in and the system builds one"
-                        >
-                          &mdash;
-                        </span>
-                      )}
                     </td>
                     {shownCols.map((c) => (
                       <td key={c.id} className={cn(td, c.right && num)}>
@@ -3012,9 +3018,12 @@ export function RegisterSheet(props: {
                               }}
                             />
                           ))}
+                        {c.id === 'paidToday' && <span className="font-semibold">{inr(BigInt(r.paidTodayActualPaise))}</span>}
+                        {c.id === 'paidCashToday' && <span>{inr(BigInt(r.paidCashTodayPaise))}</span>}
+                        {c.id === 'paidOnlineToday' && <span>{inr(BigInt(r.paidOnlineTodayPaise))}</span>}
                       </td>
                     ))}
-                    <td className={cn(td, 'print:hidden')}>
+                    <td className={cn(td, 'print:hidden')} colSpan={2}>
                       <DayMark
                         state={dayState}
                         instalmentId={r.todayInstalmentId}
@@ -3051,8 +3060,8 @@ export function RegisterSheet(props: {
                   .filter((r) => openExtras[r.id])
                   .map((r) => (
                     <tr key={`x-${r.id}`} className="border-b border-[var(--hairline)] bg-[var(--glass-bg-subtle)]">
-                      <td colSpan={3} className={cn(td, 'print:hidden')} />
-                      <td colSpan={shownCols.length + (props.canPay ? 2 : 1)} className="px-2 py-1.5">
+                      <td className={cn(td, 'print:hidden')} />
+                      <td colSpan={shownCols.length + 2} className="px-2 py-1.5">
                         <span className="mr-2 text-[0.65rem] font-medium text-[var(--faint-fg)]">
                           {r.customerName || 'This row'}:
                         </span>
@@ -3078,7 +3087,7 @@ export function RegisterSheet(props: {
                   <BlankRow
                     key={`blank-${i}`}
                     cols={shownCols}
-                    extrasCol={hasExtras || props.canPay}
+                    extrasCol={hasExtras}
                     disabled={!props.canEdit || locked || !props.canCreate}
                     onCommit={async (patch) => {
                       const res = await createRegisterRowWithFieldsAction(props.branchId, patch);

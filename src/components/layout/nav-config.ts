@@ -51,11 +51,11 @@ export const NAV: { section: string; items: NavItem[] }[] = [
         description: 'Balance receipts, withdrawals and the physical drawer',
       },
       {
-        href: '/maturities/new',
-        label: 'New maturity',
-        icon: 'plus',
-        permission: 'case.create',
-        description: 'Take one form in, with the live schedule',
+        href: '/maturity-operations',
+        label: 'Maturities',
+        icon: 'inbox',
+        permission: 'case.approve',
+        description: 'Operations review, automatic progression and payout dates',
       },
       {
         href: '/maturity-calendar',

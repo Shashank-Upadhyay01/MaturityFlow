@@ -563,6 +563,33 @@ export async function listRegister(actor: Actor, date = todayISO()) {
        */
       todayCashDuePaise: sql<string>`COALESCE(${todayInst(sql.raw('i.cash_leg_paise::text'))}, '0')`,
       todayOnlineDuePaise: sql<string>`COALESCE(${todayInst(sql.raw('i.online_leg_paise::text'))}, '0')`,
+      paidTodayPaise: sql<string>`COALESCE((
+        SELECT SUM(t.total_paise)::text FROM payout_transactions t
+        WHERE t.case_id = ${CASE_ID} AND t.value_date = ${date} AND t.reversed_at IS NULL
+      ), '0')`,
+      paidTodayCashPaise: sql<string>`COALESCE((
+        SELECT SUM(t.cash_paise)::text FROM payout_transactions t
+        WHERE t.case_id = ${CASE_ID} AND t.value_date = ${date} AND t.reversed_at IS NULL
+      ), '0')`,
+      paidTodayOnlinePaise: sql<string>`COALESCE((
+        SELECT SUM(t.online_paise)::text FROM payout_transactions t
+        WHERE t.case_id = ${CASE_ID} AND t.value_date = ${date} AND t.reversed_at IS NULL
+      ), '0')`,
+      payoutDays: sql<unknown>`COALESCE((
+        SELECT jsonb_agg(
+          jsonb_build_object(
+            'dueOn', i.due_on::text,
+            'id', i.id,
+            'amountPaise', i.amount_paise::text,
+            'cashPaise', i.cash_leg_paise::text,
+            'onlinePaise', i.online_leg_paise::text,
+            'paidPaise', (i.paid_cash_paise + i.paid_online_paise)::text,
+            'status', i.status::text
+          ) ORDER BY i.due_on, i.seq
+        )
+        FROM payout_instalments i
+        WHERE i.case_id = ${CASE_ID} AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
+      ), '[]'::jsonb)`,
       /**
        * Whether this case has a live schedule at all.
        *
@@ -592,6 +619,10 @@ export async function listRegister(actor: Actor, date = todayISO()) {
       instrumentMaturityOn: maturityCases.instrumentMaturityOn,
       formSubmittedOn: maturityCases.formSubmittedOn,
       paymentOn: maturityCases.paymentOn,
+      firstPayoutOn: maturityCases.firstPayoutOn,
+      opsReviewedOn: maturityCases.opsReviewedOn,
+      opsReviewedAt: maturityCases.opsReviewedAt,
+      opsReviewedById: maturityCases.opsReviewedById,
       maturityAmountPaise: maturityCases.maturityAmountPaise,
       paidCashPaise: maturityCases.paidCashPaise,
       paidOnlinePaise: maturityCases.paidOnlinePaise,

@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 
 import { getSession, toActor } from '@/lib/auth/session';
 import { parseRegisterLayout } from '@/lib/register-layout';
+import { parsePayoutDays } from '@/lib/register-view';
 import { activeRole, canTypeRegister, ROLE_SCOPE, roleCan } from '@/lib/rbac';
 import { isAzamgarhHeadBranch } from '@/lib/branch-routing';
 import { toISODateString, todayISO } from '@/lib/working-days';
@@ -92,7 +93,7 @@ export default async function MaturitiesPage() {
                 customerName: r.customerName,
                 instrumentMaturityOn: toISODateString(r.instrumentMaturityOn),
                 formSubmittedOn: toISODateString(r.formSubmittedOn) ?? r.formSubmittedOn,
-                paymentOn: toISODateString(r.paymentOn),
+                paymentOn: toISODateString(r.paymentOn) ?? toISODateString(r.firstPayoutOn),
                 maturityPaise: r.maturityAmountPaise.toString(),
                 paidPaise: paid.toString(),
                 paidCashPaise: r.paidCashPaise.toString(),
@@ -118,11 +119,15 @@ export default async function MaturitiesPage() {
                 todayInstalmentId: r.todayInstalmentId,
                 todayDuePaise: r.todayDuePaise,
                 todayPaidTakenPaise: r.todayPaidPaise,
+                paidTodayActualPaise: r.paidTodayPaise,
+                paidCashTodayPaise: r.paidTodayCashPaise,
+                paidOnlineTodayPaise: r.paidTodayOnlinePaise,
                 todayStatus: r.todayStatus,
                 todayCashDuePaise: r.todayCashDuePaise,
                 todayOnlineDuePaise: r.todayOnlineDuePaise,
                 overdueCount: r.overdueCount,
                 overduePaise: r.overduePaise,
+                payoutDays: parsePayoutDays(r.payoutDays),
               };
             })}
           />

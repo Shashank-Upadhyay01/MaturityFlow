@@ -37,10 +37,20 @@ describe('register layout', () => {
     expect(headers.some((h) => h.includes('Per Day'))).toBe(false);
   });
 
-  it('default layout includes the classic register headers', () => {
+  it('default layout matches the cashier register', () => {
     const headers = excelHeadersForLayout(DEFAULT_REGISTER_LAYOUT);
-    expect(headers).toContain('Form Submission Date');
-    expect(headers).toContain('Maturity Amount');
+    expect(headers).toEqual([
+      'Savings Account Number',
+      'Customer Name',
+      "Customer's Agent Name",
+      'Maturity Amount',
+      'Payment Date',
+      'Remaining Amount',
+      'Recommended Payment',
+      'Paid Today',
+      'Paid in Cash',
+      'Paid Online',
+    ]);
   });
 });
 
@@ -73,7 +83,6 @@ describe('columnsThatFit', () => {
     const kept = shown.map((c) => c.id);
     const gone = dropped.map((c) => c.id);
     expect(kept).toContain('customer');
-    expect(kept).toContain('today');
     expect(kept).toContain('remaining');
     expect(gone.length).toBeGreaterThan(0);
     // Among the columns that *may* be dropped, nothing dropped outranks anything kept.

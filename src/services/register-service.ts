@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { db, type Tx } from '@/db';
 import {
   agents,
@@ -9,6 +9,7 @@ import {
   caseEvents,
   customers,
   maturityCases,
+  payoutInstalments,
   registerDays,
 } from '@/db/schema';
 import { writeAudit } from '@/lib/audit';
@@ -18,11 +19,14 @@ import { DEFAULT_CASH_CAP_PAISE } from '@/lib/org-settings';
 import { loadOrgSettings } from '@/services/org-settings';
 import { parseRupeesToPaise } from '@/lib/money';
 import { MIN_WINDOW_DAYS } from '@/lib/payout-policy';
+import { firstPayoutOn } from '@/lib/payout-policy';
 import { bulkTodayAmount, type BulkTodayMode } from '@/lib/register-view';
 import { parseRegisterDate } from '@/lib/excel-register';
-import { todayISO } from '@/lib/working-days';
+import { addDays, makeCalendar, todayISO } from '@/lib/working-days';
 import { sql } from 'drizzle-orm';
 import { caseCounters } from '@/db/schema';
+import { getBranchPolicy } from '@/services/calendar-service';
+import { persistSchedule } from '@/services/schedule-service';
 
 export function recommendSplit(todayPaise: bigint, remainingPaise: bigint, cap = DEFAULT_CASH_CAP_PAISE) {
   const need = todayPaise < remainingPaise ? todayPaise : remainingPaise;
@@ -167,6 +171,7 @@ export async function updateRegisterRow(
     instrumentMaturityOn?: string | null;
     formSubmittedOn?: string;
     paymentOn?: string | null;
+    opsReviewedOn?: string | null;
     maturityRupees?: string;
     paidRupees?: string;
     windowDays?: number;
@@ -200,7 +205,9 @@ export async function updateRegisterRow(
 
     const parseDate = (s: string | null | undefined) => {
       if (s == null || s === '') return null;
-      const iso = parseRegisterDate(s);
+      // Browser date inputs already send unambiguous ISO. The Excel parser's Indian ambiguity
+      // correction is only for imported sheets (01/09 vs 09/01), never for YYYY-MM-DD.
+      const iso = parseRegisterDate(s, { indianAmbiguous: !/^\d{4}-\d{2}-\d{2}$/.test(s.trim()) });
       if (!iso) throw new Error(`Invalid date: ${s}`);
       return iso;
     };
@@ -215,6 +222,12 @@ export async function updateRegisterRow(
     }
     if (patch.paymentOn !== undefined) {
       setCase.paymentOn = parseDate(patch.paymentOn);
+    }
+    if (patch.opsReviewedOn !== undefined) {
+      const reviewedOn = parseDate(patch.opsReviewedOn);
+      setCase.opsReviewedOn = reviewedOn;
+      setCase.opsReviewedAt = reviewedOn ? new Date() : null;
+      setCase.opsReviewedById = reviewedOn ? actor.id : null;
     }
     if (patch.windowDays != null) {
       if (
@@ -232,6 +245,50 @@ export async function updateRegisterRow(
       amount = parseRupeesToPaise(patch.maturityRupees.trim() || '0');
       if (amount <= 0n) throw new Error('Maturity amount must be greater than zero');
       setCase.maturityAmountPaise = amount;
+    }
+
+    const affectsSchedule =
+      patch.instrumentMaturityOn !== undefined ||
+      patch.paymentOn !== undefined ||
+      patch.maturityRupees !== undefined ||
+      patch.windowDays !== undefined;
+    const alreadyPaid = row.paidCashPaise + row.paidOnlinePaise;
+    if (affectsSchedule && row.scheduleVersion > 0 && alreadyPaid > 0n) {
+      throw new Error(
+        'Maturity amount and schedule dates are locked after payment starts. Reverse the payout first, then edit the row.',
+      );
+    }
+
+    const policy = affectsSchedule ? await getBranchPolicy(row.branchId, tx) : null;
+    const finalMaturity = (setCase.instrumentMaturityOn as string | null | undefined) ?? row.instrumentMaturityOn;
+    let finalPayment = (setCase.paymentOn as string | null | undefined) ?? row.paymentOn ?? row.firstPayoutOn;
+    if (affectsSchedule && finalMaturity && policy) {
+      const earliest =
+        patch.paymentOn !== undefined
+          ? addDays(finalMaturity, 3)
+          : firstPayoutOn(finalMaturity, policy.calendar);
+      if (patch.paymentOn === undefined && patch.instrumentMaturityOn !== undefined) {
+        finalPayment = earliest;
+        setCase.paymentOn = earliest;
+      }
+      if (finalPayment && finalPayment < earliest) {
+        throw new Error(`Payment date cannot be before ${earliest} (the fourth calendar day).`);
+      }
+    }
+
+    const finalForm = (setCase.formSubmittedOn as string | undefined) ?? row.formSubmittedOn;
+    const finalReview =
+      setCase.opsReviewedOn === null
+        ? null
+        : ((setCase.opsReviewedOn as string | undefined) ?? row.opsReviewedOn);
+    if (finalMaturity && finalForm < finalMaturity) {
+      throw new Error('Form submission date cannot be before the maturity date.');
+    }
+    if (finalReview && finalReview < finalForm) {
+      throw new Error('Operations review date cannot be before form submission.');
+    }
+    if (finalPayment && finalReview && finalPayment < finalReview) {
+      throw new Error('Payment date cannot be before Operations review.');
     }
 
     const remainingNow = () =>
@@ -267,13 +324,89 @@ export async function updateRegisterRow(
       setCase.todayApprovedPaise = total;
     }
 
+    if (affectsSchedule && row.scheduleVersion > 0 && !finalPayment) {
+      throw new Error('A scheduled row must have a payment date.');
+    }
+
     await tx.update(maturityCases).set(setCase).where(eq(maturityCases.id, caseId));
+
+    if (affectsSchedule && row.scheduleVersion > 0 && finalPayment && policy) {
+      await tx
+        .update(payoutInstalments)
+        .set({ status: 'SUPERSEDED', supersededAt: new Date(), updatedAt: new Date() })
+        .where(
+          and(
+            eq(payoutInstalments.caseId, caseId),
+            eq(payoutInstalments.scheduleVersion, row.scheduleVersion),
+            inArray(payoutInstalments.status, ['PENDING', 'MISSED', 'PARTIAL']),
+          ),
+        );
+      const nextRow = {
+        ...row,
+        ...setCase,
+        maturityAmountPaise: amount,
+        paymentOn: finalPayment,
+        approvedOn: finalPayment,
+      };
+      await tx
+        .update(maturityCases)
+        .set({ approvedOn: finalPayment, paymentOn: finalPayment, updatedAt: new Date() })
+        .where(eq(maturityCases.id, caseId));
+      const scheduleCalendar =
+        patch.paymentOn !== undefined
+          ? makeCalendar(policy.calendar.holidays, policy.calendar.weekend, [
+              ...policy.calendar.monthsOpenAtStart,
+              finalPayment.slice(0, 7),
+            ])
+          : policy.calendar;
+      await persistSchedule({
+        tx,
+        caseRow: nextRow,
+        calendar: scheduleCalendar,
+        anchorDate: finalPayment,
+        branchDailyCashComfortPaise: policy.dailyCashComfortPaise,
+      });
+      await tx.insert(caseEvents).values({
+        id: newId('evt'),
+        caseId,
+        type: 'RESCHEDULED',
+        actorId: actor.id,
+        note: `Payment schedule moved to ${finalPayment} after a Register timeline edit.`,
+      });
+      await writeAudit(tx, actor, {
+        action: 'schedule.rescheduled',
+        entity: 'MaturityCase',
+        entityId: caseId,
+        branchId: row.branchId,
+        summary: `${row.caseNumber}: payout plan rebuilt from ${finalPayment} after timeline edit`,
+        before: { paymentOn: row.firstPayoutOn ?? row.paymentOn, windowDays: row.windowDays },
+        after: {
+          paymentOn: finalPayment,
+          windowDays: (setCase.windowDays as number | undefined) ?? row.windowDays,
+        },
+      });
+    } else if (patch.opsReviewedOn !== undefined) {
+      await tx.insert(caseEvents).values({
+        id: newId('evt'),
+        caseId,
+        type: 'EDITED',
+        actorId: actor.id,
+        note: finalReview
+          ? `Operations review recorded for ${finalReview}.`
+          : 'Operations review cleared.',
+      });
+    }
     await writeAudit(tx, actor, {
-      action: 'case.updated',
+      action: patch.opsReviewedOn !== undefined ? 'case.ops_reviewed' : 'case.updated',
       entity: 'MaturityCase',
       entityId: caseId,
       branchId: row.branchId,
-      summary: `${row.caseNumber}: register fields updated`,
+      summary:
+        patch.opsReviewedOn !== undefined
+          ? `${row.caseNumber}: Operations review ${finalReview ? `recorded for ${finalReview}` : 'cleared'}`
+          : `${row.caseNumber}: register fields updated`,
+      before: patch.opsReviewedOn !== undefined ? { opsReviewedOn: row.opsReviewedOn } : undefined,
+      after: patch.opsReviewedOn !== undefined ? { opsReviewedOn: finalReview } : undefined,
     });
   });
 }

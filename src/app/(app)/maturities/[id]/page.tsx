@@ -55,7 +55,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
   const remaining = c.maturityAmountPaise - paid;
   const isLive = c.status === 'APPROVED' || c.status === 'IN_PROGRESS';
   const overdue = isLive && c.deadlineOn != null && c.deadlineOn < today && remaining > 0n;
-  const approvalLag = c.approvedOn ? daysBetween(c.formSubmittedOn, c.approvedOn) : null;
+  const reviewLag = c.opsReviewedOn ? daysBetween(c.formSubmittedOn, c.opsReviewedOn) : null;
   const daysLeft = c.deadlineOn ? daysBetween(today, c.deadlineOn) : null;
 
   const liveInstalments = detail.instalments.filter((i) => i.status !== 'SUPERSEDED');
@@ -166,8 +166,17 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           </div>
         </Glass>
 
-        <GlassCard className="mf-rise lg:col-span-2" title="The two dates that matter">
-          <div className="grid gap-5 sm:grid-cols-2">
+        <GlassCard className="mf-rise lg:col-span-2" title="Maturity workflow dates">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-[15px] border border-[var(--input-border)] p-4">
+              <p className="flex items-center gap-2 text-[0.75rem] font-semibold uppercase tracking-[0.08em] text-[var(--faint-fg)]">
+                <CalendarClock className="h-3.5 w-3.5" /> Maturity date
+              </p>
+              <p className="mt-2 text-[1.05rem] font-semibold">
+                {c.instrumentMaturityOn ? formatISODate(c.instrumentMaturityOn) : 'Not recorded'}
+              </p>
+              <p className="mt-1 text-[0.75rem] text-[var(--muted-fg)]">Day 1</p>
+            </div>
             <div className="rounded-[15px] border border-[var(--input-border)] p-4">
               <p className="flex items-center gap-2 text-[0.75rem] font-semibold uppercase tracking-[0.08em] text-[var(--faint-fg)]">
                 <FileText className="h-3.5 w-3.5" />
@@ -177,31 +186,41 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                 {formatISODate(c.formSubmittedOn)}
               </p>
               <p className="mt-1 text-[0.8125rem] text-[var(--muted-fg)]">
-                by {detail.agent.name}
+                Day 2 · by {detail.agent.name}
               </p>
             </div>
 
             <div
               className={`rounded-[15px] border p-4 ${
-                c.approvedOn
+                c.opsReviewedOn
                   ? 'border-[color-mix(in_oklab,var(--color-money-500)_38%,transparent)] bg-[color-mix(in_oklab,var(--color-money-500)_8%,transparent)]'
-                  : 'border-dashed border-[var(--input-border)]'
+                  : 'border-[color-mix(in_oklab,var(--color-warn-600)_35%,transparent)] bg-[color-mix(in_oklab,var(--color-warn-600)_7%,transparent)]'
               }`}
             >
               <p className="flex items-center gap-2 text-[0.75rem] font-semibold uppercase tracking-[0.08em] text-[var(--faint-fg)]">
                 <CalendarCheck2 className="h-3.5 w-3.5" />
-                Scheduled — money payable from
+                Operations approval
               </p>
               <p className="mt-2 text-[1.125rem] font-semibold">
-                {c.approvedOn ? formatISODate(c.approvedOn) : 'Not yet scheduled'}
+                {c.opsReviewedOn ? formatISODate(c.opsReviewedOn) : 'Not manually reviewed'}
               </p>
               <p className="mt-1 text-[0.8125rem] text-[var(--muted-fg)]">
-                {c.approvedOn
-                  ? `${detail.approver ? `${detail.approver.name} · ` : 'Scheduled automatically · '}${
-                      approvalLag === 0 ? 'same day' : `${approvalLag} day${approvalLag === 1 ? '' : 's'} after submission`
-                    }`
-                  : 'The payout clock has not started.'}
+                {c.opsReviewedOn
+                  ? `Day 3 · ${reviewLag === 0 ? 'same day as form' : `${reviewLag} day${reviewLag === 1 ? '' : 's'} after form`}`
+                  : 'Automatic progression keeps payment on time.'}
               </p>
+            </div>
+
+            <div className="rounded-[15px] border border-[color-mix(in_oklab,var(--color-brand-500)_30%,transparent)] bg-[var(--color-brand-50)] p-4">
+              <p className="flex items-center gap-2 text-[0.75rem] font-semibold uppercase tracking-[0.08em] text-[var(--color-brand-700)]">
+                <CalendarCheck2 className="h-3.5 w-3.5" /> Payment begins
+              </p>
+              <p className="mt-2 text-[1.05rem] font-semibold">
+                {c.firstPayoutOn || c.paymentOn || c.approvedOn
+                  ? formatISODate(c.firstPayoutOn ?? c.paymentOn ?? c.approvedOn!)
+                  : 'Not scheduled'}
+              </p>
+              <p className="mt-1 text-[0.75rem] text-[var(--muted-fg)]">Day 4 · first withdrawal</p>
             </div>
           </div>
 

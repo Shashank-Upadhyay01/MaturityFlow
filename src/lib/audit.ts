@@ -20,6 +20,7 @@ export type AuditAction =
   | 'case.created'
   | 'case.updated'
   | 'case.submitted'
+  | 'case.ops_reviewed'
   | 'case.returned'
   | 'case.approved'
   | 'case.rejected'
@@ -125,6 +126,7 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'case.created': 'Case created',
   'case.updated': 'Case edited',
   'case.submitted': 'Form submitted',
+  'case.ops_reviewed': 'Operations reviewed',
   'case.returned': 'Returned for correction',
   'case.approved': 'Approved',
   'case.rejected': 'Rejected',
