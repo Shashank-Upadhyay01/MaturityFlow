@@ -7,8 +7,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $workspace = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if (-not $Destination) {
-  $oneDrive = if ($env:OneDrive) { $env:OneDrive } else { 'C:\Users\Admin\OneDrive' }
-  $Destination = Join-Path $oneDrive 'Archeon Solutions\MaturityFlow Backups'
+  $documents = [Environment]::GetFolderPath('MyDocuments')
+  $Destination = Join-Path $documents 'MaturityFlow Backups'
 }
 $destinationPath = [IO.Path]::GetFullPath($Destination)
 New-Item -ItemType Directory -Force -Path $destinationPath | Out-Null
@@ -102,7 +102,7 @@ try {
       $arguments = @('a', '-t7z', '-mx=7', '-mhe=on', "-p$plainPassword", $archive, (Join-Path $payload '*'))
       $testArguments = @('t', "-p$plainPassword", $archive)
     } else {
-      Write-Warning 'This archive relies on OneDrive account security. Pass -EncryptionPassword for portable AES-256 encryption.'
+      Write-Warning 'This local archive is not encrypted. Pass -EncryptionPassword for portable AES-256 encryption.'
     }
     & $sevenZip @arguments | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Recovery archive creation failed.' }

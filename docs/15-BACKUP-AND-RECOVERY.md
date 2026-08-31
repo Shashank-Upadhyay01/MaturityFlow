@@ -15,13 +15,13 @@ $password = Read-Host 'Backup encryption password' -AsSecureString
 .\scripts\backup.ps1 -EncryptionPassword $password
 ```
 
-The default destination is `OneDrive\Archeon Solutions\MaturityFlow Backups`. The archive is
-tested immediately after creation and the command prints its SHA-256 hash. Store the encryption
-password in a password manager; it is intentionally not written beside the archive.
+The default destination is the local `Documents\MaturityFlow Backups` folder. The script never
+selects or connects a cloud provider. The archive is tested immediately after creation and the
+command prints its SHA-256 hash. Store the encryption password in a password manager; it is
+intentionally not written beside the archive.
 
-For an unattended local copy, omit `-EncryptionPassword`. That archive depends on OneDrive account
-security and should not be copied to removable media or shared. Customer and employee data are
-inside it.
+For an unattended local copy, omit `-EncryptionPassword`. That archive is not encrypted and should
+not be copied to removable media or shared. Customer and employee data are inside it.
 
 Run a backup before migrations/imports, after a meaningful operating day, and before changing
 laptops. Keep at least three generations. Never commit an archive, `.env`, `storage/` or a database
@@ -38,11 +38,13 @@ Each archive contains:
 - `.env` / `.env.local` — local connection and session configuration;
 - `restore-manifest.json` — commit, inventory, sizes and SHA-256 hashes.
 
-OneDrive must show the file as synchronised before the laptop copy counts as off-device backup.
+Copying the archive anywhere else—including any cloud or network service—requires the owner's
+explicit choice and permission. A local archive alone is not an off-device backup.
 
 ## Restore on another Windows PC
 
-Install Git, Node 20+, PostgreSQL 16+ and 7-Zip. Download the latest archive from OneDrive and:
+Install Git, Node 20+, PostgreSQL 16+ and 7-Zip. Copy the latest archive from the storage location
+you explicitly chose and:
 
 ```powershell
 & 'C:\Program Files\7-Zip\7z.exe' x .\MaturityFlow-YYYYMMDD-HHMMSS.7z -o.\recovery
