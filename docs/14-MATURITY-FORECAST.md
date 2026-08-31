@@ -57,10 +57,17 @@ daily instalments and smaller cases receive 5 alternate-working-day instalments.
 `scripts/replan-august-2026.ts` path locks each case first, supersedes its unpaid old schedule,
 writes the replacement and its audit entry in the same transaction, and is idempotent.
 
-September remains a forecast until forms are received. Its daily requirement begins with the
-earliest valid first payout on **04-09-2026**. Every row retains its own maturity + 3 calendar-day
-anchor, so late-September maturities can carry into October; the calendar displays those days
-explicitly rather than paying a customer before maturity.
+Carry-forward planning now has one month rule: a maturity cohort is paid from the **1st through
+the 12th of the following month**. August therefore pays in September, September pays in October,
+and so on. The target month's 1–3 month-open block is lifted for this carry-forward window, while
+declared holidays and Sundays remain closed. Each case is divided as evenly as its daily or
+alternate-working-day cadence permits and every projected paise is reconciled by the engine.
+
+The customer's maturity + 3-calendar-day promise remains a lower bound. If a maturity is so late
+that this promised date falls after the following month's first, that later date is used; the
+schedule must still finish by the 12th or projection fails loudly instead of inventing an unsafe
+date. September remains a forecast until forms are received, and its calendar projection is
+**01-10-2026 through 12-10-2026**.
 
 ## Code map
 

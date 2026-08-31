@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Glass, PageHeader } from '@/components/ui/glass';
 import { Money } from '@/components/ui/money';
 import { getSession, toActor } from '@/lib/auth/session';
+import { carryForwardWindowFor } from '@/lib/maturity-payment-plan';
 import { formatDMY, todayISO, weekdayShort } from '@/lib/working-days';
 import {
   listMaturityForecasts,
@@ -48,6 +49,7 @@ export default async function MaturityCalendarPage({
   ]);
   const allRows = selectedMonth === currentMonth ? currentRows : nextRows;
   const projection = selectedMonth === currentMonth ? currentProjection : nextProjection;
+  const carryForwardWindow = carryForwardWindowFor(selectedMonth);
   const pageSize = 100;
   const pageCount = Math.max(1, Math.ceil(allRows.length / pageSize));
   const page = Math.min(pageCount, Math.max(1, Number(params.page) || 1));
@@ -91,12 +93,11 @@ export default async function MaturityCalendarPage({
           <div>
             <p className="flex items-center gap-2 font-semibold">
               <Banknote className="h-4 w-4 text-[var(--color-brand-500)]" />
-              Daily payment requirement
+              Daily carry-forward requirement
             </p>
             <p className="mt-1 max-w-3xl text-[0.75rem] leading-relaxed text-[var(--muted-fg)]">
-              {selectedMonth === '2026-08'
-                ? 'August maturities are planned from 01/09/2026 to 12/09/2026. Declared holidays and Sundays remain closed.'
-                : 'Each maturity starts three calendar days after its own maturity date. Days after month-end are shown so every customer is fully accounted for without paying before maturity.'}
+              {monthLabel(selectedMonth)} maturities carry forward into {monthLabel(carryForwardWindow.paymentMonth)}.
+              {' '}Payments run from {formatDMY(carryForwardWindow.startsOn)} to {formatDMY(carryForwardWindow.endsOn)}, distributed as evenly as the daily/alternate payout policy allows. Closed days are skipped.
             </p>
           </div>
           {projection.firstPaymentOn && projection.lastPaymentOn && (
