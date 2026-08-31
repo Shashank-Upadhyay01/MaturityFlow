@@ -1,4 +1,4 @@
-import { Banknote, CalendarDays, ChevronLeft, ChevronRight, Landmark } from 'lucide-react';
+import { Banknote, CalendarClock, CalendarDays, ChevronLeft, ChevronRight, Landmark } from 'lucide-react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
@@ -50,6 +50,9 @@ export default async function MaturityCalendarPage({
   const allRows = selectedMonth === currentMonth ? currentRows : nextRows;
   const projection = selectedMonth === currentMonth ? currentProjection : nextProjection;
   const carryForwardWindow = carryForwardWindowFor(selectedMonth);
+  const carryForwardTotal = projection.days
+    .filter((day) => day.dueOn >= carryForwardWindow.carryForwardStartsOn)
+    .reduce((sum, day) => sum + day.totalPaise, 0n);
   const pageSize = 100;
   const pageCount = Math.max(1, Math.ceil(allRows.length / pageSize));
   const page = Math.min(pageCount, Math.max(1, Number(params.page) || 1));
@@ -93,11 +96,15 @@ export default async function MaturityCalendarPage({
           <div>
             <p className="flex items-center gap-2 font-semibold">
               <Banknote className="h-4 w-4 text-[var(--color-brand-500)]" />
-              Daily carry-forward requirement
+              Daily maturity payment requirement
             </p>
             <p className="mt-1 max-w-3xl text-[0.75rem] leading-relaxed text-[var(--muted-fg)]">
-              {monthLabel(selectedMonth)} maturities carry forward into {monthLabel(carryForwardWindow.paymentMonth)}.
-              {' '}Payments run from {formatDMY(carryForwardWindow.startsOn)} to {formatDMY(carryForwardWindow.endsOn)}, distributed as evenly as the daily/alternate payout policy allows. Closed days are skipped.
+              {selectedMonth === '2026-08' ? (
+                <>August maturities use the authorised {formatDMY(carryForwardWindow.startsOn)}–{formatDMY(carryForwardWindow.endsOn)} carry-forward window.</>
+              ) : (
+                <>{monthLabel(selectedMonth)} maturities start on {formatDMY(carryForwardWindow.startsOn)}. Any balance remaining after month-end carries from {formatDMY(carryForwardWindow.carryForwardStartsOn)} through {formatDMY(carryForwardWindow.endsOn)}.</>
+              )}
+              {' '}Amounts are balanced across open days while keeping the daily/alternate payout policy.
             </p>
           </div>
           {projection.firstPaymentOn && projection.lastPaymentOn && (
@@ -110,11 +117,12 @@ export default async function MaturityCalendarPage({
           )}
         </div>
 
-        <div className="grid grid-cols-2 border-b border-[var(--hairline)] lg:grid-cols-4">
+        <div className="grid grid-cols-2 border-b border-[var(--hairline)] lg:grid-cols-5">
           {[
             { label: 'Maturity total', value: projection.totalPaise, icon: CalendarDays },
             { label: 'Physical cash', value: projection.cashPaise, icon: Banknote },
             { label: 'Online transfer', value: projection.onlinePaise, icon: Landmark },
+            { label: `${monthLabel(carryForwardWindow.paymentMonth)} carry-forward`, value: carryForwardTotal, icon: CalendarClock },
           ].map((item) => (
             <div key={item.label} className="border-b border-r border-[var(--hairline)] px-4 py-3 last:border-r-0 lg:border-b-0">
               <p className="flex items-center gap-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-[var(--faint-fg)]">

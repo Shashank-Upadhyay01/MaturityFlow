@@ -35,12 +35,22 @@ function monthOffset(month: string, offset: number): string {
 export function carryForwardWindowFor(cohortMonth: string): {
   paymentMonth: string;
   startsOn: ISODate;
+  carryForwardStartsOn: ISODate;
   endsOn: ISODate;
 } {
   const paymentMonth = monthOffset(cohortMonth, 1);
+  if (cohortMonth === AUGUST_2026_COHORT) {
+    return {
+      paymentMonth,
+      startsOn: AUGUST_2026_PAYOUT_START,
+      carryForwardStartsOn: AUGUST_2026_PAYOUT_START,
+      endsOn: AUGUST_2026_PAYOUT_END,
+    };
+  }
   return {
     paymentMonth,
-    startsOn: `${paymentMonth}-01`,
+    startsOn: `${cohortMonth}-04`,
+    carryForwardStartsOn: `${paymentMonth}-01`,
     endsOn: `${paymentMonth}-12`,
   };
 }
@@ -112,8 +122,8 @@ export function projectForecastPayments(
   });
 
   return orderedForecasts.flatMap((forecast) => {
-    // The cohort opens on the first of the following month, but never before the customer's
-    // maturity + 3-day promise. This retains the core anchor rule for late-month maturities.
+    // The cohort begins on day four of its maturity month and may carry through day twelve of the
+    // next month, but no customer starts before their own maturity + 3-day promise.
     const promised = firstPayoutOn(forecast.maturityOn, policy.calendar);
     const baseStartDate = promised > window.startsOn ? promised : window.startsOn;
     let startDate = baseStartDate;

@@ -36,7 +36,7 @@ describe('maturity forecast payment projection', () => {
     expect(daily.reduce((sum, day) => sum + day.totalPaise, 0n)).toBe(21_000_000n);
   });
 
-  it('carries September maturities into 1–12 October and reconciles exactly', () => {
+  it('runs September maturities from 4 September through 12 October', () => {
     const instalments = projectForecastPayments('2026-09', [
       { id: 'early', maturityOn: '2026-09-01', amountPaise: 12_000_000n },
       { id: 'late', maturityOn: '2026-09-28', amountPaise: 9_000_000n },
@@ -44,19 +44,20 @@ describe('maturity forecast payment projection', () => {
 
     expect(carryForwardWindowFor('2026-09')).toEqual({
       paymentMonth: '2026-10',
-      startsOn: '2026-10-01',
+      startsOn: '2026-09-04',
+      carryForwardStartsOn: '2026-10-01',
       endsOn: '2026-10-12',
     });
-    expect(instalments.find((row) => row.forecastId === 'early')?.dueDate).toBe('2026-10-01');
+    expect(instalments.find((row) => row.forecastId === 'early')?.dueDate).toBe('2026-09-04');
     expect(instalments.find((row) => row.forecastId === 'late')?.dueDate).toBe('2026-10-01');
-    expect(instalments.every((row) => row.dueDate >= '2026-10-01' && row.dueDate <= '2026-10-12')).toBe(true);
+    expect(instalments.every((row) => row.dueDate >= '2026-09-04' && row.dueDate <= '2026-10-12')).toBe(true);
     expect(instalments.reduce((sum, row) => sum + row.amountPaise, 0n)).toBe(21_000_000n);
   });
 
   it('balances alternate-day cases between both open-day tracks', () => {
     const rows = Array.from({ length: 20 }, (_, index) => ({
       id: `small-${String(index).padStart(2, '0')}`,
-      maturityOn: '2026-09-20',
+      maturityOn: '2026-09-01',
       amountPaise: 9_000_000n,
     }));
     const daily = aggregateForecastPayments(projectForecastPayments('2026-09', rows, basePolicy));
@@ -66,7 +67,9 @@ describe('maturity forecast payment projection', () => {
       null as bigint | null,
     )!;
 
-    expect(daily).toHaveLength(9);
+    expect(daily.length).toBeGreaterThan(20);
+    expect(daily[0]?.dueOn).toBe('2026-09-04');
+    expect(daily.at(-1)?.dueOn).toBe('2026-10-12');
     expect(daily.every((day) => day.cases > 0)).toBe(true);
     expect(busiest - quietest).toBeLessThanOrEqual(1_000_000n);
     expect(daily.reduce((sum, day) => sum + day.totalPaise, 0n)).toBe(180_000_000n);
