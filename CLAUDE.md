@@ -276,7 +276,7 @@ If you touch `payout-engine.ts`:
 
 ## Traps this codebase has already sprung
 
-Four real bugs that cost real time. Each is cheap to hit again.
+Five real bugs that cost real time. Each is cheap to hit again.
 
 - **`.glass` sets `position: relative`, and `globals.css` is unlayered**, so it beats Tailwind's
   layered `absolute` utility. `className="glass absolute …"` silently renders *in flow* and
@@ -303,6 +303,19 @@ Four real bugs that cost real time. Each is cheap to hit again.
   idempotently (`ADD COLUMN IF NOT EXISTS`, `DROP CONSTRAINT IF EXISTS` before `ADD`) and prove
   it: migrate a scratch database and diff `information_schema.columns` against a `db:push` one.
   0000–0003 were hand-written; 0004 repairs the drift and the snapshot is correct from there.
+
+- **`<ResponsiveContainer height="100%">` inside an auto-height box grows without end.**
+  Recharts measures its parent with a `ResizeObserver` and writes a pixel height back onto the
+  chart. If the parent's own height is content-derived — a flex `flex-1` in an `h-full` column
+  whose ancestor is an `auto` grid row, which is what `.cashbook-panel` is — that written height
+  *becomes* the parent's height, the observer fires again, and the panel walks down the page a few
+  pixels at a time. The cash flow panel grew +3px every 500ms this way: no error, no failing test,
+  just a chart that would not sit still. Percentage height needs a **definite** ancestor. Either
+  give the wrapper a fixed height (`upcoming-load.tsx` uses `h-[15rem]`) or take the plot out of
+  flow — `relative` wrapper, `absolute inset-0` inner — so it reads a definite box and cannot feed
+  its own height back. `cashbook-cash-flow.tsx` does the latter, because that panel has to keep
+  matching the height of the one beside it. Watch in-flow siblings too: an empty-state `<p>`
+  positioned with negative margins is in flow and nudges the same measurement.
 
 ## Checking a UI change instead of guessing
 

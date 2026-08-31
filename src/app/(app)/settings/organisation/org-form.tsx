@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { saveOrgSettingsAction } from '@/actions/admin';
 import { Button } from '@/components/ui/button';
 import { Field, Input, MoneyInput, Stepper } from '@/components/ui/field';
+import { MIN_WINDOW_DAYS } from '@/lib/payout-policy';
 import { Glass } from '@/components/ui/glass';
 
 export function OrgForm(props: {
@@ -51,7 +52,7 @@ export function OrgForm(props: {
         </Field>
         <Field label="Default payout window" error={fe.defaultWindowDays} hint="Working days, 1–60">
           <input type="hidden" name="defaultWindowDays" value={windowDays} />
-          <Stepper value={windowDays} onChange={setWindowDays} min={1} max={60} label="window days" suffix="days" />
+          <Stepper value={windowDays} onChange={setWindowDays} min={MIN_WINDOW_DAYS} max={60} label="window days" suffix="days" />
         </Field>
         <Button type="submit" variant="primary" loading={pending}>
           Save organisation

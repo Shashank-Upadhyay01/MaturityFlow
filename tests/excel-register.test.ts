@@ -75,6 +75,16 @@ describe('parseRegisterGrid', () => {
     expect(rows[0].remainingRupees).toBe(24035);
     expect(rows[0].agentName).toBe('Suresh');
     expect(rows[0].windowDays).toBe(15);
+    expect(rows[0].branchReference).toBe('');
+  });
+
+  it('reads the Branch Code used by a compiled headquarters workbook', () => {
+    const { rows, errors } = parseRegisterGrid([
+      ['Branch Code', ...header],
+      ['AZM', '1001', 'Asha', '29/6/2026', '24/7/2026', '', 50000, 0, 50000, 'Suresh', 0],
+    ]);
+    expect(errors).toEqual([]);
+    expect(rows[0].branchReference).toBe('AZM');
   });
 
   it('recomputes remaining when the sheet does not add up', () => {

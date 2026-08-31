@@ -170,7 +170,8 @@ describe('the auditor is structurally read-only', () => {
   const writes: Permission[] = [
     'case.create', 'case.submit', 'case.edit', 'case.approve', 'case.reject', 'case.cancel',
     'schedule.override', 'schedule.reschedule', 'payout.record', 'payout.reverse',
-    'cash.setOpening', 'agent.manage', 'customer.manage', 'branch.manage', 'user.manage',
+    'cash.setOpening', 'cashbook.edit', 'cashbook.close', 'agent.manage', 'customer.manage',
+    'branch.manage', 'user.manage',
     'holiday.manage', 'settings.manage', 'case.editApproved', 'data.import',
   ];
 
@@ -182,9 +183,22 @@ describe('the auditor is structurally read-only', () => {
   });
 
   it('can still read everything it needs for an inspection', () => {
-    for (const p of ['case.view', 'audit.view', 'report.view', 'report.export'] as const) {
+    for (const p of ['case.view', 'cashbook.view', 'audit.view', 'report.view', 'report.export'] as const) {
       expect(can(auditor, p)).toBe(true);
     }
+  });
+
+  it('lets counter staff keep their own branch cashbook while reserving final close control', () => {
+    for (const r of ['BRANCH_MANAGER', 'CASHIER'] as const) {
+      expect(roleCan(r, 'cashbook.view')).toBe(true);
+      expect(roleCan(r, 'cashbook.edit')).toBe(true);
+      expect(roleCan(r, 'cashbook.close')).toBe(false);
+    }
+    for (const r of ['CMD', 'CEO', 'ADMIN'] as const) {
+      expect(roleCan(r, 'cashbook.close')).toBe(true);
+    }
+    expect(roleCan('AGENT', 'cashbook.view')).toBe(false);
+    expect(roleCan('AUDITOR', 'cashbook.edit')).toBe(false);
   });
 
   it('reports READ_ONLY_ROLE as the reason, not NO_PERMISSION', () => {
@@ -198,19 +212,23 @@ describe('the auditor is structurally read-only', () => {
 });
 
 describe('data scoping', () => {
-  it('every role reads the whole bank', () => {
-    for (const r of EVERY_ROLE) expect(ROLE_SCOPE[r]).toBe('ALL');
+  it('head office reads the compiled bank while branch roles stay scoped', () => {
+    for (const r of ['CMD', 'CEO', 'ADMIN', 'AUDITOR'] as const) {
+      expect(ROLE_SCOPE[r]).toBe('ALL');
+    }
+    expect(ROLE_SCOPE.BRANCH_MANAGER).toBe('BRANCH');
+    expect(ROLE_SCOPE.CASHIER).toBe('BRANCH');
+    expect(ROLE_SCOPE.AGENT).toBe('OWN');
   });
 
-  it('reading is unrestricted; writing is not', () => {
-    // The whole point of the split: the same actor, the same foreign branch, two answers.
-    expect(can(mgr, 'case.view', { branchId: 'b2' })).toBe(true);
+  it('branch and agent records cannot be read or changed outside their scope', () => {
+    expect(can(mgr, 'case.view', { branchId: 'b2' })).toBe(false);
     expect(can(mgr, 'case.cancel', { branchId: 'b2' })).toBe(false);
 
-    expect(can(cashier, 'case.view', { branchId: 'b2' })).toBe(true);
+    expect(can(cashier, 'case.view', { branchId: 'b2' })).toBe(false);
     expect(can(cashier, 'payout.record', { branchId: 'b2' })).toBe(false);
 
-    expect(can(agent, 'case.view', { agentId: 'a2' })).toBe(true);
+    expect(can(agent, 'case.view', { agentId: 'a2' })).toBe(false);
     expect(can(agent, 'case.submit', { agentId: 'a2' })).toBe(false);
   });
 

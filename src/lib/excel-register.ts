@@ -8,6 +8,8 @@ import { parseISODate, type ISODate } from './working-days';
 export const REGISTER_COLUMNS = excelHeadersForLayout(DEFAULT_REGISTER_LAYOUT);
 
 export interface RegisterRow {
+  /** Branch code/name from a compiled HQ workbook. Empty on a single-branch legacy sheet. */
+  branchReference: string;
   accountNumber: string;
   customerName: string;
   instrumentMaturityOn: ISODate | null;
@@ -138,6 +140,9 @@ export function parseRegisterGrid(grid: unknown[][]): { rows: RegisterRow[]; err
   const iAgent = idx('agent');
   const iToday = idx('today');
   const iWin = idx('window');
+  const iBranchCode = header.findIndex((h) => h === 'branch code' || h.includes('branch code'));
+  const iBranchName = header.findIndex((h) => h === 'branch name' || h.includes('branch name'));
+  const iBranch = iBranchCode >= 0 ? iBranchCode : iBranchName >= 0 ? iBranchName : header.indexOf('branch');
 
   if (iName < 0 || iAmt < 0 || iSub < 0) {
     return {
@@ -180,6 +185,7 @@ export function parseRegisterGrid(grid: unknown[][]): { rows: RegisterRow[]; err
     const windowDays = iWin >= 0 ? Math.max(1, Math.round(parseRupeesNumber(excelCellRaw(line[iWin])) || 15)) : 15;
     const agentName = iAgent >= 0 ? String(excelCellRaw(line[iAgent]) ?? '').trim() || 'Unassigned' : 'Unassigned';
     rows.push({
+      branchReference: iBranch >= 0 ? String(excelCellRaw(line[iBranch]) ?? '').trim() : '',
       accountNumber: iAcct >= 0 ? accountString(excelCellRaw(line[iAcct])) : '',
       customerName,
       instrumentMaturityOn,

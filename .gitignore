@@ -1,5 +1,6 @@
 node_modules/
 .next/
+.next.*/
 out/
 build/
 storage/
@@ -19,3 +20,8 @@ coverage/
 .vercel
 backups/
 screenshots/
+
+# Local AI-orchestrator state and private/generated import artifacts
+.archeon/
+ARCHEON_LANE.md
+artifacts/

@@ -38,12 +38,16 @@ export interface SchedulePreviewInput {
   distribution: Distribution;
   cashPolicy: CashPolicy;
   startOnNextWorkingDay: boolean;
+  /** Working days reserved by policy before the payout portion of the window. */
+  processingDays?: number;
+  /** Offset from startDate to day one. Usually zero because startDate is already the anchor. */
+  startOffsetWorkingDays?: number;
   calendar: CalendarSnapshot;
 }
 
 /**
- * Runs the very same pure engine the server will run at approval, so the number the
- * approver sees here is the number that gets written. Nothing is estimated.
+ * Runs the same pure engine the server runs at submission, so the preview is the
+ * schedule that gets written. Nothing is estimated.
  */
 export function useSchedule(input: SchedulePreviewInput): {
   result: ScheduleResult | null;
@@ -56,6 +60,8 @@ export function useSchedule(input: SchedulePreviewInput): {
     startDate,
     distribution,
     startOnNextWorkingDay,
+    processingDays = 3,
+    startOffsetWorkingDays = 0,
     calendar,
   } = input;
   const cashKind = input.cashPolicy.kind;
@@ -72,7 +78,7 @@ export function useSchedule(input: SchedulePreviewInput): {
       // through the same policy the server uses in persistSchedule, or this preview would show
       // the clerk a schedule the server is never going to write — which is the one thing the
       // engine's purity exists to prevent.
-      const plan = payoutPlanFor(totalPaise, days);
+      const plan = payoutPlanFor(totalPaise, days, processingDays);
       return {
         result: generateSchedule({
           totalPaise,
@@ -87,7 +93,7 @@ export function useSchedule(input: SchedulePreviewInput): {
               : { kind: cashKind },
           startOnNextWorkingDay,
           stride: plan.stride,
-          startOffsetWorkingDays: plan.processingDays,
+          startOffsetWorkingDays,
           policyMaxDays: plan.payoutDays,
         }),
         error: null,
@@ -104,6 +110,8 @@ export function useSchedule(input: SchedulePreviewInput): {
     cashKind,
     cashCap,
     startOnNextWorkingDay,
+    processingDays,
+    startOffsetWorkingDays,
     calendar,
   ]);
 }

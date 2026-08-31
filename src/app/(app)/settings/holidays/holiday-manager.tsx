@@ -91,7 +91,14 @@ export function HolidayManager({
                   </Badge>
                 </TD>
                 <TD align="right">
-                  <Button size="sm" variant="ghost" onClick={() => remove(h.id)} disabled={busy}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => remove(h.id)}
+                    disabled={busy}
+                    aria-label={`Remove ${h.name}`}
+                    title={`Remove ${h.name}`}
+                  >
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </TD>

@@ -3,6 +3,8 @@
 import {
   Banknote,
   Building2,
+  Calculator,
+  CalendarDays,
   ChevronLeft,
   FileStack,
   LayoutDashboard,
@@ -12,6 +14,7 @@ import {
   Plus,
   Settings,
   Shield,
+  Upload,
   Users,
   Wallet,
 } from 'lucide-react';
@@ -29,8 +32,11 @@ const ICONS: Record<string, LucideIcon> = {
   plus: Plus,
   inbox: Inbox,
   files: FileStack,
+  upload: Upload,
   wallet: Wallet,
   banknote: Banknote,
+  calculator: Calculator,
+  calendar: CalendarDays,
   users: Users,
   building: Building2,
   chart: PieChart,

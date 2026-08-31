@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 
 import { db } from '@/db';
@@ -31,26 +31,44 @@ export async function GET(request: Request) {
   assertCan(actor, 'case.view');
 
   const url = new URL(request.url);
+  const compiled = url.searchParams.get('scope') === 'all';
   const branchId = url.searchParams.get('branch') || session.branchId;
   let raw: unknown = null;
+  let sampleBranchCode = 'AZM';
   if (branchId) {
     const [b] = await db
-      .select({ registerColumnOrder: branches.registerColumnOrder })
+      .select({ code: branches.code, registerColumnOrder: branches.registerColumnOrder })
       .from(branches)
       .where(eq(branches.id, branchId))
       .limit(1);
     raw = b?.registerColumnOrder;
+    sampleBranchCode = b?.code ?? sampleBranchCode;
+  } else {
+    const [b] = await db
+      .select({ code: branches.code, registerColumnOrder: branches.registerColumnOrder })
+      .from(branches)
+      .where(eq(branches.isActive, true))
+      .orderBy(asc(branches.code))
+      .limit(1);
+    raw = b?.registerColumnOrder;
+    sampleBranchCode = b?.code ?? sampleBranchCode;
   }
   const layout = parseRegisterLayout(raw);
   const cols = visibleRegisterCols(layout);
-  const headers = excelHeadersForLayout(layout);
+  const headers = [
+    ...(compiled ? ['Branch Code'] : []),
+    ...excelHeadersForLayout(layout),
+  ];
 
   const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Register', { views: [{ state: 'frozen', ySplit: 1 }] });
   ws.addRow(headers);
   ws.getRow(1).font = { bold: true };
-  ws.addRow(cols.map((c) => SAMPLE[c.id] ?? ''));
+  ws.addRow([
+    ...(compiled ? [sampleBranchCode] : []),
+    ...cols.map((c) => SAMPLE[c.id] ?? ''),
+  ]);
   ws.columns.forEach((c) => {
     c.width = 18;
   });
@@ -58,7 +76,7 @@ export async function GET(request: Request) {
   return new NextResponse(buf as ArrayBuffer, {
     headers: {
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': 'attachment; filename="maturity-register-template.xlsx"',
+      'Content-Disposition': `attachment; filename="${compiled ? 'all-branches-register-template' : 'maturity-register-template'}.xlsx"`,
     },
   });
 }

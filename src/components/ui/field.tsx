@@ -1,6 +1,16 @@
 'use client';
 
-import { forwardRef, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
+import {
+  cloneElement,
+  forwardRef,
+  isValidElement,
+  useId,
+  type InputHTMLAttributes,
+  type ReactElement,
+  type ReactNode,
+  type SelectHTMLAttributes,
+  type TextareaHTMLAttributes,
+} from 'react';
 import { cn } from '@/lib/utils';
 
 export function Field({
@@ -20,22 +30,53 @@ export function Field({
   className?: string;
   htmlFor?: string;
 }) {
+  const generatedId = useId();
+  const element = isValidElement(children)
+    ? (children as ReactElement<{ id?: string; 'aria-describedby'?: string }>)
+    : null;
+  const directControl = Boolean(
+    element &&
+      (element.type === 'input' ||
+        element.type === 'select' ||
+        element.type === 'textarea' ||
+        element.type === Input ||
+        element.type === MoneyInput ||
+        element.type === Select ||
+        element.type === Textarea),
+  );
+  const controlId = htmlFor ?? element?.props.id ?? generatedId;
+  const messageId = error || hint ? `${generatedId}-message` : undefined;
+  const renderedChildren =
+    directControl && element
+      ? cloneElement(element, {
+          id: controlId,
+          'aria-describedby': element.props['aria-describedby'] ?? messageId,
+        })
+      : children;
+
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
       {label && (
-        <label
-          htmlFor={htmlFor}
-          className="flex items-center gap-1 text-[0.8125rem] font-medium text-[var(--muted-fg)]"
-        >
-          {label}
-          {required && <span className="text-[var(--color-danger-500)]">*</span>}
-        </label>
+        directControl ? (
+          <label
+            htmlFor={controlId}
+            className="flex items-center gap-1 text-[0.8125rem] font-medium text-[var(--muted-fg)]"
+          >
+            {label}
+            {required && <span className="text-[var(--color-danger-500)]" aria-hidden>*</span>}
+          </label>
+        ) : (
+          <span className="flex items-center gap-1 text-[0.8125rem] font-medium text-[var(--muted-fg)]">
+            {label}
+            {required && <span className="text-[var(--color-danger-500)]" aria-hidden>*</span>}
+          </span>
+        )
       )}
-      {children}
+      {renderedChildren}
       {error ? (
-        <p className="text-[0.75rem] font-medium text-[var(--color-danger-500)]">{error}</p>
+        <p id={messageId} className="text-[0.75rem] font-medium text-[var(--color-danger-500)]">{error}</p>
       ) : hint ? (
-        <p className="text-[0.75rem] leading-snug text-[var(--faint-fg)]">{hint}</p>
+        <p id={messageId} className="text-[0.75rem] leading-snug text-[var(--faint-fg)]">{hint}</p>
       ) : null}
     </div>
   );
@@ -114,7 +155,7 @@ export function SegmentedControl<T extends string | number>({
     <div
       role="radiogroup"
       className={cn(
-        'inline-flex w-full items-center gap-1 rounded-[15px] border border-[var(--input-border)] bg-[var(--input-bg)] p-1 backdrop-blur-md',
+        'inline-flex w-full items-center gap-1 rounded-[9px] border border-[var(--input-border)] bg-[var(--input-bg)] p-1',
         className,
       )}
     >
@@ -129,11 +170,10 @@ export function SegmentedControl<T extends string | number>({
             title={opt.title}
             onClick={() => onChange(opt.value)}
             className={cn(
-              'relative flex-1 rounded-[11px] font-medium transition-all duration-300',
-              '[transition-timing-function:var(--ease-spring)]',
+              'relative flex-1 rounded-[6px] font-medium transition-colors duration-150',
               size === 'sm' ? 'px-2 py-1 text-[0.75rem]' : 'px-3 py-1.5 text-[0.8125rem]',
               active
-                ? 'bg-gradient-to-b from-[var(--color-brand-500)] to-[var(--color-brand-600)] text-white shadow-[0_1px_0_rgba(255,255,255,0.25)_inset,0_4px_12px_-4px_rgba(79,70,229,0.6)]'
+                ? 'bg-[var(--color-brand-600)] text-white shadow-sm'
                 : 'text-[var(--muted-fg)] hover:bg-[var(--glass-bg-subtle)] hover:text-[var(--page-fg)]',
             )}
           >
@@ -168,13 +208,14 @@ export function Stepper({
         aria-label={`Decrease ${label ?? 'value'}`}
         onClick={() => onChange(clamp(value - 1))}
         disabled={value <= min}
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] border border-[var(--input-border)] bg-[var(--input-bg)] text-lg font-medium transition-all duration-200 hover:bg-[var(--glass-bg-strong)] active:scale-95 disabled:opacity-40"
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] border border-[var(--input-border)] bg-[var(--input-bg)] text-lg font-medium transition-colors duration-150 hover:bg-[var(--glass-bg-subtle)] disabled:opacity-40"
       >
         −
       </button>
       <div className="relative flex-1">
         <input
           type="number"
+          aria-label={label ?? 'Value'}
           value={value}
           min={min}
           max={max}
@@ -192,7 +233,7 @@ export function Stepper({
         aria-label={`Increase ${label ?? 'value'}`}
         onClick={() => onChange(clamp(value + 1))}
         disabled={value >= max}
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] border border-[var(--input-border)] bg-[var(--input-bg)] text-lg font-medium transition-all duration-200 hover:bg-[var(--glass-bg-strong)] active:scale-95 disabled:opacity-40"
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] border border-[var(--input-border)] bg-[var(--input-bg)] text-lg font-medium transition-colors duration-150 hover:bg-[var(--glass-bg-subtle)] disabled:opacity-40"
       >
         +
       </button>

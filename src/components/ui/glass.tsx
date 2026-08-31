@@ -7,7 +7,7 @@ interface GlassProps {
   style?: CSSProperties;
   /** 'strong' for foreground panels, 'subtle' for nested wells. */
   tone?: 'default' | 'strong' | 'subtle';
-  /** Adds hover lift + the moving sheen. Use for anything clickable. */
+  /** Adds a restrained hover affordance for clickable panels. */
   interactive?: boolean;
   as?: 'div' | 'section' | 'article' | 'aside' | 'li';
 }
@@ -27,7 +27,7 @@ export function Glass({
         'glass',
         tone === 'strong' && 'glass-strong',
         tone === 'subtle' && 'glass-subtle',
-        interactive && 'glass-interactive glass-sheen cursor-pointer',
+        interactive && 'glass-interactive cursor-pointer',
         className,
       )}
     >
@@ -89,7 +89,7 @@ export function PageHeader({
   className?: string;
 }) {
   return (
-    <div className={cn('mf-rise flex shrink-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between', className)}>
+    <div className={cn('mf-rise flex shrink-0 flex-col gap-3 border-l-[3px] border-[var(--color-brand-600)] pl-4 sm:flex-row sm:items-end sm:justify-between', className)}>
       <div className="min-w-0">
         {eyebrow && (
           <p className="mb-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--faint-fg)]">

@@ -11,6 +11,7 @@ import {
 } from '@/db/schema';
 import { writeAudit } from '@/lib/audit';
 import type { SessionUser } from '@/lib/auth/session';
+import { resolveImportBranch } from '@/lib/branch-routing';
 import { formatCaseNumber, newId } from '@/lib/id';
 import { DEFAULT_CASH_CAP_PAISE } from '@/lib/org-settings';
 import { parseRupeesToPaise } from '@/lib/money';
@@ -24,6 +25,15 @@ export interface ImportResult {
   skipped: number;
   warnings: string[];
   errors: string[];
+  branches: ImportBranchResult[];
+}
+
+export interface ImportBranchResult {
+  branchId: string;
+  branchCode: string;
+  branchName: string;
+  created: number;
+  skipped: number;
 }
 
 async function nextCaseNumber(tx: Queryable, branchCode: string, year: number): Promise<string> {
@@ -49,12 +59,16 @@ export async function importRegisterRows(
   const errors: string[] = [];
   let created = 0;
   let skipped = 0;
+  let importedBranchCode = branchId;
+  let importedBranchName = 'Branch';
   const org = await loadOrgSettings();
   const cashCap = org.cashCapPaise > 0n ? org.cashCapPaise : DEFAULT_CASH_CAP_PAISE;
 
   await db.transaction(async (tx) => {
     const [branch] = await tx.select().from(branches).where(eq(branches.id, branchId)).limit(1);
     if (!branch) throw new Error('Branch not found');
+    importedBranchCode = branch.code;
+    importedBranchName = branch.name;
 
     const agentByKey = new Map<string, string>();
     const existingAgents = await tx.select().from(agents).where(eq(agents.branchId, branchId));
@@ -223,7 +237,73 @@ export async function importRegisterRows(
     });
   });
 
-  return { created, skipped, warnings, errors };
+  return {
+    created,
+    skipped,
+    warnings,
+    errors,
+    branches: [
+      {
+        branchId,
+        branchCode: importedBranchCode,
+        branchName: importedBranchName,
+        created,
+        skipped,
+      },
+    ],
+  };
+}
+
+/** Route one compiled workbook by exact Branch Code/Branch Name, then audit each branch import. */
+export async function importCompiledRegisterRows(
+  actor: Pick<SessionUser, 'id' | 'name' | 'role'>,
+  rows: RegisterRow[],
+  meta: { ip?: string | null; userAgent?: string | null } = {},
+): Promise<ImportResult> {
+  const branchRows = await db
+    .select({ id: branches.id, code: branches.code, name: branches.name })
+    .from(branches)
+    .where(eq(branches.isActive, true));
+
+  const grouped = new Map<string, RegisterRow[]>();
+  const errors: string[] = [];
+  let skipped = 0;
+
+  for (const row of rows) {
+    const branch = resolveImportBranch(row.branchReference, branchRows);
+    if (!branch) {
+      const supplied = row.branchReference || 'blank';
+      errors.push(
+        `Row ${row.rowNumber} (${row.customerName}): branch “${supplied}” was not recognised; row skipped.`,
+      );
+      skipped += 1;
+      continue;
+    }
+    const list = grouped.get(branch.id) ?? [];
+    list.push(row);
+    grouped.set(branch.id, list);
+  }
+
+  const result: ImportResult = {
+    created: 0,
+    skipped,
+    warnings: [],
+    errors,
+    branches: [],
+  };
+
+  for (const branch of branchRows) {
+    const branchInput = grouped.get(branch.id);
+    if (!branchInput?.length) continue;
+    const imported = await importRegisterRows(actor, branch.id, branchInput, meta);
+    result.created += imported.created;
+    result.skipped += imported.skipped;
+    result.warnings.push(...imported.warnings);
+    result.errors.push(...imported.errors);
+    result.branches.push(...imported.branches);
+  }
+
+  return result;
 }
 
 function paiseFromRupeesNumber(n: number): bigint {

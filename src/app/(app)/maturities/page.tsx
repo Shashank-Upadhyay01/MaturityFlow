@@ -2,18 +2,14 @@ import { redirect } from 'next/navigation';
 
 import { getSession, toActor } from '@/lib/auth/session';
 import { parseRegisterLayout } from '@/lib/register-layout';
-import { canTypeRegister, roleCan } from '@/lib/rbac';
+import { activeRole, canTypeRegister, ROLE_SCOPE, roleCan } from '@/lib/rbac';
+import { isAzamgarhHeadBranch } from '@/lib/branch-routing';
 import { toISODateString, todayISO } from '@/lib/working-days';
-import { serialize } from '@/lib/serialize';
-import { getCalendarSnapshot } from '@/services/calendar-service';
 import {
   getFormOptions,
-  getPlanBoardCases,
-  getPlanBoardInstalments,
   getRegisterDesk,
   listRegister,
 } from '@/services/queries';
-import { PlanBoard } from './plan-board';
 import { RegisterSheet } from './register-sheet';
 import { RegisterTabs } from './register-tabs';
 
@@ -26,8 +22,9 @@ export default async function MaturitiesPage() {
   const actor = toActor(session);
   const today = todayISO();
   const [rows, options] = await Promise.all([listRegister(actor, today), getFormOptions(actor)]);
-  const branch =
-    options.branches.find((b) => b.id === session.branchId) ?? options.branches[0] ?? null;
+  const compiledView = ROLE_SCOPE[activeRole(session.role)] === 'ALL';
+  const headBranch = options.branches.find(isAzamgarhHeadBranch) ?? options.branches[0] ?? null;
+  const branch = options.branches.find((b) => b.id === session.branchId) ?? headBranch;
   const desk = branch
     ? await getRegisterDesk(branch.id, today)
     : {
@@ -39,14 +36,6 @@ export default async function MaturitiesPage() {
         paidTodayCashPaise: 0n,
         paidTodayOnlinePaise: 0n,
       };
-
-  // The planning board's inputs. Sequential rather than parallel — parallel reads against the
-  // pooled connection were starving later pages (see the note in getDashboardStats).
-  const planCases = await getPlanBoardCases(actor);
-  const planInstalments = await getPlanBoardInstalments(actor);
-  const calendar = branch
-    ? await getCalendarSnapshot(branch.id)
-    : { holidays: [], sundaysOff: true, saturdayRule: 'SECOND_FOURTH' as const };
 
   const cashLimit = branch?.dailyCashComfortPaise ?? rows[0]?.dailyCashComfortPaise ?? 50_000_000n;
 
@@ -65,18 +54,16 @@ export default async function MaturitiesPage() {
   return (
     <div className="space-y-3">
       <RegisterTabs
-        plan={
-          <PlanBoard
-            cases={serialize(planCases)}
-            instalments={serialize(planInstalments)}
-            calendar={calendar}
-            today={today}
-          />
-        }
         sheet={
           <RegisterSheet
             role={session.role}
-            branchLabel={branch ? `${branch.code} · ${branch.name}` : 'Register'}
+            branchLabel={
+              compiledView
+                ? `All branches · Head: ${headBranch ? `${headBranch.code} — ${headBranch.name}` : 'Azamgarh'}`
+                : branch
+                  ? `${branch.code} · ${branch.name}`
+                  : 'Register'
+            }
             branchId={branch?.id ?? ''}
             today={today}
             dayStatus={desk.dayStatus}
@@ -88,7 +75,7 @@ export default async function MaturitiesPage() {
             canEdit={canType}
             canPay={canOnSheet('payout.record')}
             canSubmit={canOnSheet('case.submit')}
-            canImport={canOnSheet('data.import')}
+            canImport={canOnSheet('data.import') && !compiledView}
             canCreate={canOnSheet('case.create')}
             canSetCash={canOnSheet('cash.setOpening')}
             canRequestClose={canOnSheet('payout.record') || canOnSheet('settings.manage')}

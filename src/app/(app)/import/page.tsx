@@ -2,7 +2,8 @@ import { redirect } from 'next/navigation';
 
 import { PageHeader } from '@/components/ui/glass';
 import { getSession, toActor } from '@/lib/auth/session';
-import { roleCan } from '@/lib/rbac';
+import { ALL_BRANCHES, isAzamgarhHeadBranch } from '@/lib/branch-routing';
+import { activeRole, roleCan } from '@/lib/rbac';
 import { getFormOptions } from '@/services/queries';
 import { RegisterImport } from './register-import';
 
@@ -15,6 +16,8 @@ export default async function ImportPage() {
   if (!roleCan(session.role, 'data.import')) redirect('/dashboard');
 
   const options = await getFormOptions(toActor(session));
+  const canImportAll = ['ADMIN', 'CEO', 'CMD'].includes(activeRole(session.role));
+  const headBranch = options.branches.find(isAzamgarhHeadBranch) ?? options.branches[0] ?? null;
   return (
     <div className="space-y-6">
       <PageHeader
@@ -24,7 +27,9 @@ export default async function ImportPage() {
       />
       <RegisterImport
         branches={options.branches.map((b) => ({ id: b.id, code: b.code, name: b.name }))}
-        defaultBranchId={session.branchId ?? options.branches[0]?.id ?? null}
+        defaultBranchId={canImportAll ? ALL_BRANCHES : session.branchId ?? headBranch?.id ?? null}
+        canImportAll={canImportAll}
+        headBranchId={headBranch?.id ?? null}
       />
     </div>
   );

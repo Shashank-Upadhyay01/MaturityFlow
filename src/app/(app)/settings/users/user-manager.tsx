@@ -245,7 +245,14 @@ export function UserManager({
                     <Button size="sm" variant="ghost" asChild>
                       <Link href={`/settings/users/${u.id}`}>Open</Link>
                     </Button>
-                    <Button size="sm" variant="ghost" disabled={busy} onClick={() => reset(u.id, u.name)}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => reset(u.id, u.name)}
+                      aria-label={`Reset password for ${u.name}`}
+                      title={`Reset password for ${u.name}`}
+                    >
                       <KeyRound className="h-3.5 w-3.5" />
                     </Button>
                     <Button
@@ -253,7 +260,8 @@ export function UserManager({
                       variant="ghost"
                       disabled={busy || u.id === currentUserId || Boolean(u.deletedAt)}
                       onClick={() => toggle(u.id, !u.isActive)}
-                      title={u.id === currentUserId ? 'You cannot deactivate yourself' : undefined}
+                      aria-label={`${u.isActive ? 'Deactivate' : 'Reactivate'} ${u.name}`}
+                      title={u.id === currentUserId ? 'You cannot deactivate yourself' : `${u.isActive ? 'Deactivate' : 'Reactivate'} ${u.name}`}
                     >
                       {u.isActive ? (
                         <ShieldOff className="h-3.5 w-3.5" />

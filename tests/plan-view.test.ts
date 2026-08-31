@@ -17,6 +17,7 @@ const LAKH = 10_000_000n;
 function mk(over: Partial<PlanCase> = {}): PlanCase {
   return {
     caseId: 'c1',
+    branchId: 'br_azm',
     caseNumber: 'AZM/2026/000001',
     customerName: 'Ram Kumar',
     accountNumber: '001001',
@@ -97,6 +98,12 @@ describe('projecting an unapproved case', () => {
   it('leaves the first three working days clear for processing', () => {
     const r = buildPlanRow(mk(), [], cal, TODAY);
     expect(countWorkingDaysBetween(TODAY, r.days[0].dueOn, cal)).toBe(4); // W0..W3 inclusive
+  });
+
+  it('does not apply the processing gap twice to an approved case projection', () => {
+    const anchor = '2026-08-20';
+    const r = buildPlanRow(mk({ approvedOn: anchor }), [], cal, TODAY, 5);
+    expect(r.days[0].dueOn).toBe(anchor);
   });
 
   it('still sums to the maturity amount on an amount that does not divide evenly', () => {

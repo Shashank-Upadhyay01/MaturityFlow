@@ -8,6 +8,7 @@ import {
   desc,
   eq,
   gte,
+  ilike,
   inArray,
   isNull,
   like,
@@ -17,6 +18,7 @@ import {
   or,
   sql,
   type SQL,
+  type SQLWrapper,
 } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db } from '@/db';
@@ -25,6 +27,9 @@ import {
   auditLog,
   branchCashPositions,
   branches,
+  cashbookCommitments,
+  cashbookDays,
+  cashbookEntries,
   caseDocuments,
   caseEvents,
   customers,
@@ -34,11 +39,24 @@ import {
   registerDays,
   sessions,
   users,
+  type CashbookCommitment,
+  type CashbookCommitmentKind,
+  type CashbookDay,
+  type CashbookDayStatus,
+  type CashbookEntry,
   type CaseStatus,
 } from '@/db/schema';
 import type { Actor } from '@/lib/rbac';
 import { ROLE_SCOPE, ROLE_WRITE_SCOPE, activeRole } from '@/lib/rbac';
 import { buildRunway, type RunwayCase } from '@/lib/cash-runway';
+import {
+  CASHBOOK_COMMITMENT_KINDS,
+  CASHBOOK_ENTRY_CATEGORIES,
+  EMPTY_CASHBOOK_DAY_FIGURES,
+  calculateDailyCashbook,
+  type CashbookDayFigures,
+  type DailyCashbookTotals,
+} from '@/lib/daily-cashbook';
 import { DEFAULT_CASH_CAP_PAISE } from '@/lib/org-settings';
 import { LARGE_CASE_THRESHOLD_PAISE } from '@/lib/payout-policy';
 import { addDays, collectWorkingDays, todayISO } from '@/lib/working-days';
@@ -651,6 +669,622 @@ export async function getRegisterDesk(branchId: string, date: string) {
   };
 }
 
+// ── Daily cashbook ───────────────────────────────────────────────────────
+
+export interface CashbookBranchRef {
+  id: string;
+  code: string;
+  name: string;
+  city: string | null;
+  isActive: boolean;
+  comfortPaise: bigint;
+}
+
+/** A named item together with the business date on which it first entered the book. */
+export interface CashbookCommitmentView extends CashbookCommitment {
+  sourceDate: string;
+  carried: boolean;
+}
+
+export interface CashbookCommitmentKindTotals {
+  /** Items entered on the selected day's sheet, whether or not they were later settled. */
+  openedTodayPaise: bigint;
+  /** Still-outstanding items whose source day is earlier than the selected day. */
+  carriedPaise: bigint;
+  /** All items still outstanding at the end of the selected day. */
+  outstandingPaise: bigint;
+}
+
+export type CashbookCommitmentTotals = Record<
+  CashbookCommitmentKind,
+  CashbookCommitmentKindTotals
+>;
+
+export interface CashbookPayoutComparison {
+  transactionCount: number;
+  payoutTotalPaise: bigint;
+  payoutCashPaise: bigint;
+  payoutOnlinePaise: bigint;
+  cashbookWithdrawalPaise: bigint;
+  /** Cashbook withdrawal minus payout cash. Negative means payout cash is missing from the book. */
+  withdrawalVsPayoutCashPaise: bigint;
+  payoutCashMissingFromCashbookPaise: bigint;
+  otherCashWithdrawalsPaise: bigint;
+}
+
+export interface CashbookPlannedOpening {
+  amountPaise: bigint;
+  plannedOnlinePaise: bigint;
+  source: 'EXACT' | 'CARRIED_FORWARD' | 'NONE';
+  sourceDate: string | null;
+  note: string | null;
+  updatedAt: Date | null;
+}
+
+export interface CashbookDayView {
+  branch: CashbookBranchRef;
+  date: string;
+  day: CashbookDay | null;
+  figures: CashbookDayFigures;
+  /** Rows active at the end of this business date. */
+  entries: CashbookEntry[];
+  /** Named items opened on this date. These, and only these, feed the legacy day totals. */
+  currentCommitments: CashbookCommitmentView[];
+  /** Prior-day items still outstanding at the end of this date. */
+  carriedCommitments: CashbookCommitmentView[];
+  /** Current plus carried items still outstanding at the end of this date. */
+  outstandingCommitments: CashbookCommitmentView[];
+  commitmentTotals: CashbookCommitmentTotals;
+  totals: DailyCashbookTotals;
+  totalsSource: 'LIVE' | 'CLOSE_SNAPSHOT';
+  payoutComparison: CashbookPayoutComparison;
+  plannedOpening: CashbookPlannedOpening;
+  plannedOpeningPaise: bigint;
+  /** Actual opening-balance entries minus the planner's opening figure. */
+  openingVsPlanPaise: bigint;
+}
+
+export interface CashbookSummaryRow {
+  branch: CashbookBranchRef;
+  date: string;
+  day: CashbookDay | null;
+  figures: CashbookDayFigures;
+  totals: DailyCashbookTotals;
+  totalsSource: 'LIVE' | 'CLOSE_SNAPSHOT';
+  commitmentTotals: CashbookCommitmentTotals;
+  currentCommitmentCount: number;
+  carriedCommitmentCount: number;
+  outstandingCommitmentCount: number;
+  payoutComparison: CashbookPayoutComparison;
+  plannedOpening: CashbookPlannedOpening;
+  plannedOpeningPaise: bigint;
+  openingVsPlanPaise: bigint;
+}
+
+export interface CashbookSummaryTotals
+  extends Omit<DailyCashbookTotals, 'state'> {
+  /** MIXED prevents one branch's excess from making another branch's shortage disappear. */
+  state: DailyCashbookTotals['state'] | 'MIXED';
+  oldPortalTotalPaise: bigint;
+  fixedDepositPaise: bigint;
+  newBusinessPaise: bigint;
+  membershipCollectionPaise: bigint;
+  oldLoanPaise: bigint;
+  payoutTransactionCount: number;
+  payoutTotalPaise: bigint;
+  payoutCashPaise: bigint;
+  payoutOnlinePaise: bigint;
+  withdrawalVsPayoutCashPaise: bigint;
+  payoutCashMissingFromCashbookPaise: bigint;
+  otherCashWithdrawalsPaise: bigint;
+  plannedOpeningPaise: bigint;
+  openingVsPlanPaise: bigint;
+  /** Gross figures; unlike the net difference, neither can mask the other. */
+  shortagePaise: bigint;
+  excessPaise: bigint;
+  commitmentTotals: CashbookCommitmentTotals;
+}
+
+export interface CashbookSummary {
+  date: string;
+  rows: CashbookSummaryRow[];
+  totals: CashbookSummaryTotals;
+  statusCounts: Record<CashbookDayStatus | 'NOT_STARTED', number>;
+  reconciliationCounts: Record<DailyCashbookTotals['state'], number>;
+}
+
+function cashbookBranchScope(actor: Actor): SQL | undefined {
+  switch (ROLE_SCOPE[activeRole(actor.role)]) {
+    case 'ALL':
+      return undefined;
+    // A cashbook has no agent dimension. OWN therefore narrows to the actor's branch, exactly
+    // like a branch-scoped read; roles without cashbook.view are rejected before this query.
+    case 'BRANCH':
+    case 'OWN':
+      return eq(branches.id, actor.branchId ?? '__none__');
+  }
+}
+
+function cashbookFigures(day: CashbookDay | null): CashbookDayFigures {
+  if (!day) return { ...EMPTY_CASHBOOK_DAY_FIGURES };
+  return {
+    oldPortalTotalPaise: day.oldPortalTotalPaise,
+    fixedDepositPaise: day.fixedDepositPaise,
+    newBusinessPaise: day.newBusinessPaise,
+    membershipCollectionPaise: day.membershipCollectionPaise,
+    oldLoanPaise: day.oldLoanPaise,
+    note500Count: day.note500Count,
+    note200Count: day.note200Count,
+    note100Count: day.note100Count,
+    note50Count: day.note50Count,
+    note20Count: day.note20Count,
+    note10Count: day.note10Count,
+    coinsPaise: day.coinsPaise,
+  };
+}
+
+function emptyCommitmentTotals(): CashbookCommitmentTotals {
+  return Object.fromEntries(
+    CASHBOOK_COMMITMENT_KINDS.map((kind) => [
+      kind,
+      { openedTodayPaise: 0n, carriedPaise: 0n, outstandingPaise: 0n },
+    ]),
+  ) as CashbookCommitmentTotals;
+}
+
+function totalCommitments(
+  current: readonly CashbookCommitmentView[],
+  carried: readonly CashbookCommitmentView[],
+  outstanding: readonly CashbookCommitmentView[],
+): CashbookCommitmentTotals {
+  const totals = emptyCommitmentTotals();
+  for (const item of current) totals[item.kind].openedTodayPaise += item.amountPaise;
+  for (const item of carried) totals[item.kind].carriedPaise += item.amountPaise;
+  for (const item of outstanding) totals[item.kind].outstandingPaise += item.amountPaise;
+  return totals;
+}
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * A CLOSED day is an approved accounting record. Prefer its immutable string-only close
+ * snapshot to re-deriving history from named items that may be settled on a later date.
+ */
+function totalsFromCloseSnapshot(day: CashbookDay | null): DailyCashbookTotals | null {
+  if (day?.status !== 'CLOSED') return null;
+  const snapshot = recordOf(day.closeSnapshot);
+  const totals = recordOf(snapshot?.totals);
+  const categoryRows = recordOf(totals?.byCategory);
+  if (!totals || !categoryRows) return null;
+
+  try {
+    const money = (key: string): bigint => {
+      const value = totals[key];
+      if (typeof value !== 'string' || !/^-?\d+$/.test(value)) throw new Error('bad snapshot');
+      return BigInt(value);
+    };
+    const byCategory = Object.fromEntries(
+      CASHBOOK_ENTRY_CATEGORIES.map((category) => {
+        const value = categoryRows[category];
+        if (typeof value !== 'string' || !/^-?\d+$/.test(value)) throw new Error('bad snapshot');
+        return [category, BigInt(value)];
+      }),
+    ) as DailyCashbookTotals['byCategory'];
+    const state = totals.state;
+    if (!['EMPTY', 'BALANCED', 'SHORT', 'EXCESS'].includes(String(state))) {
+      throw new Error('bad snapshot');
+    }
+    if (typeof totals.hasActivity !== 'boolean') throw new Error('bad snapshot');
+
+    const warnings = Array.isArray(totals.warnings)
+      ? totals.warnings.filter((warning): warning is 'NEGATIVE_EXPECTED_CASH' =>
+          warning === 'NEGATIVE_EXPECTED_CASH',
+        )
+      : [];
+    return {
+      byCategory,
+      receivingPaise: money('receivingPaise'),
+      byAccountPaise: money('byAccountPaise'),
+      openingBalancePaise: money('openingBalancePaise'),
+      totalAmountPaise: money('totalAmountPaise'),
+      deductionsPaise: money('deductionsPaise'),
+      expectedPhysicalCashPaise: money('expectedPhysicalCashPaise'),
+      countedCashPaise: money('countedCashPaise'),
+      cashDifferencePaise: money('cashDifferencePaise'),
+      portalBreakdownPaise: money('portalBreakdownPaise'),
+      portalVariancePaise: money('portalVariancePaise'),
+      givenCashPaise: money('givenCashPaise'),
+      dueAmountPaise: money('dueAmountPaise'),
+      pendingWithdrawalPaise: money('pendingWithdrawalPaise'),
+      hasActivity: totals.hasActivity,
+      state: state as DailyCashbookTotals['state'],
+      warnings,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function payoutComparison(
+  totals: DailyCashbookTotals,
+  payout: { n: number; totalPaise: bigint; cashPaise: bigint; onlinePaise: bigint },
+): CashbookPayoutComparison {
+  const cashbookWithdrawalPaise = totals.byCategory.WITHDRAWAL;
+  const variance = cashbookWithdrawalPaise - payout.cashPaise;
+  return {
+    transactionCount: payout.n,
+    payoutTotalPaise: payout.totalPaise,
+    payoutCashPaise: payout.cashPaise,
+    payoutOnlinePaise: payout.onlinePaise,
+    cashbookWithdrawalPaise,
+    withdrawalVsPayoutCashPaise: variance,
+    payoutCashMissingFromCashbookPaise: variance < 0n ? -variance : 0n,
+    otherCashWithdrawalsPaise: variance > 0n ? variance : 0n,
+  };
+}
+
+type CashbookLoadedRow = CashbookDayView;
+
+async function loadCashbookRows(
+  branchRows: readonly CashbookBranchRef[],
+  date: string,
+): Promise<CashbookLoadedRow[]> {
+  if (branchRows.length === 0) return [];
+  const branchIds = branchRows.map((branch) => branch.id);
+  const activeAtEndOfDay = (column: SQLWrapper): SQL =>
+    or(
+      isNull(column),
+      sql`(${column} AT TIME ZONE 'Asia/Kolkata')::date > ${date}`,
+    )!;
+
+  // Kept sequential deliberately. These are batched across every visible branch, and one
+  // connection per request behaves much better behind a small managed-Postgres pooler.
+  const dayRows = await db
+    .select()
+    .from(cashbookDays)
+    .where(and(inArray(cashbookDays.branchId, branchIds), eq(cashbookDays.date, date)));
+
+  const entryRows = await db
+    .select({ branchId: cashbookDays.branchId, entry: cashbookEntries })
+    .from(cashbookEntries)
+    .innerJoin(cashbookDays, eq(cashbookDays.id, cashbookEntries.cashbookDayId))
+    .where(
+      and(
+        inArray(cashbookDays.branchId, branchIds),
+        eq(cashbookDays.date, date),
+        activeAtEndOfDay(cashbookEntries.voidedAt),
+      ),
+    )
+    .orderBy(asc(cashbookEntries.category), asc(cashbookEntries.createdAt));
+
+  const currentRows = await db
+    .select({ branchId: cashbookDays.branchId, sourceDate: cashbookDays.date, item: cashbookCommitments })
+    .from(cashbookCommitments)
+    .innerJoin(cashbookDays, eq(cashbookDays.id, cashbookCommitments.cashbookDayId))
+    .where(
+      and(
+        inArray(cashbookDays.branchId, branchIds),
+        eq(cashbookDays.date, date),
+        activeAtEndOfDay(cashbookCommitments.voidedAt),
+      ),
+    )
+    .orderBy(asc(cashbookCommitments.kind), asc(cashbookCommitments.createdAt));
+
+  const outstandingRows = await db
+    .select({ branchId: cashbookDays.branchId, sourceDate: cashbookDays.date, item: cashbookCommitments })
+    .from(cashbookCommitments)
+    .innerJoin(cashbookDays, eq(cashbookDays.id, cashbookCommitments.cashbookDayId))
+    .where(
+      and(
+        inArray(cashbookDays.branchId, branchIds),
+        lte(cashbookDays.date, date),
+        activeAtEndOfDay(cashbookCommitments.voidedAt),
+        or(
+          isNull(cashbookCommitments.settledAt),
+          sql`(${cashbookCommitments.settledAt} AT TIME ZONE 'Asia/Kolkata')::date > ${date}`,
+        ),
+      ),
+    )
+    .orderBy(asc(cashbookDays.date), asc(cashbookCommitments.createdAt));
+
+  const payoutRows = await db
+    .select({
+      branchId: payoutTransactions.branchId,
+      n: sql<number>`COUNT(*)::int`,
+      total: sql<string>`COALESCE(SUM(${payoutTransactions.totalPaise}), 0)`,
+      cash: sql<string>`COALESCE(SUM(${payoutTransactions.cashPaise}), 0)`,
+      online: sql<string>`COALESCE(SUM(${payoutTransactions.onlinePaise}), 0)`,
+    })
+    .from(payoutTransactions)
+    .where(
+      and(
+        inArray(payoutTransactions.branchId, branchIds),
+        eq(payoutTransactions.valueDate, date),
+        isNull(payoutTransactions.reversedAt),
+      ),
+    )
+    .groupBy(payoutTransactions.branchId);
+
+  const positionRows = await db
+    .selectDistinctOn([branchCashPositions.branchId], {
+      branchId: branchCashPositions.branchId,
+      date: branchCashPositions.date,
+      openingCashPaise: branchCashPositions.openingCashPaise,
+      plannedOnlinePaise: branchCashPositions.plannedOnlinePaise,
+      note: branchCashPositions.note,
+      updatedAt: branchCashPositions.updatedAt,
+    })
+    .from(branchCashPositions)
+    .where(
+      and(
+        inArray(branchCashPositions.branchId, branchIds),
+        lte(branchCashPositions.date, date),
+      ),
+    )
+    .orderBy(branchCashPositions.branchId, desc(branchCashPositions.date));
+
+  const dayByBranch = new Map(dayRows.map((day) => [day.branchId, day]));
+  const entriesByBranch = new Map<string, CashbookEntry[]>();
+  for (const row of entryRows) {
+    const rows = entriesByBranch.get(row.branchId) ?? [];
+    rows.push(row.entry);
+    entriesByBranch.set(row.branchId, rows);
+  }
+  const currentByBranch = new Map<string, CashbookCommitmentView[]>();
+  for (const row of currentRows) {
+    const rows = currentByBranch.get(row.branchId) ?? [];
+    rows.push({ ...row.item, sourceDate: row.sourceDate, carried: false });
+    currentByBranch.set(row.branchId, rows);
+  }
+  const outstandingByBranch = new Map<string, CashbookCommitmentView[]>();
+  for (const row of outstandingRows) {
+    const rows = outstandingByBranch.get(row.branchId) ?? [];
+    rows.push({ ...row.item, sourceDate: row.sourceDate, carried: row.sourceDate < date });
+    outstandingByBranch.set(row.branchId, rows);
+  }
+  const payoutsByBranch = new Map(
+    payoutRows.map((row) => [
+      row.branchId,
+      {
+        n: Number(row.n),
+        totalPaise: big(row.total),
+        cashPaise: big(row.cash),
+        onlinePaise: big(row.online),
+      },
+    ]),
+  );
+  const positionsByBranch = new Map(positionRows.map((position) => [position.branchId, position]));
+
+  return branchRows.map((branch) => {
+    const day = dayByBranch.get(branch.id) ?? null;
+    const entries = entriesByBranch.get(branch.id) ?? [];
+    const currentCommitments = currentByBranch.get(branch.id) ?? [];
+    const outstandingCommitments = outstandingByBranch.get(branch.id) ?? [];
+    const carriedCommitments = outstandingCommitments.filter((item) => item.carried);
+    const figures = cashbookFigures(day);
+    const liveTotals = calculateDailyCashbook(entries, figures, currentCommitments);
+    const closedTotals = totalsFromCloseSnapshot(day);
+    const totals = closedTotals ?? liveTotals;
+    const payout = payoutsByBranch.get(branch.id) ?? {
+      n: 0,
+      totalPaise: 0n,
+      cashPaise: 0n,
+      onlinePaise: 0n,
+    };
+    const position = positionsByBranch.get(branch.id);
+    const plannedOpening: CashbookPlannedOpening = position
+      ? {
+          amountPaise: position.openingCashPaise,
+          plannedOnlinePaise: position.plannedOnlinePaise,
+          source: position.date === date ? 'EXACT' : 'CARRIED_FORWARD',
+          sourceDate: position.date,
+          note: position.note,
+          updatedAt: position.updatedAt,
+        }
+      : {
+          amountPaise: 0n,
+          plannedOnlinePaise: 0n,
+          source: 'NONE',
+          sourceDate: null,
+          note: null,
+          updatedAt: null,
+        };
+
+    return {
+      branch,
+      date,
+      day,
+      figures,
+      entries,
+      currentCommitments,
+      carriedCommitments,
+      outstandingCommitments,
+      commitmentTotals: totalCommitments(
+        currentCommitments,
+        carriedCommitments,
+        outstandingCommitments,
+      ),
+      totals,
+      totalsSource: closedTotals ? 'CLOSE_SNAPSHOT' : 'LIVE',
+      payoutComparison: payoutComparison(totals, payout),
+      plannedOpening,
+      plannedOpeningPaise: plannedOpening.amountPaise,
+      openingVsPlanPaise: totals.openingBalancePaise - plannedOpening.amountPaise,
+    } satisfies CashbookDayView;
+  });
+}
+
+function cashbookBranchSelection() {
+  return {
+    id: branches.id,
+    code: branches.code,
+    name: branches.name,
+    city: branches.city,
+    isActive: branches.isActive,
+    comfortPaise: branches.dailyCashComfortPaise,
+  };
+}
+
+/** One branch's complete, read-scoped daily cashbook. No row is created on this read path. */
+export async function getCashbookDay(
+  actor: Actor,
+  branchId: string,
+  date = todayISO(),
+): Promise<CashbookDayView | null> {
+  const scope = cashbookBranchScope(actor);
+  const [branch] = await db
+    .select(cashbookBranchSelection())
+    .from(branches)
+    .where(and(eq(branches.id, branchId), ...(scope ? [scope] : [])))
+    .limit(1);
+  if (!branch) return null;
+  return (await loadCashbookRows([branch], date))[0] ?? null;
+}
+
+function sumCommitmentTotals(rows: readonly CashbookSummaryRow[]): CashbookCommitmentTotals {
+  const totals = emptyCommitmentTotals();
+  for (const row of rows) {
+    for (const kind of CASHBOOK_COMMITMENT_KINDS) {
+      totals[kind].openedTodayPaise += row.commitmentTotals[kind].openedTodayPaise;
+      totals[kind].carriedPaise += row.commitmentTotals[kind].carriedPaise;
+      totals[kind].outstandingPaise += row.commitmentTotals[kind].outstandingPaise;
+    }
+  }
+  return totals;
+}
+
+function sumCashbookRows(rows: readonly CashbookSummaryRow[]): CashbookSummaryTotals {
+  const byCategory = Object.fromEntries(
+    CASHBOOK_ENTRY_CATEGORIES.map((category) => [
+      category,
+      rows.reduce((sum, row) => sum + row.totals.byCategory[category], 0n),
+    ]),
+  ) as DailyCashbookTotals['byCategory'];
+  const sum = (pick: (row: CashbookSummaryRow) => bigint): bigint =>
+    rows.reduce((total, row) => total + pick(row), 0n);
+  const shortagePaise = sum((row) =>
+    row.totals.cashDifferencePaise < 0n ? -row.totals.cashDifferencePaise : 0n,
+  );
+  const excessPaise = sum((row) =>
+    row.totals.cashDifferencePaise > 0n ? row.totals.cashDifferencePaise : 0n,
+  );
+  const hasActivity = rows.some((row) => row.totals.hasActivity);
+  const state: CashbookSummaryTotals['state'] = !hasActivity
+    ? 'EMPTY'
+    : shortagePaise > 0n && excessPaise > 0n
+      ? 'MIXED'
+      : shortagePaise > 0n
+        ? 'SHORT'
+        : excessPaise > 0n
+          ? 'EXCESS'
+          : 'BALANCED';
+
+  return {
+    byCategory,
+    receivingPaise: sum((row) => row.totals.receivingPaise),
+    byAccountPaise: sum((row) => row.totals.byAccountPaise),
+    openingBalancePaise: sum((row) => row.totals.openingBalancePaise),
+    totalAmountPaise: sum((row) => row.totals.totalAmountPaise),
+    deductionsPaise: sum((row) => row.totals.deductionsPaise),
+    expectedPhysicalCashPaise: sum((row) => row.totals.expectedPhysicalCashPaise),
+    countedCashPaise: sum((row) => row.totals.countedCashPaise),
+    cashDifferencePaise: sum((row) => row.totals.cashDifferencePaise),
+    portalBreakdownPaise: sum((row) => row.totals.portalBreakdownPaise),
+    portalVariancePaise: sum((row) => row.totals.portalVariancePaise),
+    givenCashPaise: sum((row) => row.totals.givenCashPaise),
+    dueAmountPaise: sum((row) => row.totals.dueAmountPaise),
+    pendingWithdrawalPaise: sum((row) => row.totals.pendingWithdrawalPaise),
+    hasActivity,
+    state,
+    warnings: rows.some((row) => row.totals.warnings.includes('NEGATIVE_EXPECTED_CASH'))
+      ? ['NEGATIVE_EXPECTED_CASH']
+      : [],
+    oldPortalTotalPaise: sum((row) => row.figures.oldPortalTotalPaise),
+    fixedDepositPaise: sum((row) => row.figures.fixedDepositPaise),
+    newBusinessPaise: sum((row) => row.figures.newBusinessPaise),
+    membershipCollectionPaise: sum((row) => row.figures.membershipCollectionPaise),
+    oldLoanPaise: sum((row) => row.figures.oldLoanPaise),
+    payoutTransactionCount: rows.reduce(
+      (total, row) => total + row.payoutComparison.transactionCount,
+      0,
+    ),
+    payoutTotalPaise: sum((row) => row.payoutComparison.payoutTotalPaise),
+    payoutCashPaise: sum((row) => row.payoutComparison.payoutCashPaise),
+    payoutOnlinePaise: sum((row) => row.payoutComparison.payoutOnlinePaise),
+    withdrawalVsPayoutCashPaise: sum(
+      (row) => row.payoutComparison.withdrawalVsPayoutCashPaise,
+    ),
+    payoutCashMissingFromCashbookPaise: sum(
+      (row) => row.payoutComparison.payoutCashMissingFromCashbookPaise,
+    ),
+    otherCashWithdrawalsPaise: sum((row) => row.payoutComparison.otherCashWithdrawalsPaise),
+    plannedOpeningPaise: sum((row) => row.plannedOpeningPaise),
+    openingVsPlanPaise: sum((row) => row.openingVsPlanPaise),
+    shortagePaise,
+    excessPaise,
+    commitmentTotals: sumCommitmentTotals(rows),
+  };
+}
+
+/** Bank/branch daily reconciliation for the Summary dashboard, always over the full scoped book. */
+export async function getCashbookSummary(
+  actor: Actor,
+  date = todayISO(),
+): Promise<CashbookSummary> {
+  const scope = cashbookBranchScope(actor);
+  const branchRows = await db
+    .select(cashbookBranchSelection())
+    .from(branches)
+    .where(and(eq(branches.isActive, true), ...(scope ? [scope] : [])))
+    .orderBy(asc(branches.code));
+  const loaded = await loadCashbookRows(branchRows, date);
+  const rows: CashbookSummaryRow[] = loaded.map((row) => ({
+    branch: row.branch,
+    date: row.date,
+    day: row.day,
+    figures: row.figures,
+    totals: row.totals,
+    totalsSource: row.totalsSource,
+    commitmentTotals: row.commitmentTotals,
+    currentCommitmentCount: row.currentCommitments.length,
+    carriedCommitmentCount: row.carriedCommitments.length,
+    outstandingCommitmentCount: row.outstandingCommitments.length,
+    payoutComparison: row.payoutComparison,
+    plannedOpening: row.plannedOpening,
+    plannedOpeningPaise: row.plannedOpeningPaise,
+    openingVsPlanPaise: row.openingVsPlanPaise,
+  }));
+
+  const statusCounts: CashbookSummary['statusCounts'] = {
+    NOT_STARTED: 0,
+    OPEN: 0,
+    CLOSE_REQUESTED: 0,
+    CLOSED: 0,
+  };
+  const reconciliationCounts: CashbookSummary['reconciliationCounts'] = {
+    EMPTY: 0,
+    BALANCED: 0,
+    SHORT: 0,
+    EXCESS: 0,
+  };
+  for (const row of rows) {
+    statusCounts[row.day?.status ?? 'NOT_STARTED'] += 1;
+    reconciliationCounts[row.totals.state] += 1;
+  }
+
+  return {
+    date,
+    rows,
+    totals: sumCashbookRows(rows),
+    statusCounts,
+    reconciliationCounts,
+  };
+}
+
 export async function getCaseDetail(actor: Actor, caseId: string) {
   const scope = caseScope(actor);
   const [row] = await db
@@ -947,18 +1581,21 @@ export async function getMonthlyLedger(actor: Actor, from: string, to: string) {
 
 // ── Audit ─────────────────────────────────────────────────────────────────
 
-export async function listAudit(
-  filters: {
-    action?: string;
-    entityId?: string;
-    branchId?: string;
-    actorId?: string;
-    hideAuth?: boolean;
-    onlyAuth?: boolean;
-    limit?: number;
-    offset?: number;
-  } = {},
-) {
+export interface AuditListFilters {
+  action?: string;
+  entityId?: string;
+  branchId?: string;
+  actorId?: string;
+  hideAuth?: boolean;
+  onlyAuth?: boolean;
+  limit?: number;
+  offset?: number;
+  query?: string;
+  from?: Date;
+  to?: Date;
+}
+
+function auditWhere(filters: AuditListFilters): SQL | undefined {
   const conds: SQL[] = [];
   if (filters.action) conds.push(eq(auditLog.action, filters.action));
   if (filters.hideAuth) conds.push(not(like(auditLog.action, 'auth.%')));
@@ -966,14 +1603,64 @@ export async function listAudit(
   if (filters.entityId) conds.push(eq(auditLog.entityId, filters.entityId));
   if (filters.branchId) conds.push(eq(auditLog.branchId, filters.branchId));
   if (filters.actorId) conds.push(eq(auditLog.actorId, filters.actorId));
+  if (filters.query) {
+    const term = `%${filters.query.trim()}%`;
+    conds.push(
+      or(
+        ilike(auditLog.summary, term),
+        ilike(auditLog.actorName, term),
+        ilike(auditLog.action, term),
+        ilike(auditLog.entity, term),
+        ilike(auditLog.entityId, term),
+      )!,
+    );
+  }
+  if (filters.from) conds.push(gte(auditLog.at, filters.from));
+  if (filters.to) conds.push(lte(auditLog.at, filters.to));
+  return conds.length ? and(...conds) : undefined;
+}
+
+export async function listAudit(filters: AuditListFilters = {}) {
 
   return db
     .select()
     .from(auditLog)
-    .where(conds.length ? and(...conds) : undefined)
+    .where(auditWhere(filters))
     .orderBy(desc(auditLog.at))
     .limit(filters.limit ?? 100)
     .offset(filters.offset ?? 0);
+}
+
+/** A bounded audit page plus its unbounded count, using exactly the same predicates. */
+export async function listAuditPage(filters: AuditListFilters = {}) {
+  const { limit = 50, offset = 0 } = filters;
+  const where = auditWhere(filters);
+
+  const [rows, totalRows] = await Promise.all([
+    db.select().from(auditLog).where(where).orderBy(desc(auditLog.at)).limit(limit).offset(offset),
+    db.select({ total: count() }).from(auditLog).where(where),
+  ]);
+  return { rows, total: Number(totalRows[0]?.total ?? 0) };
+}
+
+/** Stable choices for the audit filters. Audit history itself remains append-only. */
+export async function getAuditFilterOptions() {
+  const [actionRows, actorRows, branchRows] = await Promise.all([
+    db.selectDistinct({ action: auditLog.action }).from(auditLog).orderBy(asc(auditLog.action)),
+    db
+      .selectDistinct({ id: auditLog.actorId, name: auditLog.actorName })
+      .from(auditLog)
+      .orderBy(asc(auditLog.actorName)),
+    db
+      .select({ id: branches.id, code: branches.code, name: branches.name })
+      .from(branches)
+      .orderBy(asc(branches.code)),
+  ]);
+  return {
+    actions: actionRows.map((r) => r.action),
+    actors: actorRows.filter((r): r is { id: string; name: string } => Boolean(r.id)),
+    branches: branchRows,
+  };
 }
 
 // ── Lookups for forms ─────────────────────────────────────────────────────

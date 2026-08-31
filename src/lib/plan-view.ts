@@ -31,6 +31,7 @@ import type { WorkingDayCalendar } from './working-days';
 /** A case as the board receives it — money already serialised to strings. */
 export interface PlanCase {
   caseId: string;
+  branchId: string;
   caseNumber: string;
   customerName: string;
   accountNumber: string | null;
@@ -228,7 +229,9 @@ export function buildPlanRow(
           : { kind: c.cashPolicy === 'ONLINE_ONLY' ? 'ONLINE_ONLY' : 'CASH_ONLY' },
       startOnNextWorkingDay: c.startOnNextWorkingDay,
       stride: strideFor(cadence),
-      startOffsetWorkingDays: PROCESSING_WORKING_DAYS,
+      // A persisted approvedOn is already the schedule anchor (maturity + three calendar days).
+      // Draft projections start from today and still need the policy's processing gap.
+      startOffsetWorkingDays: c.approvedOn ? 0 : PROCESSING_WORKING_DAYS,
       policyMaxDays: parts,
     });
 

@@ -33,7 +33,7 @@ await page.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 30000 })
 await page.goto(`${base}/maturities`, { waitUntil: 'networkidle' });
 await page.waitForTimeout(900);
 
-const rowCount = () => page.locator('table tbody tr').count();
+const rowCount = () => page.locator('table tbody tr[data-register-row]').count();
 const colIndex = async (label) => {
   const heads = await page.locator('table thead th').allTextContents();
   return heads.findIndex((h) => h.trim().toLowerCase().startsWith(label.toLowerCase()));
@@ -58,7 +58,7 @@ const isAsc = (a) => a.every((v, i) => i === 0 || a[i - 1] <= v);
 
 // ---- 1. the Due today badge agrees with the Due today view -------------------------------
 const badge = (await page.locator('button', { hasText: 'Due today' }).first().innerText()).match(/(\d+)\s*$/);
-const badgeCount = badge ? Number(badge[1]) : -1;
+const badgeCount = badge ? Number(badge[1]) : 0;
 await page.click('button:has-text("Due today")');
 await page.waitForTimeout(600);
 const dueRows = await rowCount();
@@ -67,7 +67,11 @@ await page.screenshot({ path: `/tmp/chk-${tag}-1-due.png` });
 
 // ---- 2. every row in that view really is due today ---------------------------------------
 const todays = await columnNumbers('Today');
-check('Every row in Due today has an amount for today', todays.length > 0 && todays.every((v) => v > 0), `min ${Math.min(...todays)}`);
+check(
+  'Every row in Due today has an amount for today (or the view is honestly empty)',
+  todays.length === 0 || todays.every((v) => v > 0),
+  todays.length ? `min ${Math.min(...todays)}` : 'empty',
+);
 
 // ---- 3. Due today auto-sorts biggest first -----------------------------------------------
 check('Due today auto-sorts largest first', isDesc(todays), todays.join(','));

@@ -6,6 +6,7 @@ import { MoneyError } from '@/lib/money';
 import { ScheduleInputError, ScheduleIntegrityError } from '@/lib/payout-engine';
 import { WorkflowError } from '@/services/case-service';
 import { PayoutError } from '@/services/payout-service';
+import { CashbookError } from '@/services/cashbook-service';
 
 export type ActionResult<T = undefined> =
   | ({ ok: true } & (T extends undefined ? { data?: undefined } : { data: T }))
@@ -33,6 +34,7 @@ export function toActionError(e: unknown): { ok: false; error: string; code?: st
   if (e instanceof ForbiddenError) return fail(e.message, e.reason);
   if (e instanceof WorkflowError) return fail(e.message, e.code);
   if (e instanceof PayoutError) return fail(e.message, e.code);
+  if (e instanceof CashbookError) return fail(e.message, e.code);
   if (e instanceof MoneyError) return fail(e.message, e.code);
   if (e instanceof ScheduleInputError) return fail(e.message, 'SCHEDULE_INPUT');
   if (e instanceof ScheduleIntegrityError) {
@@ -53,6 +55,12 @@ export function toActionError(e: unknown): { ok: false; error: string; code?: st
         txn_legs_reconcile: 'The cash and online amounts do not add up to the total.',
         txn_online_needs_reference: 'An online transfer needs a UTR / reference number.',
         cases_approval_after_submission: 'Approval date cannot be before the submission date.',
+        cashbook_day_money_non_negative: 'Cashbook amounts cannot be negative.',
+        cashbook_day_counts_non_negative: 'Note counts cannot be negative.',
+        cashbook_entry_amount_positive: 'Entry amount must be greater than zero.',
+        cashbook_entry_cash_only_outflows: 'Opening balance, withdrawals and expenses must use cash.',
+        cashbook_commitment_amount_positive: 'Named-item amount must be greater than zero.',
+        cashbook_commitment_needs_name: 'A named item needs a person or customer name.',
       };
       return fail(friendly[pg.constraint ?? ''] ?? 'That change breaks a data-integrity rule.', pg.constraint);
     }

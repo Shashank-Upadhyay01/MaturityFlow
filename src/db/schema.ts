@@ -107,6 +107,30 @@ export const caseEventTypeEnum = pgEnum('case_event_type', [
 
 export const notificationLevelEnum = pgEnum('notification_level', ['INFO', 'WARNING', 'CRITICAL']);
 
+export const cashbookDayStatusEnum = pgEnum('cashbook_day_status', [
+  'OPEN',
+  'CLOSE_REQUESTED',
+  'CLOSED',
+]);
+
+export const cashbookEntryCategoryEnum = pgEnum('cashbook_entry_category', [
+  'OTHER_RECEIPT',
+  'NEW_LOAN',
+  'SAVINGS_DEPOSIT',
+  'WITHDRAWAL',
+  'EXPENSE',
+  'RENEWAL',
+  'OPENING_BALANCE',
+]);
+
+export const cashbookEntryChannelEnum = pgEnum('cashbook_entry_channel', ['CASH', 'ACCOUNT']);
+
+export const cashbookCommitmentKindEnum = pgEnum('cashbook_commitment_kind', [
+  'GIVEN_CASH',
+  'DUE_AMOUNT',
+  'PENDING_WITHDRAWAL',
+]);
+
 // ──────────────────────────────────────────────────────────── tables ──
 
 export const branches = pgTable(
@@ -258,6 +282,49 @@ export const customers = pgTable(
     index('customers_branch_idx').on(t.branchId),
     index('customers_agent_idx').on(t.agentId),
     index('customers_name_idx').on(t.name),
+  ],
+);
+
+/** Upcoming maturities supplied by the core/legacy forecast, before any payout form is submitted. */
+export const maturityForecasts = pgTable(
+  'maturity_forecasts',
+  {
+    id: text('id').primaryKey(),
+    sourceKey: text('source_key').notNull(),
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'restrict' }),
+    accountNumber: text('account_number'),
+    customerName: text('customer_name').notNull(),
+    agentName: text('agent_name'),
+    planAmountPaise: bigint('plan_amount_paise', { mode: 'bigint' }).notNull().default(sql`0`),
+    totalDepositPaise: bigint('total_deposit_paise', { mode: 'bigint' }).notNull().default(sql`0`),
+    joinedOn: date('joined_on', { mode: 'string' }),
+    maturityOn: date('maturity_on', { mode: 'string' }).notNull(),
+    productName: text('product_name'),
+    planName: text('plan_name'),
+    actualMaturityPaise: bigint('actual_maturity_paise', { mode: 'bigint' }).notNull().default(sql`0`),
+    currentMaturityPaise: bigint('current_maturity_paise', { mode: 'bigint' }).notNull(),
+    tenureMonths: integer('tenure_months'),
+    interestRateBps: integer('interest_rate_bps'),
+    sourceWorkbook: text('source_workbook').notNull(),
+    sourceSheet: text('source_sheet').notNull(),
+    sourceRow: integer('source_row').notNull(),
+    importedById: text('imported_by_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    importedAt: timestamp('imported_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('maturity_forecasts_source_uq').on(t.sourceKey),
+    index('maturity_forecasts_branch_date_idx').on(t.branchId, t.maturityOn),
+    index('maturity_forecasts_date_idx').on(t.maturityOn),
+    index('maturity_forecasts_customer_idx').on(t.customerName),
+    check(
+      'maturity_forecasts_money_non_negative',
+      sql`${t.planAmountPaise} >= 0 AND ${t.totalDepositPaise} >= 0 AND ${t.actualMaturityPaise} >= 0 AND ${t.currentMaturityPaise} > 0`,
+    ),
   ],
 );
 
@@ -584,6 +651,170 @@ export const registerDays = pgTable(
   (t) => [uniqueIndex('register_days_branch_date_uq').on(t.branchId, t.date)],
 );
 
+/**
+ * One branch cashbook per business date.
+ *
+ * Entry streams live in `cashbook_entries`; the five manual report figures and the physical
+ * drawer count live here. Derived totals are never stored while the day is open. On close the
+ * server records a string-only JSON snapshot so an exported final report can name exactly what
+ * was approved without trusting browser arithmetic.
+ */
+export const cashbookDays = pgTable(
+  'cashbook_days',
+  {
+    id: text('id').primaryKey(),
+    branchId: text('branch_id')
+      .notNull()
+      .references(() => branches.id, { onDelete: 'restrict' }),
+    date: date('date', { mode: 'string' }).notNull(),
+    status: cashbookDayStatusEnum('status').notNull().default('OPEN'),
+
+    oldPortalTotalPaise: bigint('old_portal_total_paise', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    fixedDepositPaise: bigint('fixed_deposit_paise', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    newBusinessPaise: bigint('new_business_paise', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    membershipCollectionPaise: bigint('membership_collection_paise', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    oldLoanPaise: bigint('old_loan_paise', { mode: 'bigint' }).notNull().default(sql`0`),
+
+    note500Count: integer('note_500_count').notNull().default(0),
+    note200Count: integer('note_200_count').notNull().default(0),
+    note100Count: integer('note_100_count').notNull().default(0),
+    note50Count: integer('note_50_count').notNull().default(0),
+    note20Count: integer('note_20_count').notNull().default(0),
+    note10Count: integer('note_10_count').notNull().default(0),
+    /** Aggregate value of every metal coin, in paise — deliberately not a coin count. */
+    coinsPaise: bigint('coins_paise', { mode: 'bigint' }).notNull().default(sql`0`),
+    notes: text('notes'),
+
+    /** Optimistic-concurrency token. Every cashbook write increments it. */
+    version: integer('version').notNull().default(0),
+    /** Increments on every confirmed close, including after an authorised reopen. */
+    closeRevision: integer('close_revision').notNull().default(0),
+    closeRequestedById: text('close_requested_by_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    closeRequestedAt: timestamp('close_requested_at', { withTimezone: true }),
+    closeReason: text('close_reason'),
+    closedById: text('closed_by_id').references(() => users.id, { onDelete: 'set null' }),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    closeSnapshot: jsonb('close_snapshot'),
+
+    createdById: text('created_by_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    updatedById: text('updated_by_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('cashbook_days_branch_date_uq').on(t.branchId, t.date),
+    index('cashbook_days_date_status_idx').on(t.date, t.status),
+    index('cashbook_days_branch_status_idx').on(t.branchId, t.status),
+    check(
+      'cashbook_day_money_non_negative',
+      sql`${t.oldPortalTotalPaise} >= 0 AND ${t.fixedDepositPaise} >= 0 AND ${t.newBusinessPaise} >= 0 AND ${t.membershipCollectionPaise} >= 0 AND ${t.oldLoanPaise} >= 0 AND ${t.coinsPaise} >= 0`,
+    ),
+    check(
+      'cashbook_day_counts_non_negative',
+      sql`${t.note500Count} >= 0 AND ${t.note200Count} >= 0 AND ${t.note100Count} >= 0 AND ${t.note50Count} >= 0 AND ${t.note20Count} >= 0 AND ${t.note10Count} >= 0`,
+    ),
+    check('cashbook_day_versions_non_negative', sql`${t.version} >= 0 AND ${t.closeRevision} >= 0`),
+  ],
+);
+
+/**
+ * Normalised independent amount streams from the old spreadsheet columns.
+ *
+ * There is intentionally no positional “row” relationship between entries in different
+ * categories: row 12 in Receiving and row 12 in Withdrawal never meant they were one event.
+ * Rows are voided rather than deleted so the audit record and original amount survive.
+ */
+export const cashbookEntries = pgTable(
+  'cashbook_entries',
+  {
+    id: text('id').primaryKey(),
+    cashbookDayId: text('cashbook_day_id')
+      .notNull()
+      .references(() => cashbookDays.id, { onDelete: 'restrict' }),
+    category: cashbookEntryCategoryEnum('category').notNull(),
+    channel: cashbookEntryChannelEnum('channel').notNull(),
+    amountPaise: bigint('amount_paise', { mode: 'bigint' }).notNull(),
+    partyName: text('party_name'),
+    reference: text('reference'),
+    note: text('note'),
+
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    voidedById: text('voided_by_id').references(() => users.id, { onDelete: 'set null' }),
+    voidReason: text('void_reason'),
+
+    createdById: text('created_by_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    updatedById: text('updated_by_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('cashbook_entries_day_category_idx').on(t.cashbookDayId, t.category),
+    index('cashbook_entries_day_channel_idx').on(t.cashbookDayId, t.channel),
+    check('cashbook_entry_amount_positive', sql`${t.amountPaise} > 0`),
+    check(
+      'cashbook_entry_cash_only_outflows',
+      sql`${t.category} NOT IN ('WITHDRAWAL', 'EXPENSE', 'OPENING_BALANCE') OR ${t.channel} = 'CASH'`,
+    ),
+  ],
+);
+
+/** Named, reporting-only obligations from the right side of the working sheet. */
+export const cashbookCommitments = pgTable(
+  'cashbook_commitments',
+  {
+    id: text('id').primaryKey(),
+    cashbookDayId: text('cashbook_day_id')
+      .notNull()
+      .references(() => cashbookDays.id, { onDelete: 'restrict' }),
+    kind: cashbookCommitmentKindEnum('kind').notNull(),
+    amountPaise: bigint('amount_paise', { mode: 'bigint' }).notNull(),
+    partyName: text('party_name').notNull(),
+    reference: text('reference'),
+    note: text('note'),
+    dueOn: date('due_on', { mode: 'string' }),
+
+    settledAt: timestamp('settled_at', { withTimezone: true }),
+    settledById: text('settled_by_id').references(() => users.id, { onDelete: 'set null' }),
+    settlementNote: text('settlement_note'),
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    voidedById: text('voided_by_id').references(() => users.id, { onDelete: 'set null' }),
+    voidReason: text('void_reason'),
+
+    createdById: text('created_by_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    updatedById: text('updated_by_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('cashbook_commitments_day_kind_idx').on(t.cashbookDayId, t.kind),
+    index('cashbook_commitments_open_idx').on(t.kind, t.settledAt, t.voidedAt),
+    check('cashbook_commitment_amount_positive', sql`${t.amountPaise} > 0`),
+    check('cashbook_commitment_needs_name', sql`NULLIF(BTRIM(${t.partyName}), '') IS NOT NULL`),
+  ],
+);
+
 export const systemSettings = pgTable('system_settings', {
   key: text('key').primaryKey(),
   value: jsonb('value').notNull(),
@@ -623,6 +854,7 @@ export const branchRelations = relations(branches, ({ many }) => ({
   customers: many(customers),
   cases: many(maturityCases),
   cashPositions: many(branchCashPositions),
+  cashbookDays: many(cashbookDays),
 }));
 
 export const userRelations = relations(users, ({ one, many }) => ({
@@ -680,6 +912,32 @@ export const eventRelations = relations(caseEvents, ({ one }) => ({
   actor: one(users, { fields: [caseEvents.actorId], references: [users.id] }),
 }));
 
+export const cashbookDayRelations = relations(cashbookDays, ({ one, many }) => ({
+  branch: one(branches, { fields: [cashbookDays.branchId], references: [branches.id] }),
+  entries: many(cashbookEntries),
+  commitments: many(cashbookCommitments),
+  createdBy: one(users, { fields: [cashbookDays.createdById], references: [users.id] }),
+}));
+
+export const cashbookEntryRelations = relations(cashbookEntries, ({ one }) => ({
+  day: one(cashbookDays, {
+    fields: [cashbookEntries.cashbookDayId],
+    references: [cashbookDays.id],
+  }),
+  createdBy: one(users, { fields: [cashbookEntries.createdById], references: [users.id] }),
+}));
+
+export const cashbookCommitmentRelations = relations(cashbookCommitments, ({ one }) => ({
+  day: one(cashbookDays, {
+    fields: [cashbookCommitments.cashbookDayId],
+    references: [cashbookDays.id],
+  }),
+  createdBy: one(users, {
+    fields: [cashbookCommitments.createdById],
+    references: [users.id],
+  }),
+}));
+
 // ───────────────────────────────────────────────────── inferred types ──
 
 export type Branch = typeof branches.$inferSelect;
@@ -688,6 +946,7 @@ export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Agent = typeof agents.$inferSelect;
 export type Customer = typeof customers.$inferSelect;
+export type MaturityForecast = typeof maturityForecasts.$inferSelect;
 export type MaturityCase = typeof maturityCases.$inferSelect;
 export type NewMaturityCase = typeof maturityCases.$inferInsert;
 export type PayoutInstalment = typeof payoutInstalments.$inferSelect;
@@ -697,6 +956,9 @@ export type CaseEvent = typeof caseEvents.$inferSelect;
 export type AuditEntry = typeof auditLog.$inferSelect;
 export type Holiday = typeof holidays.$inferSelect;
 export type BranchCashPosition = typeof branchCashPositions.$inferSelect;
+export type CashbookDay = typeof cashbookDays.$inferSelect;
+export type CashbookEntry = typeof cashbookEntries.$inferSelect;
+export type CashbookCommitment = typeof cashbookCommitments.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 
 export type Role = (typeof roleEnum.enumValues)[number];
@@ -714,5 +976,9 @@ export type InstalmentStatus = (typeof instalmentStatusEnum.enumValues)[number];
 export type DistributionMode = (typeof distributionEnum.enumValues)[number];
 export type CashPolicyKind = (typeof cashPolicyEnum.enumValues)[number];
 export type SaturdayRule = (typeof saturdayRuleEnum.enumValues)[number];
+export type CashbookDayStatus = (typeof cashbookDayStatusEnum.enumValues)[number];
+export type CashbookEntryCategory = (typeof cashbookEntryCategoryEnum.enumValues)[number];
+export type CashbookEntryChannel = (typeof cashbookEntryChannelEnum.enumValues)[number];
+export type CashbookCommitmentKind = (typeof cashbookCommitmentKindEnum.enumValues)[number];
 export type DocumentKind = (typeof documentKindEnum.enumValues)[number];
 export type CaseEventType = (typeof caseEventTypeEnum.enumValues)[number];

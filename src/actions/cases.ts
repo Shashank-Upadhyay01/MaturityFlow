@@ -137,6 +137,12 @@ export async function createCaseAction(
     }
     const d = parsed.data;
 
+    if (d.submitNow === 'on' && !d.instrumentMaturityOn) {
+      return fail('Add the maturity date before scheduling payouts', 'VALIDATION', {
+        instrumentMaturityOn: 'Required when submitting and scheduling',
+      });
+    }
+
     assertCan(actor, 'case.create', { branchId: d.branchId, agentId: d.agentId });
 
     let amountPaise: bigint;

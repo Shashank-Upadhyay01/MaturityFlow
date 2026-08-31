@@ -23,7 +23,7 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
@@ -205,6 +205,9 @@ function CellInput({
   placeholder,
   title,
   group,
+  rowKey,
+  cellKey,
+  ariaLabel,
   onChange,
   onCommit,
 }: {
@@ -215,6 +218,9 @@ function CellInput({
   title?: string;
   /** Show Indian digit grouping while the cell is at rest. Editing always shows raw digits. */
   group?: boolean;
+  rowKey: string;
+  cellKey: string;
+  ariaLabel?: string;
   onChange: (v: string) => void;
   onCommit: (v: string) => void;
 }) {
@@ -227,6 +233,10 @@ function CellInput({
       disabled={disabled}
       placeholder={placeholder}
       title={title}
+      aria-label={ariaLabel ?? title ?? placeholder ?? 'Editable register cell'}
+      data-register-cell="true"
+      data-register-row={rowKey}
+      data-register-column={cellKey}
       value={!focused && group ? groupIndian(value) : value}
       onFocus={() => setFocused(true)}
       onChange={(e) => onChange(e.target.value)}
@@ -235,7 +245,26 @@ function CellInput({
         onCommit(e.target.value);
       }}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+        const direction = e.key === 'Enter' ? 'ArrowDown' : e.key;
+        if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(direction)) return;
+
+        const current = e.currentTarget;
+        const table = current.closest('table');
+        if (!table) return;
+        const all = Array.from(
+          table.querySelectorAll<HTMLInputElement>('input[data-register-cell="true"]:not(:disabled)'),
+        );
+        const vertical = direction === 'ArrowUp' || direction === 'ArrowDown';
+        const peers = vertical
+          ? all.filter((el) => el.dataset.registerColumn === cellKey)
+          : all.filter((el) => el.dataset.registerRow === rowKey);
+        const at = peers.indexOf(current);
+        const delta = direction === 'ArrowUp' || direction === 'ArrowLeft' ? -1 : 1;
+        const next = peers[at + delta];
+        if (!next) return;
+        e.preventDefault();
+        next.focus();
+        next.select();
       }}
     />
   );
@@ -336,9 +365,9 @@ const DAY_PILL: Partial<Record<DayState, string>> = {
  */
 const SCHEDULED_TODAY_HINT: Record<DayState, string> = {
   due: 'The schedule\u2019s figure for today. To change it, move the money on the Plan board \u2014 the other days absorb it.',
-  taken: 'Taken in full today. Reverse it on the case page if that was wrong.',
+  taken: 'Paid in full today. Reverse it on the case page if that was wrong.',
   partial: 'Part of today has gone out. The figure shown is what is still owed today.',
-  missed: 'Marked not taken. Still owed \u2014 it stays on the twelve-day list.',
+  missed: 'Marked not paid. Still owed \u2014 it stays on the payout list.',
   none: 'The schedule plans nothing for today.',
 };
 
@@ -427,7 +456,7 @@ function DayMark({
         title={`${DAY_STATE_LABEL.taken} — reverse it on the case page if this was wrong`}
       >
         <Check className="h-3 w-3" />
-        Taken
+        Paid
       </span>
     );
   }
@@ -445,7 +474,7 @@ function DayMark({
         )}
       >
         <RotateCcw className="h-3 w-3" />
-        Not taken
+        Not paid
       </button>
     );
   }
@@ -459,10 +488,11 @@ function DayMark({
         onClick={() => go('SPLIT')}
         title={
           (state === 'partial'
-            ? 'Taken — records the rest of today’s planned amount'
-            : 'Taken — records today’s planned amount in full') +
+            ? 'Paid — records the rest of today’s planned amount'
+            : 'Paid — records today’s planned amount in full') +
           (onlineDuePaise > 0n ? '. Part of it goes out online, so it needs a UTR.' : '')
         }
+        aria-label="Record today's scheduled payment"
         className="inline-flex h-6 flex-1 items-center justify-center rounded-[6px] bg-[var(--row-taken)] text-[var(--row-taken-fg)] transition-colors hover:bg-[var(--row-taken-strong)] disabled:cursor-not-allowed disabled:opacity-50"
       >
         <Check className="h-3.5 w-3.5" />
@@ -471,7 +501,8 @@ function DayMark({
         type="button"
         disabled={disabled || busy}
         onClick={() => onNotTaken(instalmentId, false)}
-        title="Not taken — the customer did not come today. Still owed."
+        title="Not paid — the customer did not collect today. The amount remains owed."
+        aria-label="Mark today's scheduled payment as not paid"
         className="inline-flex h-6 flex-1 items-center justify-center rounded-[6px] bg-[var(--row-missed)] text-[var(--row-missed-fg)] transition-colors hover:bg-[var(--row-missed-strong)] disabled:cursor-not-allowed disabled:opacity-50"
       >
         <X className="h-3.5 w-3.5" />
@@ -549,7 +580,7 @@ function DayMark({
                 onTaken(instalmentId, t, ref.trim());
               }}
             >
-              Taken
+              Record payment
             </button>
           </div>
         </div>
@@ -600,6 +631,7 @@ function BlankRow({
 }) {
   const [vals, setVals] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const rowKey = useId();
 
   const commit = async () => {
     const patch: Record<string, string> = {};
@@ -616,6 +648,7 @@ function BlankRow({
 
   return (
     <tr
+      data-register-row={rowKey}
       className="border-b border-[var(--hairline)] hover:bg-[var(--glass-bg-subtle)]"
       onBlur={(e) => {
         // Only when focus actually leaves this row — not when it moves to the next cell in it.
@@ -632,6 +665,9 @@ function BlankRow({
           <td key={c.id} className={cn(td, c.right && num)}>
             {typed && !disabled ? (
               <CellInput
+                rowKey={rowKey}
+                cellKey={c.id}
+                ariaLabel={`${c.label} for new register row`}
                 value={vals[c.id] ?? ''}
                 onChange={(v) => setVals((p) => ({ ...p, [c.id]: v }))}
                 // The row commits on the way out; a per-cell commit would create the case
@@ -861,7 +897,10 @@ export function RegisterSheet(props: {
     Whoever records payouts opens on the work: who is expected at the counter today. Everybody
     else opens on the live book. Nothing keys off approval any more — there is no approval.
   */
-  const [tab, setTab] = useState<Tab>(props.canPay ? 'due' : 'today');
+  // Do not open on an empty operational view while live scheduled cases exist. Before the first
+  // payout date that made a successful import look like it had vanished from the Register.
+  const initialTab: Tab = props.canPay && props.rows.some(isDueToday) ? 'due' : 'all';
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [extraMode, setExtraMode] = useState<ExtraMode>('today');
   const [agentId, setAgentId] = useState('');
   const [range, setRange] = useState<DateRange>(EMPTY_RANGE);
@@ -880,11 +919,7 @@ export function RegisterSheet(props: {
   const [cashHand, setCashHand] = useState(rupeesStr(BigInt(props.cashInHandPaise)));
   const [onlinePlan, setOnlinePlan] = useState(rupeesStr(BigInt(props.plannedOnlinePaise)));
   const [draft, setDraft] = useState<Record<string, Partial<Record<string, string>>>>({});
-  const initialSort = autoSortFor(
-    props.canPay ? 'due' : 'today',
-    '',
-    'payment',
-  );
+  const initialSort = autoSortFor(initialTab, '', 'payment');
   const [sortKey, setSortKey] = useState<SortKey>(initialSort.key);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(initialSort.dir);
   const [colsOpen, setColsOpen] = useState(false);
@@ -1306,7 +1341,7 @@ export function RegisterSheet(props: {
     setMarking((m) => ({ ...m, [instalmentId]: false }));
     if (!r.ok) toast.error(r.error);
     else {
-      toast.success('Marked taken');
+      toast.success('Payment recorded');
       router.refresh();
     }
   }
@@ -1318,7 +1353,7 @@ export function RegisterSheet(props: {
     setMarking((m) => ({ ...m, [instalmentId]: false }));
     if (!r.ok) toast.error(r.error);
     else {
-      toast.success(clear ? 'Mark cleared' : 'Marked not taken');
+      toast.success(clear ? 'Not-paid mark cleared' : 'Marked not paid');
       router.refresh();
     }
   }
@@ -1523,9 +1558,9 @@ export function RegisterSheet(props: {
         <h1 className="sr-only">Register — {props.branchLabel}</h1>
         <div className="flex flex-col gap-1.5 px-3 py-2">
           {/* Which rows the sheet is showing — and the two buttons that put rows in it. */}
-          <div className="flex items-start gap-2">
+          <div className="flex flex-col gap-2 xl:flex-row xl:items-start">
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-2">
-              <div className="flex rounded-[10px] border border-[var(--input-border)] p-0.5">
+              <div className="flex max-w-full overflow-x-auto rounded-[10px] border border-[var(--input-border)] p-0.5">
                 {(['due', 'missed', 'today', 'pending', 'all'] as Tab[]).map((t) => {
                   const badge = t === 'due' ? dueStats.count : t === 'missed' ? missedCount : 0;
                   return (
@@ -1579,6 +1614,7 @@ export function RegisterSheet(props: {
                   onChange={(e) => setQ(e.target.value)}
                   placeholder="Name, A/c, agent"
                   className="!h-7 !py-1 pl-8 !text-[0.8125rem] !leading-none"
+                  style={{ paddingLeft: '2rem' }}
                 />
               </label>
 
@@ -1633,7 +1669,7 @@ export function RegisterSheet(props: {
 
             </div>
 
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+            <div className="flex w-full shrink-0 flex-wrap items-center justify-between gap-1.5 sm:justify-end xl:w-auto">
               {/*
                 On a laptop this bar has no width to spare, so the branch name gives way first
                 and the code carries the identity. Nothing is lost: the full label is in the
@@ -1762,7 +1798,7 @@ export function RegisterSheet(props: {
           </div>
 
           {/* Which days, in what order, and where a copy of it goes. */}
-          <div className="flex items-start gap-2">
+          <div className="flex flex-col gap-2 xl:flex-row xl:items-start">
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-2">
               <CalendarDays className="h-3.5 w-3.5 shrink-0 text-[var(--faint-fg)]" aria-hidden />
               <select
@@ -1848,7 +1884,7 @@ export function RegisterSheet(props: {
               Add rows / Import so the first row has the width to hold the sort control without
               spilling onto a third line — and so this row ends on something instead of air.
             */}
-            <div className="flex shrink-0 items-center gap-1.5 self-center">
+            <div className="flex w-full shrink-0 items-center justify-end gap-1.5 self-center xl:w-auto">
               <p className="whitespace-nowrap text-right text-[0.72rem] leading-tight text-[var(--faint-fg)]">
                 <span className="font-semibold tabular-nums text-[var(--muted-fg)]">
                   {visible.length}
@@ -2620,8 +2656,8 @@ export function RegisterSheet(props: {
                   saw the colours without it would be looking at a sheet nobody had explained.
                 */}
                 <SortTh
-                  label="Taken?"
-                  hint="Did the customer withdraw today's amount? Green means they did, red means they did not — and still being owed it, they stay on the list."
+                  label="Paid today?"
+                  hint="Did the customer receive today's scheduled amount? Green records payment; red records that it remains unpaid."
                   col="given"
                   sortKey={sortKey}
                   sortDir={sortDir}
@@ -2694,6 +2730,7 @@ export function RegisterSheet(props: {
                 return (
                   <tr
                     key={r.id}
+                    data-register-row={r.id}
                     className={cn(
                       'border-b border-[var(--hairline)] hover:bg-[var(--glass-bg-subtle)]',
                       tint,
@@ -2719,6 +2756,7 @@ export function RegisterSheet(props: {
                         type="checkbox"
                         disabled={locked || !props.canSubmit}
                         checked={r.formSubmitted}
+                        aria-label={`${r.formSubmitted ? 'Form submitted' : 'Submit form'} for ${r.customerName}`}
                         title={props.canSubmit ? undefined : 'Read-only'}
                         onChange={async (e) => {
                           const res = await toggleFormSubmittedAction(r.id, e.target.checked);
@@ -2752,6 +2790,9 @@ export function RegisterSheet(props: {
                       <td key={c.id} className={cn(td, c.right && num)}>
                         {c.id === 'account' && (
                           <CellInput
+                            rowKey={r.id}
+                            cellKey={c.id}
+                            ariaLabel={`${c.label} for ${r.customerName}`}
                             className="tabular-nums"
                             disabled={!edit}
                             value={d(r.id, 'account', r.accountNumber ?? '')}
@@ -2764,6 +2805,9 @@ export function RegisterSheet(props: {
                         )}
                         {c.id === 'customer' && (
                           <CellInput
+                            rowKey={r.id}
+                            cellKey={c.id}
+                            ariaLabel={`${c.label} for ${r.customerName}`}
                             disabled={!edit}
                             value={d(r.id, 'name', r.customerName)}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], name: v } }))}
@@ -2775,6 +2819,9 @@ export function RegisterSheet(props: {
                         )}
                         {c.id === 'maturityDate' && (
                           <CellInput
+                            rowKey={r.id}
+                            cellKey={c.id}
+                            ariaLabel={`${c.label} for ${r.customerName}`}
                             className="tabular-nums"
                             disabled={!edit}
                             placeholder="dd/mm/yyyy"
@@ -2788,6 +2835,9 @@ export function RegisterSheet(props: {
                         )}
                         {c.id === 'formDate' && (
                           <CellInput
+                            rowKey={r.id}
+                            cellKey={c.id}
+                            ariaLabel={`${c.label} for ${r.customerName}`}
                             className="tabular-nums"
                             disabled={!edit}
                             placeholder="dd/mm/yyyy"
@@ -2801,6 +2851,9 @@ export function RegisterSheet(props: {
                         )}
                         {c.id === 'paymentDate' && (
                           <CellInput
+                            rowKey={r.id}
+                            cellKey={c.id}
+                            ariaLabel={`${c.label} for ${r.customerName}`}
                             className="tabular-nums"
                             disabled={!edit}
                             placeholder="dd/mm/yyyy"
@@ -2814,6 +2867,9 @@ export function RegisterSheet(props: {
                         )}
                         {c.id === 'amount' && (
                           <CellInput
+                            rowKey={r.id}
+                            cellKey={c.id}
+                            ariaLabel={`${c.label} for ${r.customerName}`}
                             group
                             className={num}
                             disabled={!edit}
@@ -2827,6 +2883,9 @@ export function RegisterSheet(props: {
                         )}
                         {c.id === 'paid' && (
                           <CellInput
+                            rowKey={r.id}
+                            cellKey={c.id}
+                            ariaLabel={`${c.label} for ${r.customerName}`}
                             group
                             className={num}
                             disabled={!edit}
@@ -2841,6 +2900,9 @@ export function RegisterSheet(props: {
                         {c.id === 'remaining' && <span className="font-semibold">{inr(liveRemaining)}</span>}
                         {c.id === 'agent' && (
                           <CellInput
+                            rowKey={r.id}
+                            cellKey={c.id}
+                            ariaLabel={`${c.label} for ${r.customerName}`}
                             disabled={!edit}
                             value={d(r.id, 'agent', r.agentName)}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], agent: v } }))}
@@ -2852,6 +2914,9 @@ export function RegisterSheet(props: {
                         )}
                         {c.id === 'days' && (
                           <CellInput
+                            rowKey={r.id}
+                            cellKey={c.id}
+                            ariaLabel={`${c.label} for ${r.customerName}`}
                             className="text-center tabular-nums"
                             disabled={!edit}
                             value={d(r.id, 'windowDays', String(r.windowDays))}
@@ -2880,6 +2945,9 @@ export function RegisterSheet(props: {
                             </span>
                           ) : (
                             <CellInput
+                              rowKey={r.id}
+                              cellKey={c.id}
+                              ariaLabel={`${c.label} for ${r.customerName}`}
                               group
                               className={cn(num, dueNow && 'font-semibold text-[var(--color-brand-700)]')}
                               disabled={!edit}
@@ -2902,6 +2970,9 @@ export function RegisterSheet(props: {
                             </span>
                           ) : (
                             <CellInput
+                              rowKey={r.id}
+                              cellKey={c.id}
+                              ariaLabel={`${c.label} for ${r.customerName}`}
                               group
                               className={num}
                               disabled={!edit}
@@ -2925,6 +2996,9 @@ export function RegisterSheet(props: {
                             </span>
                           ) : (
                             <CellInput
+                              rowKey={r.id}
+                              cellKey={c.id}
+                              ariaLabel={`${c.label} for ${r.customerName}`}
                               group
                               className={num}
                               disabled={!edit}

@@ -16,6 +16,8 @@ import { Glass, GlassCard } from '@/components/ui/glass';
 import { Callout } from '@/components/ui/misc';
 import { ROUNDING_STEPS, tryParseRupeesToPaise } from '@/lib/money';
 import type { CashPolicy, Distribution } from '@/lib/payout-engine';
+import { MIN_WINDOW_DAYS, scheduleAnchorFor } from '@/lib/payout-policy';
+import { makeCalendar } from '@/lib/working-days';
 import type { Role } from '@/db/schema';
 
 interface Options {
@@ -37,6 +39,12 @@ interface Options {
     accountNumber: string | null;
   }[];
 }
+
+const DEFAULT_CALENDAR: CalendarSnapshot = {
+  holidays: [],
+  sundaysOff: true,
+  saturdayRule: 'SECOND_FOURTH',
+};
 
 export function NewMaturityForm({
   session,
@@ -78,6 +86,7 @@ export function NewMaturityForm({
   );
 
   const [amount, setAmount] = useState('');
+  const [instrumentMaturityOn, setInstrumentMaturityOn] = useState('');
   const [formSubmittedOn, setFormSubmittedOn] = useState(today);
   const [schemeName, setSchemeName] = useState('');
   const [policyNumber, setPolicyNumber] = useState('');
@@ -121,7 +130,18 @@ export function NewMaturityForm({
   const cashPolicy: CashPolicy =
     cashMode === 'CASH_CAP' ? { kind: 'CASH_CAP', cashCapPerDayPaise: cashCapPaise } : { kind: cashMode };
 
-  const calendar = calendars[branchId] ?? { holidays: [], sundaysOff: true, saturdayRule: 'SECOND_FOURTH' };
+  const calendar = useMemo(() => calendars[branchId] ?? DEFAULT_CALENDAR, [branchId, calendars]);
+  const previewAnchor = useMemo(() => {
+    if (!instrumentMaturityOn) return today;
+    return scheduleAnchorFor(
+      instrumentMaturityOn,
+      today,
+      makeCalendar(calendar.holidays, {
+        sundaysOff: calendar.sundaysOff,
+        saturdayRule: calendar.saturdayRule,
+      }),
+    );
+  }, [calendar, instrumentMaturityOn, today]);
 
   const [state, formAction, pending] = useActionState(createCaseAction, null);
   const [submitNow, setSubmitNow] = useState(true);
@@ -203,11 +223,12 @@ export function NewMaturityForm({
             >
               <div className="space-y-2">
                 <Input
+                  aria-label="Search customers by name or phone"
                   placeholder="Search customers…"
                   value={customerQuery}
                   onChange={(e) => setCustomerQuery(e.target.value)}
                 />
-                <Select value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+                <Select aria-label="Choose customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
                   <option value="">
                     {filteredCustomers.length === 0 ? 'No matching customer' : 'Choose a customer…'}
                   </option>
@@ -253,7 +274,7 @@ export function NewMaturityForm({
 
         <GlassCard
           title="What"
-          subtitle="The amount, and the date the maturity form was actually handed in."
+          subtitle="The matured amount and the dates that control scheduling and record-keeping."
         >
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Maturity amount" required error={fe.maturityAmount} htmlFor="amount">
@@ -264,6 +285,23 @@ export function NewMaturityForm({
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="5,00,000"
                 required
+              />
+            </Field>
+
+            <Field
+              label="Maturity date"
+              required={submitNow}
+              error={fe.instrumentMaturityOn}
+              htmlFor="maturityOn"
+              hint="Payouts begin three calendar days after this date, or today when that date has already passed."
+            >
+              <Input
+                id="maturityOn"
+                name="instrumentMaturityOn"
+                type="date"
+                value={instrumentMaturityOn}
+                onChange={(e) => setInstrumentMaturityOn(e.target.value)}
+                required={submitNow}
               />
             </Field>
 
@@ -316,7 +354,7 @@ export function NewMaturityForm({
               label="Give the full amount within"
               hint="Counted in working days — Sundays, 2nd/4th Saturdays and bank holidays are skipped."
             >
-              <Stepper value={days} onChange={setDays} min={1} max={60} suffix="working days" label="days" />
+              <Stepper value={days} onChange={setDays} min={MIN_WINDOW_DAYS} max={60} suffix="working days" label="days" />
             </Field>
 
             <Field
@@ -426,7 +464,7 @@ export function NewMaturityForm({
             variant="primary"
             loading={pending}
             onClick={() => setSubmitNow(true)}
-            disabled={!customerId || !agentId || !totalPaise || totalPaise <= 0n}
+            disabled={!customerId || !agentId || !instrumentMaturityOn || !totalPaise || totalPaise <= 0n}
           >
             Submit &amp; schedule
             <ArrowRight className="h-4 w-4" />
@@ -439,10 +477,10 @@ export function NewMaturityForm({
         <SchedulePreview
           title="Live payout plan"
           input={{
-            totalPaise,
+            totalPaise: instrumentMaturityOn ? totalPaise : null,
             days,
             roundingPaise,
-            startDate: formSubmittedOn,
+            startDate: previewAnchor,
             distribution,
             cashPolicy,
             startOnNextWorkingDay: startNext,
@@ -488,10 +526,10 @@ function NewCustomerInline({
       </p>
       {/* Nested <form> is invalid HTML — these fields post through their own action. */}
       <div className="grid gap-3 sm:grid-cols-2">
-        <Input name="__name" id="nc-name" placeholder="Full name" />
-        <Input name="__phone" id="nc-phone" placeholder="Phone" />
-        <Input name="__account" id="nc-account" placeholder="Account number" />
-        <Input name="__bank" id="nc-bank" placeholder="Payout bank (for online legs)" />
+        <Input name="__name" id="nc-name" aria-label="Customer full name" placeholder="Full name" />
+        <Input name="__phone" id="nc-phone" aria-label="Customer phone" placeholder="Phone" />
+        <Input name="__account" id="nc-account" aria-label="Customer account number" placeholder="Account number" />
+        <Input name="__bank" id="nc-bank" aria-label="Customer payout bank" placeholder="Payout bank (for online legs)" />
       </div>
       <Button
         type="button"

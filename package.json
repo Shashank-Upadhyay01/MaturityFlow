@@ -17,6 +17,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx scripts/seed.ts",
+    "db:seed:scratch": "node scripts/seed-scratch.mjs",
     "setup": "npm install && docker compose up -d db && node scripts/wait-for-db.mjs && npm run db:migrate && npm run db:seed",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
     "db:generate": "drizzle-kit generate",
@@ -24,6 +25,7 @@
     "db:down": "docker compose down",
     "lint": "eslint .",
     "test:db": "vitest run --config vitest.integration.config.ts",
+    "test:db:scratch": "node scripts/test-db-scratch.mjs",
     "backfill:schedule": "tsx --conditions=react-server scripts/backfill-auto-schedule.ts",
     "db:check": "node scripts/check-db.mjs"
   },
@@ -45,7 +47,7 @@
     "framer-motion": "^12.4.10",
     "jose": "^6.0.10",
     "lucide-react": "^0.475.0",
-    "next": "^15.5.4",
+    "next": "15.5.24",
     "pg": "^8.23.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -54,6 +56,15 @@
     "sonner": "^2.0.1",
     "tailwind-merge": "^3.0.2",
     "zod": "^3.24.2"
+  },
+  "overrides": {
+    "sharp": "0.35.4",
+    "next": {
+      "postcss": "8.5.26"
+    },
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.9",

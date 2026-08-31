@@ -8,8 +8,11 @@ export interface NavItem {
     | 'plus'
     | 'inbox'
     | 'files'
+    | 'upload'
+    | 'calendar'
     | 'wallet'
     | 'banknote'
+    | 'calculator'
     | 'users'
     | 'building'
     | 'chart'
@@ -34,11 +37,32 @@ export const NAV: { section: string; items: NavItem[] }[] = [
         description: 'The branch Excel sheet',
       },
       {
+        href: '/import',
+        label: 'Import register',
+        icon: 'upload',
+        permission: 'data.import',
+        description: 'Upload one branch or auto-sort a compiled workbook',
+      },
+      {
+        href: '/cashbook',
+        label: 'Daily cashbook',
+        icon: 'calculator',
+        permission: 'cashbook.view',
+        description: 'Balance receipts, withdrawals and the physical drawer',
+      },
+      {
         href: '/maturities/new',
         label: 'New maturity',
         icon: 'plus',
         permission: 'case.create',
         description: 'Take one form in, with the live schedule',
+      },
+      {
+        href: '/maturity-calendar',
+        label: 'Maturity calendar',
+        icon: 'calendar',
+        permission: 'case.view',
+        description: 'Current and next month upcoming maturities',
       },
       {
         href: '/dashboard',
@@ -133,7 +157,6 @@ export const NAV: { section: string; items: NavItem[] }[] = [
 const EXTRA_TITLES: Record<string, string> = {
   '/account': 'My profile',
   '/account/password': 'Change password',
-  '/import': 'Import',
 };
 
 /**

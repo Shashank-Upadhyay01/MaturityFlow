@@ -42,6 +42,9 @@ Every role carries a data scope, applied at the query layer:
 | `payout.reverse` | ✓ | ✓ | ✓ | – | – | – | – |
 | `cash.plan` | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ |
 | `cash.setOpening` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
+| `cashbook.view` | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ |
+| `cashbook.edit` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
+| `cashbook.close` | ✓ | ✓ | ✓ | – | – | – | – |
 | `agent.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `agent.manage` | ✓ | ✓ | ✓ | ✓ | – | – | – |
 | `customer.manage` | ✓ | ✓ | ✓ | ✓ | – | ✓ | – |
@@ -55,7 +58,7 @@ Every role carries a data scope, applied at the query layer:
 | `data.import` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
 | `audit.view` | ✓ | ✓ | ✓ | – | – | – | ✓ |
 
-Totals: CMD 25 · CEO 25 · ADMIN 29 · BRANCH_MANAGER 19 · CASHIER 14 · AGENT 8 · AUDITOR 8 of 29
+Totals: CMD 28 · CEO 28 · ADMIN 32 · BRANCH_MANAGER 21 · CASHIER 16 · AGENT 8 · AUDITOR 9 of 32
 
 *Generated from `src/lib/rbac.ts`. Regenerate rather than hand-edit — this table had drifted from
 the code before it was last rebuilt.*
@@ -69,9 +72,10 @@ writes an audit row in the same transaction, which is what keeps it reviewable a
 `assertCan()`, so a permission added by mistake later still cannot grant an auditor write access.
 Its `ALL` write scope above is therefore never reached.
 
-**Reading and writing are different scopes.** Every role reads the whole bank; only the write
-scope narrows. `inScope()` picks between `ROLE_SCOPE` and `ROLE_WRITE_SCOPE` by asking whether the
-permission is a write.
+**Reading and writing are different scopes.** Admin, CEO, CMD and Auditor read the compiled bank;
+Branch Manager and Cashier read their assigned branch; Agent reads their own portfolio.
+`inScope()` still picks independently between `ROLE_SCOPE` and `ROLE_WRITE_SCOPE` by asking
+whether the permission is a write. See `13-COMPILED-BRANCH-IMPORT.md`.
 
 **AGENT and AUDITOR cannot type in the Register** whatever permissions they hold — see
 `REGISTER_READ_ONLY_ROLES` and `assertCanTypeRegister()`.

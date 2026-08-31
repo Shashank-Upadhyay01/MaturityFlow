@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Stepper } from '@/components/ui/field';
 import { Money } from '@/components/ui/money';
 import type { CashPolicy, CashPolicyKind, Distribution } from '@/lib/payout-engine';
+import { MIN_WINDOW_DAYS } from '@/lib/payout-policy';
 
 export function WindowReplan({
   caseId,
@@ -62,7 +63,7 @@ export function WindowReplan({
           <p className="mb-2 text-[0.8125rem] font-medium text-[var(--muted-fg)]">
             Withdraw over how many working days?
           </p>
-          <Stepper value={days} onChange={setDays} min={1} max={60} label="working days" suffix="days" />
+          <Stepper value={days} onChange={setDays} min={MIN_WINDOW_DAYS} max={60} label="working days" suffix="days" />
         </div>
         {canApply && (
           <Button
@@ -103,6 +104,7 @@ export function WindowReplan({
           distribution,
           cashPolicy,
           startOnNextWorkingDay: false,
+          processingDays: 0,
           calendar,
         }}
       />

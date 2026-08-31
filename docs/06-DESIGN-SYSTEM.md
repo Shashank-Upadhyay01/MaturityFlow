@@ -1,90 +1,90 @@
-# Design System — Liquid Glass
+# MaturityFlow design system
 
-The look is built from three stacked layers, always in this order. Remove any one and the
-illusion of glass collapses into "transparent rectangle".
+MaturityFlow is an internal banking workstation. Its visual language must make dense operational
+data easy to scan for hours at a time, make money states unmistakable, and remain fast on ordinary
+branch PCs. It is deliberately clean and restrained—not a marketing dashboard.
 
-```
-  LAYER 3 · LIGHT   specular top edge (1px inset highlight) + soft outer shadow
-  LAYER 2 · GLASS   translucent panel that blurs AND saturates what is behind it
-  LAYER 1 · FIELD   a slow, animated colour field, far behind everything
-```
+## Principles
 
-## Layer 1 — the field
+1. **The ledger is the product.** Customer identity and money columns stay aligned and tabular.
+2. **Colour has a job.** Blue means structure or selection, green means paid/balanced, amber means
+   attention, and red means unpaid/short/refused. Do not use status colours decoratively.
+3. **Opaque beats atmospheric.** Panels use solid surfaces and borders. Blur, animated background
+   fields, sheen, glow and hover lift are disabled because they reduce clarity and consume GPU time.
+4. **Compact, not cramped.** Primary controls are at least 40px high; dense sheet cells may be
+   smaller when keyboard navigation provides the primary interaction.
+5. **One signature.** Page headers carry a three-pixel institutional-blue ledger rail. It provides
+   identity without competing with the data.
+6. **The same hierarchy everywhere.** Page header → command/filter bar → primary working surface →
+   supporting detail. Avoid duplicate titles and card grids that do not express a real grouping.
 
-Four large radial gradients drifting on 30–42 second loops, blurred to 60px, at 16% opacity in
-light mode and 30% in dark. They move with `transform: translate3d()` only, so the whole thing is
-GPU-composited and costs nothing.
+## Tokens and surfaces
 
-A fine SVG noise veil (`.mf-grain`, 16% opacity, `mix-blend-mode: overlay`) sits over the field.
-Without it, gradients that large band visibly on the 6-bit panels found in most branch PCs.
+The token layer is in `src/app/globals.css`. Components consume semantic variables rather than
+hard-coded light/dark colours.
 
-## Layer 2 — the glass
-
-```css
-.glass {
-  background: var(--glass-bg);                        /* 62% white / 55% slate */
-  backdrop-filter: blur(22px) saturate(180%);
-  border: 1px solid var(--glass-border);
-  border-radius: 22px;
-  box-shadow: /* three stacked shadows, tight to diffuse */;
-}
-```
-
-`saturate(180%)` is the part people forget. Blur alone looks like frosted plastic; blur **plus**
-saturation is what makes the colour behind the panel bloom through it the way real glass does.
-
-## Layer 3 — the light
-
-`.glass::before` paints a 1px gradient border via a mask, bright at the top-left and fading by
-32% — a lit edge, not a uniform outline.
-
-`.glass-sheen` adds a diagonal highlight that sweeps across an interactive panel on hover
-(1.1s, `--ease-out-quint`). Used only on things you can click.
-
-## Motion
-
-| Token | Curve | Used for |
-|---|---|---|
-| `--ease-spring` | `linear()` spring with ~5% overshoot | Segmented controls, hover lifts — anything that should feel physical. |
-| `--ease-out-quint` | `cubic-bezier(0.22, 1, 0.36, 1)` | Entrances, expansions, sheen. Fast start, long settle. |
-| `--ease-in-out-quint` | `cubic-bezier(0.83, 0, 0.17, 1)` | The ambient field only. |
-
-Choreography:
-
-- `.mf-rise` — 620ms rise + de-blur. Page sections.
-- `.mf-stagger` — the same, with 45ms increments per child, capped at the 9th. A grid of cards
-  arrives like a hand of cards rather than a slab.
-- Framer Motion springs (`stiffness: 420, damping: 34`) drive the numbers that change while you
-  type in the calculator — the figure swaps with a blur-and-slide, so the eye notices a
-  recalculation without the layout jumping.
-- `.mf-flash` — a 720ms tint on a value that just changed.
-
-**`prefers-reduced-motion: reduce` collapses every duration to 0.001ms and stops the ambient
-field entirely.** This is an accessibility requirement, not a nicety.
-
-## Type & numbers
-
-- Inter (via `rsms.me`), system stack fallback; `cv02 cv03 cv04 ss01` for the single-storey `a`
-  and open digits.
-- **Tabular figures everywhere money appears.** `font-variant-numeric: tabular-nums` on every
-  table cell and every `.tnum`. Columns of rupees that don't align are columns nobody trusts.
-- Tight tracking (`-0.02em`) on headings; normal on body.
-
-## Colour
-
-| Token | Meaning |
+| Token family | Purpose |
 |---|---|
-| `--color-brand-*` | Institutional indigo. Structure, navigation, selected state. |
-| `--color-money-*` | Emerald. Money **received / paid** — never used decoratively. |
-| `--color-warn-*` | Amber. Attention needed, not yet a failure. |
-| `--color-danger-*` | Rose. Overdue, breached, refused. |
+| `--page-*` | Application canvas and primary text |
+| `--glass-*` | Historical name for the standard opaque panel API |
+| `--input-*` | Inputs, selects and compact toolbar controls |
+| `--color-brand-*` | Navigation, selected state and focus |
+| `--color-money-*` | Paid, received and balanced |
+| `--color-warn-*` | Attention or partial state |
+| `--color-danger-*` | Unpaid, overdue, short or destructive |
+| `--row-*` | Register verdict rows in both themes |
 
-Themes swap ~20 CSS variables on `.dark`; no component knows which theme it is in. The theme is
-applied by a tiny inline script in `<head>` before first paint, so there is no flash.
+`.glass` remains the shared component class to avoid rewriting every screen, but it now means an
+opaque bordered surface with a small shadow. New code should use `Glass` / `GlassCard`; it should
+not add backdrop blur or translucent panels.
 
-## Fallbacks
+## Type and numbers
 
-- No `backdrop-filter` (older Edge on branch machines) → `@supports not` gives every panel an
-  opaque background so text stays readable.
-- `@media print` strips the field, the grain and every shadow, and renders panels as white boxes
-  with a hairline border — payout sheets and registers go to paper at the branch.
+- Inter with the system stack fallback.
+- Body text is 14–15px; supporting text is never below 11px unless it is a dense table annotation.
+- Money and table figures use tabular numerals. Columns of rupees must align.
+- Sentence case for controls and section headings. Uppercase is reserved for short metadata labels.
+- Use precise operational words: “Paid today?”, “Not paid”, “Cash difference”; avoid ambiguous
+  labels such as “Taken?” or generic dashboard jargon.
+
+## Spacing and shape
+
+- Standard panel radius: 12px; nested controls: 8–9px.
+- Page gaps: 20px for ordinary screens, 12px for the Register and Cashbook workbenches.
+- Card headers: 16px vertical, 20–24px horizontal.
+- Shadows are limited to one subtle elevation level. Separation comes from the canvas and border.
+
+## Interaction and motion
+
+- Standard transitions are 150–180ms colour/opacity changes.
+- Page entrance is a 3px fade/rise; no blur, spring overshoot or stagger longer than 20ms.
+- No decorative infinite animation. Loading indicators may spin while work is actually pending.
+- `prefers-reduced-motion` collapses all motion.
+- Every icon-only control needs an `aria-label` and usually a tooltip/title.
+- Register and Cashbook grids keep focus on Arrow keys and Enter; the page must not scroll while a
+  cell is active. Backspace/Delete edit the cell normally.
+
+## Responsive behaviour
+
+- No document-level horizontal overflow.
+- Ordinary tables may scroll inside `.mf-hscroll`.
+- The Register does **not** scroll sideways: `columnsThatFit()` keeps required identity columns and
+  moves lower-priority columns into the row expander.
+- Toolbars stack into logical rows on small screens; action groups may not overlap filters or labels.
+- Audit uses a table from `sm` upward and record cards on mobile.
+- Cashbook panels use their container rules and user-controlled spans without overlaying siblings.
+
+## Accessibility and verification
+
+- WCAG 2.1 AA contrast is the baseline in light and dark themes.
+- Every input has a programmatic label; placeholders are examples, not labels.
+- Focus uses the shared blue ring and remains visible on all surfaces.
+- Status never relies on colour alone: text/icon labels accompany every verdict.
+- Check changes with `scripts/audit-ui.mjs` at desktop, mobile and dark mode, plus keyboard testing
+  in `scripts/check-register.mjs` and `scripts/check-cashbook.mjs`.
+
+## Print
+
+Print removes navigation and decorative motion, renders panels white with a hairline border, and
+allows operational tables to use the full page. Register and cashbook print/export views are part
+of the workflow and must be tested whenever their layouts change.

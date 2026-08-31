@@ -2,7 +2,7 @@
 
 # MaturityFlow
 
-**Turns a bank maturity approval into an exact, day-by-day payout schedule — and measures every rupee against it.**
+**Turns a maturity date into an exact, day-by-day payout schedule — and measures every rupee against it.**
 
 `Next.js 15` · `TypeScript` · `PostgreSQL 16` · `Drizzle ORM` · `Tailwind v4` · `Framer Motion`
 
@@ -12,8 +12,8 @@
 
 ## The problem
 
-When a deposit matures, an agent submits a maturity form. An Operations Head approves it — same
-day, or five days later. The customer is told "you'll have it within 12 to 15 days". Then:
+When a deposit matures, an agent submits its maturity form. The customer is told "you'll have it
+within 12 to 15 days". Then:
 
 - nobody computes **how much must move each day**, so the window is a promise rather than a plan;
 - a ₹5,00,000 maturity gets the same window as a ₹50,000 one, though daily cash per customer is capped;
@@ -24,11 +24,11 @@ The result is payouts that drift past the window, restless agents, and angry cus
 
 ## The insight
 
-Every one of those failures disappears if, **at the moment of approval**, the system emits an
+Every one of those failures disappears if, **at submission**, the system emits an
 immutable, arithmetically-exact, day-by-day schedule — and then measures reality against it.
 
 ```
-₹5,00,000 · approved 18 Aug · give within 15 working days · round to ₹1,000
+₹5,00,000 · first payout 18 Aug · give within 15 working days · round to ₹1,000
 
   Day 1–5    ₹34,000        ← 18, 19, 20, 21, 24 Aug   (22nd is a 4th Saturday, 23rd a Sunday)
   Day 6–15   ₹33,000
@@ -42,7 +42,7 @@ days in advance.
 
 ## What makes it correct
 
-This system moves real money, so eight invariants are enforced in code and in the database, not by
+This system moves real money, so nine invariants are enforced in code and in the database, not by
 convention:
 
 | | Invariant | Enforced by |
@@ -51,32 +51,33 @@ convention:
 | **INV-2** | `Σ(instalments) === maturity amount`, exactly | runtime assertion in the engine + **100,000-case fuzz suite** |
 | **INV-3** | `instalment = cash leg + online leg` | engine assertion + `CHECK` constraint |
 | **INV-4** | `Σ(paid) ≤ maturity amount` — over-payment is impossible | row-locked transaction + `CHECK` constraint |
-| **INV-5** | Approval can never predate submission | engine precondition + `CHECK` constraint |
+| **INV-5** | The stored schedule anchor can never predate submission | policy + `CHECK` constraint |
 | **INV-6** | Every money-affecting mutation writes an audit row **in the same transaction** | `writeAudit()`; the table has no update or delete path |
-| **INV-7** | Approval is idempotent — a double-click cannot create two schedules | status guard inside the locked transaction |
+| **INV-7** | Submission is idempotent — a double-click cannot create two schedules | status guard inside the locked transaction |
 | **INV-8** | No instalment lands on a non-working day | working-day calendar in the engine |
 | **INV-9** | Concurrent writers to one case serialise; the same instalment cannot be paid twice | case row lock taken **before** re-reading the target row, proven by `npm run test:db` |
 
 `npm test` must be green before the build will pass. The schedule engine is pure, deterministic and
-runs **identically in the browser and on the server** — so the figure an approver is shown is
+runs **identically in the browser and on the server** — so the figure the clerk is shown is
 bit-for-bit the figure that gets written.
 
 ## Screens
 
 | | |
 |---|---|
-| **Dashboard** | Today's forms, today's approvals, given vs remaining, cash vs online, 14-day payout curve |
+| **Dashboard** | Register summary plus a separate bank-wide view of today's branch cashbooks, gross shortages and close status |
 | **New maturity** | Intake form whose **day-by-day plan builds itself as you type** |
-| **Approvals** | The Ops queue; the exact schedule is previewed *before* it is committed |
+| **Register** | Spreadsheet-style maturity register with keyboard entry, responsive columns and a lazy-loaded cash plan |
 | **Payout desk** | The cashier's screen — what is due today, cash / online / partial |
 | **Cash planner** | 14 days of cash requirement vs branch opening balance → **extra cash to arrange** |
+| **Daily cashbook** | Channel-aware day entries, denomination count, named obligations, live physical-cash reconciliation and maker–checker close |
 | **Agents · Branches · Reports** | Rollups, registers, CSV / Excel export |
-| **Documents** | Maturity form and KYC papers attached to the case, verified per file by the approver |
+| **Documents** | Maturity form and KYC papers attached to the case, with an authenticated download trail |
 | **Audit log** | Append-only. Who did what, when, from where, before and after |
 
 ## Roles
 
-`CMD` · `CEO` · `ADMIN` · `OPS_HEAD` · `BRANCH_MANAGER` · `CASHIER` · `AGENT` · `AUDITOR`
+`CMD` · `CEO` · `ADMIN` · `BRANCH_MANAGER` · `CASHIER` · `AGENT` · `AUDITOR`
 
 Enforced **server-side on every mutation**, with branch/agent scoping applied at the query layer so
 a page cannot forget it. `AUDITOR` is structurally read-only: an explicit deny-list means a
@@ -111,7 +112,7 @@ Demo logins — password `Maturity@2026`:
 |---|---|
 | CMD | `cmd@bank.test` |
 | CEO | `ceo@bank.test` |
-| Operations Head | `ops@bank.test` |
+| Admin (legacy Ops login) | `ops@bank.test` |
 | Branch Manager | `manager@bank.test` |
 | Cashier | `cashier@bank.test` |
 | Auditor | `auditor@bank.test` |
@@ -131,10 +132,10 @@ General deployment reference: [`docs/07-DEPLOYMENT.md`](docs/07-DEPLOYMENT.md).
 ```bash
 npm run typecheck        # tsc --noEmit, strict
 npm run lint             # ESLint 9, flat config
-npm test                 # 110 unit tests + a 100,000-case property sweep
-npm run test:db          # 5 concurrency tests against a real Postgres
+npm test                 # 364 unit tests + a 100,000-case property sweep
+npm run test:db:scratch  # 30 integration/concurrency checks in an isolated Postgres database
 npm run build            # production build
-node scripts/smoke.mjs   # 55-check browser walk-through of the whole lifecycle
+node scripts/smoke-first-use.mjs # 23-check first-use browser walk-through (scratch server only)
 ```
 
 ## Documentation
@@ -147,18 +148,19 @@ node scripts/smoke.mjs   # 55-check browser walk-through of the whole lifecycle
 | [**Payout engine**](docs/03-PAYOUT-ENGINE.md) | The algorithm, derived, with worked examples |
 | [Roles & permissions](docs/04-RBAC.md) | The full matrix |
 | [Server actions & endpoints](docs/05-API.md) | Every mutation and its guard |
-| [Design system](docs/06-DESIGN-SYSTEM.md) | How the liquid-glass look is built |
+| [Design system](docs/06-DESIGN-SYSTEM.md) | Professional workstation tokens and interaction rules |
 | [Deployment](docs/07-DEPLOYMENT.md) | Local, LAN and cloud |
 | [**Cloud migration**](docs/11-CLOUD-MIGRATION.md) | Laptop → 24/7 URL: what moves, in what order, and why |
+| [**Daily cashbook**](docs/12-DAILY-CASHBOOK.md) | Spreadsheet meanings, exact formulas, workflows, sharing and future upgrades |
 | [Runbook](docs/08-RUNBOOK.md) | Daily rhythm, diagnostics, ledger verification SQL |
-| [ADRs](docs/adr) | Why `bigint` paise, why Drizzle, why the approval anchor, why unit distribution |
+| [ADRs](docs/adr) | Why `bigint` paise, why Drizzle, why the maturity anchor, why unit distribution |
 
 ## Not in v1 — stated plainly
 
 - No core-banking integration. Payouts are **recorded**, not executed. The seam for a CBS or
   NEFT/RTGS adapter is isolated in the service layer.
 - No SMS/WhatsApp notifications to customers (the model exists; the sender is a stub).
-- No maker-checker on payout *recording* — approval already has one.
+- No maker-checker on payout recording; authorisation, row locking and same-transaction audit are enforced.
 - Documents are stored on the app server's disk under `STORAGE_ROOT`. Fine for a single branch
   server; move to S3/Azure Blob before running more than one app instance (the adapter is one
   file: `src/lib/storage.ts`).

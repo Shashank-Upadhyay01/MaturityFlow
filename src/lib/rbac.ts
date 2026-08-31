@@ -25,6 +25,9 @@ export type Permission =
   | 'payout.reverse'
   | 'cash.plan'
   | 'cash.setOpening'
+  | 'cashbook.view'
+  | 'cashbook.edit'
+  | 'cashbook.close'
   | 'agent.view'
   | 'agent.manage'
   | 'customer.manage'
@@ -43,9 +46,8 @@ export type Scope = 'ALL' | 'BRANCH' | 'OWN';
 /**
  * How much data a role can SEE.
  *
- * Every role reads the whole bank. The Register, the summary, the cash runway and the branch
- * rollup show the same picture to everyone, so a cashier can answer a question about another
- * branch without ringing head office.
+ * Headquarters roles read the compiled bank. Branch staff read their assigned branch and an
+ * agent reads their own portfolio, so imported branch ownership is also the reporting boundary.
  *
  * This is the *read* half only. It is consulted by `caseScope()` and by the screens that decide
  * whether to show a branch picker. For anything that changes a record, see ROLE_WRITE_SCOPE.
@@ -55,9 +57,9 @@ export const ROLE_SCOPE: Record<ActiveRole, Scope> = {
   CEO: 'ALL',
   ADMIN: 'ALL',
   AUDITOR: 'ALL',
-  BRANCH_MANAGER: 'ALL',
-  CASHIER: 'ALL',
-  AGENT: 'ALL',
+  BRANCH_MANAGER: 'BRANCH',
+  CASHIER: 'BRANCH',
+  AGENT: 'OWN',
 };
 
 /**
@@ -127,7 +129,8 @@ const ALL: Permission[] = [
   'case.view', 'case.create', 'case.submit', 'case.edit', 'case.editApproved', 'case.approve',
   'case.reject', 'case.return', 'case.hold', 'case.cancel', 'schedule.preview', 'schedule.override',
   'schedule.reschedule', 'payout.record', 'payout.reverse', 'cash.plan', 'cash.setOpening',
-  'agent.view', 'agent.manage', 'customer.manage', 'branch.view', 'branch.manage', 'user.manage',
+  'cashbook.view', 'cashbook.edit', 'cashbook.close', 'agent.view', 'agent.manage',
+  'customer.manage', 'branch.view', 'branch.manage', 'user.manage',
   'holiday.manage', 'settings.manage', 'report.view', 'report.export', 'data.import', 'audit.view',
 ];
 
@@ -165,7 +168,8 @@ export const ROLE_PERMISSIONS: Record<ActiveRole, ReadonlySet<Permission>> = {
   BRANCH_MANAGER: new Set<Permission>([
     'case.view', 'case.create', 'case.submit', 'case.edit', 'case.hold', 'case.cancel', 'schedule.preview',
     'schedule.reschedule', 'schedule.override', 'payout.record', 'cash.plan', 'cash.setOpening',
-    'agent.view', 'agent.manage', 'customer.manage', 'branch.view', 'report.view', 'report.export',
+    'cashbook.view', 'cashbook.edit', 'agent.view', 'agent.manage', 'customer.manage', 'branch.view',
+    'report.view', 'report.export',
     'data.import',
   ]),
   /**
@@ -183,7 +187,7 @@ export const ROLE_PERMISSIONS: Record<ActiveRole, ReadonlySet<Permission>> = {
   CASHIER: new Set<Permission>([
     'case.view', 'case.create', 'case.cancel', 'schedule.preview', 'schedule.override',
     'schedule.reschedule', 'payout.record', 'cash.plan', 'cash.setOpening', 'agent.view',
-    'branch.view', 'report.view', 'report.export', 'data.import',
+    'cashbook.view', 'cashbook.edit', 'branch.view', 'report.view', 'report.export', 'data.import',
   ]),
   AGENT: new Set<Permission>([
     'case.view', 'case.create', 'case.submit', 'case.edit', 'schedule.preview', 'agent.view',
@@ -191,7 +195,7 @@ export const ROLE_PERMISSIONS: Record<ActiveRole, ReadonlySet<Permission>> = {
   ]),
   AUDITOR: new Set<Permission>([
     'case.view', 'schedule.preview', 'cash.plan', 'agent.view', 'branch.view', 'report.view',
-    'report.export', 'audit.view',
+    'report.export', 'cashbook.view', 'audit.view',
   ]),
 };
 
@@ -203,7 +207,8 @@ const WRITE_PERMISSIONS: ReadonlySet<Permission> = new Set<Permission>([
   'case.create', 'case.submit', 'case.edit', 'case.editApproved', 'case.approve', 'case.reject',
   'case.return', 'case.hold', 'case.cancel', 'schedule.override', 'schedule.reschedule',
   'payout.record', 'payout.reverse', 'cash.setOpening', 'agent.manage', 'customer.manage',
-  'branch.manage', 'user.manage', 'holiday.manage', 'settings.manage', 'data.import',
+  'cashbook.edit', 'cashbook.close', 'branch.manage', 'user.manage', 'holiday.manage',
+  'settings.manage', 'data.import',
 ]);
 
 const READ_ONLY_ROLES: ReadonlySet<Role> = new Set<Role>(['AUDITOR']);

@@ -6,16 +6,11 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   MaturityFlow — Liquid Glass design system
+   MaturityFlow — Operations workstation design system
    ---------------------------------------------------------------------------
-   Three layers stacked, always in this order:
-     1. FIELD   an animated colour field, far behind everything, never interactive
-     2. GLASS   translucent panels that blur + saturate what is behind them
-     3. LIGHT   a specular highlight on the top edge and a soft shadow below
-
-   That combination is what reads as "glass" rather than "transparent rectangle":
-   the panel bends light (blur + saturate), catches light (inset highlight), and
-   casts light (outer shadow). Remove any one and the illusion collapses.
+   This is a high-frequency banking tool: opaque surfaces, restrained motion,
+   explicit states and ledger-like alignment take priority over decoration.
+   Legacy class names such as `.glass` remain as stable component APIs.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @theme {
@@ -23,18 +18,18 @@
     'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
 
-  /* Brand — a deep institutional indigo with a money-green accent */
-  --color-brand-50: #eef2ff;
-  --color-brand-100: #e0e7ff;
-  --color-brand-200: #c7d2fe;
-  --color-brand-300: #a5b4fc;
-  --color-brand-400: #818cf8;
-  --color-brand-500: #6366f1;
-  --color-brand-600: #4f46e5;
-  --color-brand-700: #4338ca;
-  --color-brand-800: #3730a3;
-  --color-brand-900: #312e81;
-  --color-brand-950: #1e1b4b;
+  /* Institutional blue with an operational green reserved for money states. */
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdbfe;
+  --color-brand-300: #93c5fd;
+  --color-brand-400: #60a5fa;
+  --color-brand-500: #2563eb;
+  --color-brand-600: #1d4ed8;
+  --color-brand-700: #1e40af;
+  --color-brand-800: #1e3a8a;
+  --color-brand-900: #172554;
+  --color-brand-950: #0f172a;
 
   --color-money-400: #34d399;
   --color-money-500: #10b981;
@@ -52,9 +47,9 @@
   --color-info-400: #38bdf8;
   --color-info-500: #0ea5e9;
 
-  --radius-glass: 22px;
-  --radius-glass-sm: 14px;
-  --radius-glass-lg: 30px;
+  --radius-glass: 12px;
+  --radius-glass-sm: 8px;
+  --radius-glass-lg: 16px;
 
   /* Apple-ish springs. The overshoot is what makes motion feel physical. */
   --ease-spring: linear(
@@ -87,23 +82,21 @@
 
      Only the light values change here — `.dark` redefines every one of these below.
   */
-  --page-bg: #e7ebf3;
-  --page-fg: #0b1220;
-  --muted-fg: #4a5468;
-  --faint-fg: #66708a;
+  --page-bg: #f3f5f8;
+  --page-fg: #172033;
+  --muted-fg: #4b5565;
+  --faint-fg: #667085;
 
-  --glass-bg: rgba(255, 255, 255, 0.88);
-  --glass-bg-strong: rgba(255, 255, 255, 0.96);
-  --glass-bg-subtle: rgba(255, 255, 255, 0.6);
-  --glass-border: rgba(15, 23, 42, 0.13);
-  --glass-border-quiet: rgba(15, 23, 42, 0.09);
-  --glass-highlight: rgba(255, 255, 255, 0.95);
-  --glass-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -6px rgba(15, 23, 42, 0.1),
-    0 24px 48px -20px rgba(15, 23, 42, 0.14);
-  --glass-shadow-lifted: 0 2px 4px rgba(15, 23, 42, 0.05),
-    0 16px 40px -8px rgba(15, 23, 42, 0.16), 0 40px 72px -28px rgba(15, 23, 42, 0.2);
-  --glass-blur: 22px;
-  --glass-saturate: 180%;
+  --glass-bg: #ffffff;
+  --glass-bg-strong: #ffffff;
+  --glass-bg-subtle: #f7f9fc;
+  --glass-border: #d9dee8;
+  --glass-border-quiet: #e7eaf0;
+  --glass-highlight: transparent;
+  --glass-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --glass-shadow-lifted: 0 2px 6px rgba(16, 24, 40, 0.08);
+  --glass-blur: 0px;
+  --glass-saturate: 100%;
 
   /*
      A fully opaque panel surface, for the few panels that sit ON TOP of content rather than
@@ -113,10 +106,10 @@
   --surface-solid: #ffffff;
 
   /* Grid lines a clerk can actually follow across a 16-column row. */
-  --hairline: rgba(15, 23, 42, 0.15);
-  --input-bg: rgba(255, 255, 255, 0.95);
-  --input-border: rgba(15, 23, 42, 0.2);
-  --ring: rgba(99, 102, 241, 0.45);
+  --hairline: #e1e5ec;
+  --input-bg: #ffffff;
+  --input-border: #cbd2dc;
+  --ring: rgba(37, 99, 235, 0.42);
 
   /*
      Register row tints. Like the brand steps above these are ROLES, not fixed colours: -row-*
@@ -153,10 +146,10 @@
   --field-4: 199 89% 48%;
   --field-alpha: 0.3;
 
-  --page-bg: #060911;
-  --page-fg: #eef2ff;
-  --muted-fg: #9aa6c0;
-  --faint-fg: #6b7794;
+  --page-bg: #0b1220;
+  --page-fg: #f1f5f9;
+  --muted-fg: #b2bdcc;
+  --faint-fg: #8793a8;
 
   /* Three of the brand steps are used as *roles*, not as fixed colours:
        50  — the faintest tint you can lay a panel or a table row in
@@ -165,30 +158,28 @@
      On a dark page the light values invert, so a figure printed in --page-fg over a
      --color-brand-50 panel came out light-on-light and simply disappeared. The remaining
      steps (200–600, 800, 900) are literal accents and stay as they are in both themes. */
-  --color-brand-50: #161a3c;
-  --color-brand-100: #21275a;
-  --color-brand-700: #a5b4fc;
+  --color-brand-50: #12284c;
+  --color-brand-100: #17376b;
+  --color-brand-700: #bfdbfe;
 
-  --glass-bg: rgba(22, 28, 45, 0.55);
-  --glass-bg-strong: rgba(26, 33, 52, 0.78);
-  --glass-bg-subtle: rgba(22, 28, 45, 0.35);
-  --glass-border: rgba(255, 255, 255, 0.12);
-  --glass-border-quiet: rgba(255, 255, 255, 0.06);
-  --glass-highlight: rgba(255, 255, 255, 0.24);
-  --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -8px rgba(0, 0, 0, 0.5),
-    0 28px 56px -24px rgba(0, 0, 0, 0.6);
-  --glass-shadow-lifted: 0 2px 6px rgba(0, 0, 0, 0.4), 0 20px 48px -10px rgba(0, 0, 0, 0.6),
-    0 48px 88px -30px rgba(0, 0, 0, 0.7);
-  --glass-blur: 26px;
-  --glass-saturate: 165%;
+  --glass-bg: #111a2b;
+  --glass-bg-strong: #162033;
+  --glass-bg-subtle: #0f1828;
+  --glass-border: #2c374a;
+  --glass-border-quiet: #222c3d;
+  --glass-highlight: transparent;
+  --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --glass-shadow-lifted: 0 2px 8px rgba(0, 0, 0, 0.32);
+  --glass-blur: 0px;
+  --glass-saturate: 100%;
 
   /* Opaque counterpart of the light value — see --surface-solid above. */
-  --surface-solid: #171d2e;
+  --surface-solid: #111a2b;
 
-  --hairline: rgba(255, 255, 255, 0.08);
-  --input-bg: rgba(255, 255, 255, 0.05);
-  --input-border: rgba(255, 255, 255, 0.12);
-  --ring: rgba(129, 140, 248, 0.55);
+  --hairline: #263247;
+  --input-bg: #0e1727;
+  --input-border: #354159;
+  --ring: rgba(96, 165, 250, 0.58);
 
   /* The row tints inverted — a deep wash with a light label, so the verdict survives on a dark
      page instead of glowing. Same roles, same meanings; see the light block. */
@@ -257,11 +248,7 @@ table th {
 /* ── LAYER 1 · the animated colour field ───────────────────────────────── */
 
 .mf-field {
-  position: fixed;
-  inset: -20%;
-  z-index: -2;
-  pointer-events: none;
-  filter: blur(60px);
+  display: none;
 }
 
 .mf-field span {
@@ -325,13 +312,7 @@ table th {
 
 /* A fine noise veil stops the big gradients from banding on cheap monitors. */
 .mf-grain {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  opacity: 0.16;
-  mix-blend-mode: overlay;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  display: none;
 }
 
 /* ── LAYER 2+3 · glass surfaces ────────────────────────────────────────── */
@@ -339,8 +320,8 @@ table th {
 .glass {
   position: relative;
   background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-glass);
   box-shadow: var(--glass-shadow);
@@ -349,24 +330,7 @@ table th {
 
 /* The specular edge — a 1px highlight along the top, exactly like a lit pane. */
 .glass::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(
-    160deg,
-    var(--glass-highlight) 0%,
-    transparent 32%,
-    transparent 68%,
-    color-mix(in oklab, var(--glass-highlight) 45%, transparent) 100%
-  );
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  pointer-events: none;
-  z-index: 1;
+  display: none;
 }
 
 .glass-strong { background: var(--glass-bg-strong); }
@@ -375,37 +339,22 @@ table th {
 
 .glass-interactive {
   transition:
-    transform 420ms var(--ease-spring),
-    box-shadow 420ms var(--ease-out-quint),
-    background-color 260ms var(--ease-out-quint),
-    border-color 260ms var(--ease-out-quint);
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease;
 }
 .glass-interactive:hover {
-  transform: translateY(-2px);
   box-shadow: var(--glass-shadow-lifted);
   background: var(--glass-bg-strong);
+  border-color: var(--input-border);
 }
 .glass-interactive:active {
-  transform: translateY(0) scale(0.994);
-  transition-duration: 90ms;
+  box-shadow: var(--glass-shadow);
 }
 
 /* A moving sheen that crosses the panel on hover — the "wet" part of liquid glass. */
 .glass-sheen::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(
-    105deg,
-    transparent 32%,
-    color-mix(in oklab, var(--glass-highlight) 70%, transparent) 48%,
-    transparent 62%
-  );
-  transform: translateX(-120%);
-  opacity: 0;
-  pointer-events: none;
-  z-index: 2;
+  display: none;
 }
 .glass-sheen:hover::after {
   animation: mf-sheen 1100ms var(--ease-out-quint) forwards;
@@ -430,7 +379,7 @@ table th {
   width: 100%;
   background: var(--input-bg);
   border: 1px solid var(--input-border);
-  border-radius: 13px;
+  border-radius: 8px;
   padding: 0.62rem 0.85rem;
   color: var(--page-fg);
   font-size: 0.9375rem;
@@ -439,7 +388,7 @@ table th {
     border-color 200ms var(--ease-out-quint),
     box-shadow 240ms var(--ease-out-quint),
     background-color 200ms var(--ease-out-quint);
-  backdrop-filter: blur(8px);
+  backdrop-filter: none;
 }
 .mf-input::placeholder { color: var(--faint-fg); }
 .mf-input:hover:not(:disabled) { border-color: color-mix(in oklab, var(--ring) 45%, transparent); }
@@ -480,25 +429,18 @@ table th {
 /* ── Entrance choreography ─────────────────────────────────────────────── */
 
 @keyframes mf-rise {
-  from { opacity: 0; transform: translateY(14px) scale(0.985); filter: blur(6px); }
-  to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-.mf-rise { animation: mf-rise 620ms var(--ease-out-quint) both; }
+.mf-rise { animation: mf-rise 180ms ease-out both; }
 
 @keyframes mf-fade { from { opacity: 0; } to { opacity: 1; } }
-.mf-fade { animation: mf-fade 420ms var(--ease-out-quint) both; }
+.mf-fade { animation: mf-fade 160ms ease-out both; }
 
 /* Stagger children so a grid of cards arrives like a hand of cards, not a slab. */
-.mf-stagger > * { animation: mf-rise 620ms var(--ease-out-quint) both; }
+.mf-stagger > * { animation: mf-rise 180ms ease-out both; }
 .mf-stagger > *:nth-child(1) { animation-delay: 0ms; }
-.mf-stagger > *:nth-child(2) { animation-delay: 45ms; }
-.mf-stagger > *:nth-child(3) { animation-delay: 90ms; }
-.mf-stagger > *:nth-child(4) { animation-delay: 135ms; }
-.mf-stagger > *:nth-child(5) { animation-delay: 180ms; }
-.mf-stagger > *:nth-child(6) { animation-delay: 225ms; }
-.mf-stagger > *:nth-child(7) { animation-delay: 270ms; }
-.mf-stagger > *:nth-child(8) { animation-delay: 315ms; }
-.mf-stagger > *:nth-child(n + 9) { animation-delay: 360ms; }
+.mf-stagger > *:nth-child(n + 2) { animation-delay: 20ms; }
 
 @keyframes mf-shimmer {
   0% { background-position: -200% 0; }
@@ -533,12 +475,12 @@ table th {
 /* Pinned table headers/footers need a near-opaque backing, otherwise the row
    scrolling underneath shows through and the figures become unreadable. */
 .mf-sticky-surface {
-  background: color-mix(in oklab, var(--page-bg) 62%, white 38%);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  background: var(--surface-solid);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .dark .mf-sticky-surface {
-  background: color-mix(in oklab, var(--page-bg) 78%, white 10%);
+  background: var(--surface-solid);
 }
 
 /* ── Status colours ────────────────────────────────────────────────────── */
@@ -554,6 +496,27 @@ table th {
 .status-rejected   { background: var(--color-danger-500); }
 .status-hold       { background: var(--color-warn-600); }
 .status-cancelled  { background: #64748b; }
+
+/* Cashbook panels use a 12-column instrument grid. On compact screens each panel
+   is always full-width; desktop widths are user-adjustable through --cashbook-span. */
+.cashbook-panel {
+  grid-column: 1 / -1;
+  container-type: inline-size;
+}
+.cashbook-calc-grid { grid-template-columns: minmax(0, 1fr); }
+@container (min-width: 24rem) {
+  .cashbook-calc-grid {
+    grid-auto-flow: column;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(8, auto);
+  }
+  .cashbook-calc-left { border-right: 1px solid var(--input-border); }
+}
+@media (min-width: 80rem) {
+  .cashbook-panel {
+    grid-column: span var(--cashbook-span, 12) / span var(--cashbook-span, 12);
+  }
+}
 
 /* ── Print — registers and payout sheets go to paper at the branch ─────── */
 
@@ -598,5 +561,3 @@ table th {
   .glass { background: color-mix(in oklab, var(--page-bg) 82%, white); }
   .dark .glass { background: color-mix(in oklab, var(--page-bg) 70%, white 6%); }
 }
-
-

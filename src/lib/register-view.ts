@@ -42,7 +42,7 @@ export const DATE_FIELD_LABEL: Record<DateField, string> = {
 export const TAB_LABEL: Record<RegisterTab, string> = {
   due: 'Due today',
   today: 'Live',
-  missed: 'Not taken',
+  missed: 'Not paid',
   pending: 'Pending',
   all: 'All',
 };
@@ -51,7 +51,7 @@ export const TAB_LABEL: Record<RegisterTab, string> = {
 export const TAB_HINT: Record<RegisterTab, string> = {
   due: 'Customers the schedule expects at the counter today',
   today: 'Every case that still owes money',
-  missed: 'Customers who did not withdraw on a day they were due — still owed, still on the list',
+  missed: 'Customers who were not paid on a due day — still owed, still on the list',
   pending: 'Rows typed into the sheet that have not been submitted, so nothing is scheduled yet',
   all: 'Every row in the register, settled or not',
 };

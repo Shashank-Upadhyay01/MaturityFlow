@@ -10,11 +10,11 @@
 Today a maturity payout runs like this:
 
 ```
-Agent collects customer docs ──▶ submits Maturity Form (date A)
+Agent collects customer docs ──▶ submits Maturity Form
                                        │
-                          Ops Head reviews (date B, often ≠ A)
+                    server validates the maturity date and policy
                                        │
-                             APPROVED (date B) ──▶ money becomes payable
+                       AUTO-SCHEDULED ──▶ money becomes payable
                                        │
                     "You'll get it within 12–15 days"  ← a promise, not a plan
                                        │
@@ -36,11 +36,11 @@ Agent collects customer docs ──▶ submits Maturity Form (date A)
 
 ### The core insight
 
-Every one of these failures disappears if, **at the moment of approval**, the system emits an
+Every one of these failures disappears if, **at submission**, the system emits an
 immutable, arithmetically-exact, day-by-day payout schedule — and then measures reality against it.
 
 ```
-APPROVED (date B) ──▶ [SCHEDULE ENGINE] ──▶ Day 1: ₹34,000 (₹20,000 cash + ₹14,000 online)
+MATURITY + 3 DAYS ──▶ [SCHEDULE ENGINE] ──▶ Day 1: exact scheduled amount
                                              Day 2: ₹34,000
                                              ...
                                              Day 15: ₹24,000   ← remainder lands here
@@ -60,13 +60,14 @@ Once the schedule exists, everything else is a projection of it:
 
 ### 2.1 The instant calculator (the headline feature)
 
-The Ops Head / Branch Manager types a **maturity amount** and picks **"give within N days"**.
+The Agent / Branch Manager types a **maturity amount**, the actual **maturity date**, and picks
+**"give within N working days"**.
 Before anything is saved, the screen already shows the exact per-day withdrawal plan, live,
 as they type. Change the amount → recalculates. Change days from 15 to 12 → recalculates.
 Set a cash cap of ₹20,000/day → the cash and online columns re-split instantly.
 
 The same pure function runs on the client (for the live preview) **and** on the server (when the
-schedule is persisted at approval), so what the user was shown is bit-for-bit what gets stored.
+schedule is persisted at submission), so what the user was shown is bit-for-bit what gets stored.
 
 ### 2.2 Rounding rule
 
@@ -100,10 +101,10 @@ counter is shut.
 
 ### 2.4 The two dates are never conflated
 
-`formSubmittedAt` and `approvedAt` are separate, both mandatory, both audited. **The schedule is
-anchored to `approvedAt`** — the day the money became payable — and the SLA clock starts there.
-Submission-to-approval lag is measured and reported on its own, because that lag is a second,
-separate problem worth seeing.
+`instrumentMaturityOn` is the customer's contractual maturity date; `formSubmittedOn` records when
+the form reached the bank. The schedule anchor is maturity + 3 calendar days, never earlier than
+today, rolled to the next open day. The historical `approvedOn` column stores that computed anchor;
+`approvedById IS NULL` identifies automatic scheduling. There is no approval step.
 
 ### 2.5 Cash vs online, planned instead of improvised
 
@@ -126,8 +127,8 @@ the completion date is still honoured — never by silently changing history.
 |------|-------|--------|
 | **CMD** | All branches | Everything. Edit any field, override any schedule, see full audit trail, manage users. |
 | **CEO** | All branches | Everything except deleting audit records / system-level config. |
-| **ADMIN** | All branches | User, branch, holiday and settings administration. No approval authority. |
-| **OPS_HEAD** | All branches (or assigned set) | Approve / reject / return maturity forms. Set schedule parameters. The approval authority. |
+| **ADMIN** | All branches | Every permission, including user, branch, holiday, import and operational administration. |
+| **OPS_HEAD** | All branches (legacy role name) | Operational reporting and schedule controls; cases are auto-scheduled at submission. |
 | **BRANCH_MANAGER** | Own branch | Create & submit cases, view branch dashboards, plan branch cash, mark payouts. |
 | **CASHIER** | Own branch | Payout Desk only: record cash/online disbursements against due installments. |
 | **AGENT** | Own customers | Submit maturity forms + documents, track their own customers' payout progress. |
@@ -149,9 +150,9 @@ This system moves real money. These are enforced in code, not by convention.
 | **INV-2** | `Σ(installment amounts) === maturity amount`, exactly, for every generated schedule. | Hard assertion inside the engine + fuzz tests over 100k random cases. |
 | **INV-3** | `installment.amount === installment.cashLeg + installment.onlineLeg` for every row. | Engine assertion + DB check constraint. |
 | **INV-4** | `Σ(paid) ≤ case.maturityAmount`. Over-payment is impossible. | Transactional guard in `recordPayout()` with row-level locking. |
-| **INV-5** | Schedule start date `>= approvedAt`, never before. | Engine precondition. |
+| **INV-5** | Schedule start is maturity + 3 calendar days, never earlier than today, rolled to an open day. | `scheduleAnchorFor()` + integration tests. |
 | **INV-6** | Every money-affecting mutation writes an append-only `AuditLog` row in the **same transaction**. | `withAudit()` wrapper; no direct writes allowed. |
-| **INV-7** | Approval is idempotent — double-clicking "Approve" cannot create two schedules. | Unique constraint on `MaturityCase.id` + status guard inside the transaction. |
+| **INV-7** | Submission is idempotent — repeated clicks cannot create duplicate schedules. | Status guard + locked case row inside the transaction. |
 | **INV-8** | No installment is dated on a non-working day. | Working-day calendar in the engine. |
 
 > Every one of these has a dedicated test. `npm test` must be green before deploy.
@@ -162,10 +163,12 @@ This system moves real money. These are enforced in code, not by convention.
 
 | Screen | Primary user | Purpose |
 |--------|--------------|---------|
-| **Dashboard** | Everyone (scoped) | Today's maturities, today's approvals, given vs remaining, cash vs online, live charts. |
+| **Dashboard** | Everyone (scoped) | Today's maturities, cashbook position, given vs remaining, cash vs online, live charts. |
 | **New Maturity** | Agent / Branch Mgr | Intake form with the **live schedule calculator**. |
-| **Approvals** | Ops Head | Queue of submitted forms, document review, approve/reject/return, schedule preview before commit. |
-| **Cases** | All (scoped) | Searchable register; per-case timeline, schedule, payments, documents, audit. |
+| **Register** | All (scoped) | Searchable Excel-like sheet plus lazily loaded, day-by-day planning board. |
+| **Case detail** | All (scoped) | Per-case timeline, schedule, payments, documents and audit context. |
+| **Daily Cashbook** | Branch operations | Daily movement ledger, denominations, named obligations and close/reopen workflow. |
+| **Maturity Calendar** | Management | Imported current/next-month forecasts, separate from payout cases. |
 | **Payout Desk** | Cashier | Today's due installments; record cash/online/partial with reference numbers. |
 | **Cash Planner** | Branch Mgr / Ops | Next 14 days of cash requirement per branch vs expected opening balance → **extra cash to arrange**. |
 | **Agents** | Ops / Branch Mgr | Per-agent totals, live cases, on-time %, amount outstanding. |
@@ -183,10 +186,10 @@ This system moves real money. These are enforced in code, not by convention.
 | Framework | **Next.js 15** (App Router, RSC, Server Actions) | One deployable unit; data-fetching on the server keeps the money logic off the client. |
 | Language | **TypeScript, `strict`** | Type-level protection around `BigInt` money and role unions. |
 | Database | **PostgreSQL 16** | Transactional integrity, `SERIALIZABLE`-capable, check constraints, cheap to self-host. |
-| ORM | **Prisma 6** | Typed schema, honest migrations, `BigInt` support. |
+| ORM | **Drizzle ORM** | Typed schema, reviewable SQL migrations and `BigInt` support. |
 | Auth | **Argon2-grade hashing (bcrypt) + JOSE JWT in httpOnly cookies + server-side session table** | Sessions are revocable — a fired employee is logged out instantly. |
-| Styling | **Tailwind CSS v4 + custom liquid-glass token layer** | Design system in tokens, no runtime CSS-in-JS cost. |
-| Motion | **Framer Motion** | Spring physics matching Apple's easing; respects `prefers-reduced-motion`. |
+| Styling | **Tailwind CSS v4 + operations-workstation token layer** | Opaque, accessible surfaces with no runtime CSS-in-JS cost. |
+| Motion | **Framer Motion, used selectively** | Short state transitions; respects `prefers-reduced-motion`. |
 | Charts | **Recharts** | Composable, SSR-safe. |
 | Validation | **Zod** | One schema validates client form and server action. |
 | Tests | **Vitest** | Fast; the money engine is unit + fuzz tested. |

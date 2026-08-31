@@ -214,12 +214,12 @@ function CustomerRow({
 export function PlanBoard({
   cases,
   instalments,
-  calendar,
+  calendars,
   today,
 }: {
   cases: PlanCase[];
   instalments: PlanInstalment[];
-  calendar: CalendarSnapshot;
+  calendars: Record<string, CalendarSnapshot>;
   today: string;
 }) {
   const [q, setQ] = useState('');
@@ -231,18 +231,24 @@ export function PlanBoard({
   });
   const [rowParts, setRowParts] = useState<Record<string, number | ''>>({});
 
-  const cal = useMemo(
-    () =>
-      makeCalendar(calendar.holidays, {
-        sundaysOff: calendar.sundaysOff,
-        saturdayRule: calendar.saturdayRule,
-      }),
-    [calendar],
-  );
+  const calendarByBranch = useMemo(() => {
+    const mapped = new Map<string, ReturnType<typeof makeCalendar>>();
+    for (const [branchId, calendar] of Object.entries(calendars)) {
+      mapped.set(
+        branchId,
+        makeCalendar(calendar.holidays, {
+          sundaysOff: calendar.sundaysOff,
+          saturdayRule: calendar.saturdayRule,
+        }),
+      );
+    }
+    return mapped;
+  }, [calendars]);
 
   const rows = useMemo(
     () =>
       cases.map((c) => {
+        const cal = calendarByBranch.get(c.branchId) ?? makeCalendar();
         const band = BigInt(c.maturityAmountPaise) >= 10_000_000n ? 'LARGE' : 'SMALL';
         const own = rowParts[c.caseId];
         const col = bandParts[band as PlanBand];
@@ -255,7 +261,7 @@ export function PlanBoard({
         const isDefault = parts === fallback;
         return buildPlanRow(c, instalments, cal, today, isDefault ? undefined : parts);
       }),
-    [cases, instalments, cal, today, rowParts, bandParts],
+    [cases, instalments, calendarByBranch, today, rowParts, bandParts],
   );
 
   const visible = useMemo(() => {

@@ -35,6 +35,19 @@ export type AuditAction =
   | 'payout.missed'
   | 'payout.missed_cleared'
   | 'cash.opening_set'
+  | 'cashbook.day_saved'
+  | 'cashbook.entry_added'
+  | 'cashbook.entry_updated'
+  | 'cashbook.entry_voided'
+  | 'cashbook.commitment_added'
+  | 'cashbook.commitment_updated'
+  | 'cashbook.commitment_settled'
+  | 'cashbook.commitment_reopened'
+  | 'cashbook.commitment_voided'
+  | 'cashbook.close_requested'
+  | 'cashbook.closed'
+  | 'cashbook.close_rejected'
+  | 'cashbook.reopened'
   | 'branch.created'
   | 'branch.updated'
   | 'agent.created'
@@ -124,9 +137,22 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'schedule.rescheduled': 'Rescheduled',
   'payout.recorded': 'Payout recorded',
   'payout.reversed': 'Payout reversed',
-  'payout.missed': 'Marked not taken',
-  'payout.missed_cleared': 'Not-taken mark cleared',
+  'payout.missed': 'Marked not paid',
+  'payout.missed_cleared': 'Not-paid mark cleared',
   'cash.opening_set': 'Cash opening set',
+  'cashbook.day_saved': 'Cashbook totals saved',
+  'cashbook.entry_added': 'Cashbook entry added',
+  'cashbook.entry_updated': 'Cashbook entry edited',
+  'cashbook.entry_voided': 'Cashbook entry voided',
+  'cashbook.commitment_added': 'Named item added',
+  'cashbook.commitment_updated': 'Named item edited',
+  'cashbook.commitment_settled': 'Named item settled',
+  'cashbook.commitment_reopened': 'Named item reopened',
+  'cashbook.commitment_voided': 'Named item voided',
+  'cashbook.close_requested': 'Cashbook close requested',
+  'cashbook.closed': 'Cashbook closed',
+  'cashbook.close_rejected': 'Cashbook close rejected',
+  'cashbook.reopened': 'Cashbook reopened',
   'branch.created': 'Branch created',
   'branch.updated': 'Branch updated',
   'agent.created': 'Agent added',
