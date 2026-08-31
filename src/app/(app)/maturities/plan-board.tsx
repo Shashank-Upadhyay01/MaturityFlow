@@ -12,6 +12,7 @@ import {
   buildPlanRow,
   defaultPartsFor,
   summariseBand,
+  summariseDailyRequirements,
   summariseToday,
   type DayState,
   type PlanBand,
@@ -279,6 +280,7 @@ export function PlanBoard({
   // Today is computed from EVERY row, never the filtered view — it is the cash the branch must
   // open with, and it would be worse than useless if it moved when somebody searched a name.
   const todayCol = useMemo(() => summariseToday(rows), [rows]);
+  const dailyRequirements = useMemo(() => summariseDailyRequirements(rows, today), [rows, today]);
   const large = useMemo(() => summariseBand('LARGE', visible), [visible]);
   const small = useMemo(() => summariseBand('SMALL', visible), [visible]);
 
@@ -370,6 +372,72 @@ export function PlanBoard({
           className="mf-input h-8 w-full max-w-sm !pl-8 text-[0.8rem]"
         />
       </div>
+
+      <Glass className="overflow-hidden">
+        <div className="flex flex-wrap items-end justify-between gap-2 border-b px-3 py-2.5">
+          <div>
+            <div className="flex items-center gap-1.5">
+              <CalendarClock className="h-3.5 w-3.5 text-[var(--color-brand-600)] dark:text-[var(--color-brand-300)]" />
+              <h2 className="text-[0.85rem] font-semibold">Daily withdrawal requirement</h2>
+            </div>
+            <p className="mt-0.5 text-[0.65rem] text-[var(--faint-fg)]">
+              Total across every case · updates instantly when the number of parts changes
+            </p>
+          </div>
+          <span className="text-[0.68rem] tabular-nums text-[var(--muted-fg)]">
+            {dailyRequirements.length} payout day{dailyRequirements.length === 1 ? '' : 's'}
+          </span>
+        </div>
+
+        {dailyRequirements.length === 0 ? (
+          <p className="px-3 py-5 text-center text-[0.72rem] text-[var(--muted-fg)]">
+            No upcoming withdrawals in the current plan.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <div className="flex min-w-max divide-x divide-[var(--hairline)]">
+              {dailyRequirements.map((day) => (
+                <div key={day.dueOn} className="w-[11.5rem] shrink-0 px-3 py-2.5">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[0.7rem] font-semibold tabular-nums">
+                      {day.dueOn === today ? 'Today' : formatDMY(day.dueOn)}
+                    </span>
+                    <span className="text-[0.6rem] uppercase tracking-wide text-[var(--faint-fg)]">
+                      {weekdayShort(day.dueOn)}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[1rem] font-semibold tabular-nums text-[var(--page-fg)]">
+                    {inr(day.totalPaise)}
+                  </p>
+                  <p className="text-[0.6rem] uppercase tracking-wide text-[var(--faint-fg)]">
+                    total withdrawal
+                  </p>
+                  <div className="mt-2 grid grid-cols-2 gap-2 border-t border-[var(--hairline)] pt-1.5 text-[0.67rem] tabular-nums">
+                    <span>
+                      <span className="block text-[0.58rem] uppercase tracking-wide text-[var(--faint-fg)]">
+                        Cash needed
+                      </span>
+                      <strong className="text-[var(--color-brand-600)] dark:text-[var(--color-brand-300)]">
+                        {inr(day.cashPaise)}
+                      </strong>
+                    </span>
+                    <span>
+                      <span className="block text-[0.58rem] uppercase tracking-wide text-[var(--faint-fg)]">
+                        Online
+                      </span>
+                      {inr(day.onlinePaise)}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-[0.6rem] text-[var(--faint-fg)]">
+                    {day.count} customer{day.count === 1 ? '' : 's'}
+                    {day.projectedPaise > 0n ? ' · includes projected' : ''}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Glass>
 
       <div className="grid gap-3 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.1fr)_minmax(0,1.1fr)]">
         {/* ── 1. today ───────────────────────────────────────────────── */}

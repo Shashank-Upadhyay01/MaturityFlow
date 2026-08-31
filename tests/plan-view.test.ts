@@ -4,6 +4,7 @@ import {
   buildPlanRow,
   defaultPartsFor,
   summariseBand,
+  summariseDailyRequirements,
   summariseToday,
   type PlanCase,
   type PlanInstalment,
@@ -45,6 +46,8 @@ const inst = (over: Partial<PlanInstalment> = {}): PlanInstalment => ({
   seq: 1,
   dueOn: TODAY,
   amountPaise: '1000000',
+  cashLegPaise: '1000000',
+  onlineLegPaise: '0',
   paidCashPaise: '0',
   paidOnlinePaise: '0',
   status: 'PENDING',
@@ -240,5 +243,88 @@ describe('band summaries', () => {
     expect(small.count).toBe(1);
     expect(large.maturityPaise).toBe(30_000_000n);
     expect(small.maturityPaise).toBe(5_000_000n);
+  });
+});
+
+describe('daily withdrawal requirements', () => {
+  it('adds every customer on the same date and keeps cash and online exact', () => {
+    const a = buildPlanRow(
+      mk({ caseId: 'a', approvedOn: '2026-08-20' }),
+      [
+        inst({
+          caseId: 'a',
+          amountPaise: '2000000',
+          cashLegPaise: '1500000',
+          onlineLegPaise: '500000',
+        }),
+      ],
+      cal,
+      TODAY,
+    );
+    const b = buildPlanRow(
+      mk({ caseId: 'b', approvedOn: '2026-08-20' }),
+      [
+        inst({
+          caseId: 'b',
+          amountPaise: '3000000',
+          cashLegPaise: '1000000',
+          onlineLegPaise: '2000000',
+        }),
+        inst({
+          caseId: 'b',
+          seq: 2,
+          dueOn: '2026-08-26',
+          amountPaise: '4000000',
+          cashLegPaise: '4000000',
+          onlineLegPaise: '0',
+        }),
+      ],
+      cal,
+      TODAY,
+    );
+
+    const days = summariseDailyRequirements([a, b], TODAY);
+    expect(days).toHaveLength(2);
+    expect(days[0]).toMatchObject({
+      dueOn: TODAY,
+      totalPaise: 5_000_000n,
+      cashPaise: 2_500_000n,
+      onlinePaise: 2_500_000n,
+      committedPaise: 5_000_000n,
+      projectedPaise: 0n,
+      count: 2,
+    });
+    expect(days[1].totalPaise).toBe(4_000_000n);
+  });
+
+  it('subtracts paid legs and excludes past dates', () => {
+    const row = buildPlanRow(
+      mk({ approvedOn: '2026-08-20', paidCashPaise: '500000' }),
+      [
+        inst({ caseId: 'c1', dueOn: '2026-08-24' }),
+        inst({
+          caseId: 'c1',
+          seq: 2,
+          amountPaise: '2000000',
+          cashLegPaise: '1500000',
+          onlineLegPaise: '500000',
+          paidCashPaise: '500000',
+        }),
+      ],
+      cal,
+      TODAY,
+    );
+
+    expect(summariseDailyRequirements([row], TODAY)).toEqual([
+      {
+        dueOn: TODAY,
+        totalPaise: 1_500_000n,
+        cashPaise: 1_000_000n,
+        onlinePaise: 500_000n,
+        committedPaise: 1_500_000n,
+        projectedPaise: 0n,
+        count: 1,
+      },
+    ]);
   });
 });

@@ -57,6 +57,8 @@ export interface PlanInstalment {
   seq: number;
   dueOn: string;
   amountPaise: string;
+  cashLegPaise?: string;
+  onlineLegPaise?: string;
   paidCashPaise: string;
   paidOnlinePaise: string;
   status: string;
@@ -76,6 +78,10 @@ export interface PlanDay {
   dueOn: string;
   amountPaise: bigint;
   paidPaise: bigint;
+  /** Remaining physical-cash leg for this day. */
+  cashPaise: bigint;
+  /** Remaining online leg for this day. */
+  onlinePaise: bigint;
   state: DayState;
 }
 
@@ -189,12 +195,18 @@ export function buildPlanRow(
     return finish(
       real.map((i) => {
         const amount = big(i.amountPaise);
-        const paid = big(i.paidCashPaise) + big(i.paidOnlinePaise);
+        const paidCash = big(i.paidCashPaise);
+        const paidOnline = big(i.paidOnlinePaise);
+        const paid = paidCash + paidOnline;
+        const plannedCash = big(i.cashLegPaise ?? i.amountPaise);
+        const plannedOnline = big(i.onlineLegPaise);
         return {
           seq: i.seq,
           dueOn: i.dueOn,
           amountPaise: amount,
           paidPaise: paid,
+          cashPaise: plannedCash > paidCash ? plannedCash - paidCash : 0n,
+          onlinePaise: plannedOnline > paidOnline ? plannedOnline - paidOnline : 0n,
           state: stateOf(i.dueOn, amount, paid, today),
         };
       }),
@@ -241,6 +253,8 @@ export function buildPlanRow(
         dueOn: i.dueDate,
         amountPaise: i.amountPaise,
         paidPaise: 0n,
+        cashPaise: i.cashLegPaise,
+        onlinePaise: i.onlineLegPaise,
         state: stateOf(i.dueDate, i.amountPaise, 0n, today),
       })),
       true,
@@ -322,4 +336,57 @@ export function summariseToday(rows: readonly PlanRow[]): TodayColumn {
     b.amountPaise > a.amountPaise ? 1 : b.amountPaise < a.amountPaise ? -1 : 0,
   );
   return { totalPaise, committedPaise, projectedPaise, count: lines.length, lines };
+}
+
+export interface DailyRequirement {
+  dueOn: string;
+  totalPaise: bigint;
+  cashPaise: bigint;
+  onlinePaise: bigint;
+  committedPaise: bigint;
+  projectedPaise: bigint;
+  count: number;
+}
+
+/**
+ * Exact day-wise withdrawal requirement across every row in the Plan.
+ *
+ * `from` excludes historical schedule dates because this figure answers how much the branch must
+ * arrange, not how much it should have arranged in the past. Paid portions are removed from each
+ * leg before aggregation. Search filters must never be applied before calling this function.
+ */
+export function summariseDailyRequirements(
+  rows: readonly PlanRow[],
+  from: string,
+): DailyRequirement[] {
+  const byDate = new Map<string, DailyRequirement>();
+  for (const row of rows) {
+    for (const day of row.days) {
+      if (day.dueOn < from) continue;
+      const remaining = day.amountPaise > day.paidPaise ? day.amountPaise - day.paidPaise : 0n;
+      if (remaining <= 0n) continue;
+
+      // Database-backed rows reconcile by constraint. The clamp keeps a malformed imported or
+      // projected row from ever making the displayed cash requirement exceed the withdrawal.
+      const cash = day.cashPaise < remaining ? day.cashPaise : remaining;
+      const online = remaining - cash;
+      const current = byDate.get(day.dueOn) ?? {
+        dueOn: day.dueOn,
+        totalPaise: 0n,
+        cashPaise: 0n,
+        onlinePaise: 0n,
+        committedPaise: 0n,
+        projectedPaise: 0n,
+        count: 0,
+      };
+      current.totalPaise += remaining;
+      current.cashPaise += cash;
+      current.onlinePaise += online;
+      if (row.isProjection) current.projectedPaise += remaining;
+      else current.committedPaise += remaining;
+      current.count += 1;
+      byDate.set(day.dueOn, current);
+    }
+  }
+  return [...byDate.values()].sort((a, b) => a.dueOn.localeCompare(b.dueOn));
 }
