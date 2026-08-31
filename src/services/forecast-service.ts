@@ -8,8 +8,15 @@ import { agents, branches, maturityForecasts } from '@/db/schema';
 import { writeAudit } from '@/lib/audit';
 import type { SessionUser } from '@/lib/auth/session';
 import type { ForecastImportRow } from '@/lib/maturity-forecast';
+import {
+  aggregateForecastPayments,
+  projectForecastPayments,
+  type DailyForecastPayment,
+} from '@/lib/maturity-payment-plan';
 import { newId } from '@/lib/id';
 import { activeRole, ROLE_SCOPE, type Actor } from '@/lib/rbac';
+import { getBranchPolicy } from '@/services/calendar-service';
+import { loadOrgSettings } from '@/services/org-settings';
 
 const paise = (value: number): bigint => {
   if (value <= 0 || !Number.isFinite(value)) return 0n;
@@ -140,6 +147,7 @@ export async function listMaturityForecasts(actor: Actor, month: string) {
   return db
     .select({
       id: maturityForecasts.id,
+      branchId: maturityForecasts.branchId,
       accountNumber: maturityForecasts.accountNumber,
       customerName: maturityForecasts.customerName,
       agentName: maturityForecasts.agentName,
@@ -156,4 +164,66 @@ export async function listMaturityForecasts(actor: Actor, month: string) {
     .innerJoin(branches, eq(branches.id, maturityForecasts.branchId))
     .where(and(...conds))
     .orderBy(asc(maturityForecasts.maturityOn), asc(maturityForecasts.customerName));
+}
+
+export interface ForecastPaymentProjection {
+  days: DailyForecastPayment[];
+  totalPaise: bigint;
+  cashPaise: bigint;
+  onlinePaise: bigint;
+  firstPaymentOn: string | null;
+  lastPaymentOn: string | null;
+}
+
+/**
+ * Project a forecast month through the same pure payout engine used by live cases.
+ * This is read-only: no case, instalment or transaction row is created.
+ */
+export async function projectMaturityForecastPayments(
+  month: string,
+  rows: Awaited<ReturnType<typeof listMaturityForecasts>>,
+): Promise<ForecastPaymentProjection> {
+  if (rows.length === 0) {
+    return {
+      days: [], totalPaise: 0n, cashPaise: 0n, onlinePaise: 0n,
+      firstPaymentOn: null, lastPaymentOn: null,
+    };
+  }
+
+  const org = await loadOrgSettings();
+  const byBranch = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const group = byBranch.get(row.branchId) ?? [];
+    group.push(row);
+    byBranch.set(row.branchId, group);
+  }
+
+  const projected = await Promise.all([...byBranch].map(async ([branchId, branchRows]) => {
+    const policy = await getBranchPolicy(branchId);
+    return projectForecastPayments(
+      month,
+      branchRows.map((row) => ({
+        id: row.id,
+        maturityOn: row.maturityOn,
+        amountPaise: row.currentMaturityPaise,
+      })),
+      {
+        calendar: policy.calendar,
+        windowDays: policy.defaultWindowDays,
+        roundingPaise: policy.defaultRoundingPaise,
+        cashPolicy: { kind: 'CASH_CAP', cashCapPerDayPaise: org.cashCapPaise },
+        dailyCashComfortPaise: policy.dailyCashComfortPaise,
+      },
+    );
+  }));
+
+  const days = aggregateForecastPayments(projected.flat());
+  return {
+    days,
+    totalPaise: days.reduce((sum, day) => sum + day.totalPaise, 0n),
+    cashPaise: days.reduce((sum, day) => sum + day.cashPaise, 0n),
+    onlinePaise: days.reduce((sum, day) => sum + day.onlinePaise, 0n),
+    firstPaymentOn: days[0]?.dueOn ?? null,
+    lastPaymentOn: days.at(-1)?.dueOn ?? null,
+  };
 }

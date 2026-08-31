@@ -1,18 +1,33 @@
 import 'server-only';
 
 import { createHash } from 'node:crypto';
-import { and, asc, eq, gte, lt, ne } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, like, lt, ne } from 'drizzle-orm';
 
 import { db } from '@/db';
-import { agents, branches, customers, maturityCases, maturityForecasts } from '@/db/schema';
+import {
+  agents,
+  branches,
+  caseEvents,
+  customers,
+  maturityCases,
+  maturityForecasts,
+  payoutInstalments,
+} from '@/db/schema';
 import { writeAudit } from '@/lib/audit';
 import { toActor, type SessionUser } from '@/lib/auth/session';
 import { newId } from '@/lib/id';
+import {
+  AUGUST_2026_PAYOUT_START,
+  AUGUST_2026_WINDOW_DAYS,
+  august2026PaymentPolicy,
+} from '@/lib/maturity-payment-plan';
+import { formatPaise } from '@/lib/money';
 import { assertCan } from '@/lib/rbac';
 import { todayISO } from '@/lib/working-days';
 import { createCase } from '@/services/case-service';
 import { getBranchPolicy } from '@/services/calendar-service';
 import { loadOrgSettings } from '@/services/org-settings';
+import { persistSchedule } from '@/services/schedule-service';
 
 function monthAfter(month: string): string {
   const [year, value] = month.split('-').map(Number);
@@ -209,6 +224,186 @@ export async function activateForecastMonthForTesting(
       result.failed.push({
         customerName: row.customerName,
         message: error instanceof Error ? error.message : 'Unknown activation error',
+      });
+    }
+  }
+
+  return result;
+}
+
+export interface August2026ReplanResult {
+  casesFound: number;
+  casesReplanned: number;
+  casesSkipped: number;
+  totalPaise: bigint;
+  firstPayoutOn: string | null;
+  lastPayoutOn: string | null;
+  failed: { caseNumber: string; message: string }[];
+}
+
+/**
+ * Apply the explicitly authorised 1–12 September payout window to activated August 2026 cases.
+ *
+ * This is intentionally narrow and idempotent. Each case is its own locked, audited transaction;
+ * one bad row does not prevent the other cases being safely replanned.
+ */
+export async function replanActivatedAugust2026(
+  actor: SessionUser,
+  branchId: string,
+): Promise<August2026ReplanResult> {
+  const auth = toActor(actor);
+  assertCan(auth, 'case.submit', { branchId });
+
+  const candidates = await db
+    .select({ id: maturityCases.id, caseNumber: maturityCases.caseNumber })
+    .from(maturityCases)
+    .where(and(
+      eq(maturityCases.branchId, branchId),
+      gte(maturityCases.instrumentMaturityOn, '2026-08-01'),
+      lt(maturityCases.instrumentMaturityOn, '2026-09-01'),
+      like(maturityCases.notes, 'Activated from forecast %'),
+      ne(maturityCases.status, 'CANCELLED'),
+    ))
+    .orderBy(asc(maturityCases.caseNumber));
+
+  const result: August2026ReplanResult = {
+    casesFound: candidates.length,
+    casesReplanned: 0,
+    casesSkipped: 0,
+    totalPaise: 0n,
+    firstPayoutOn: null,
+    lastPayoutOn: null,
+    failed: [],
+  };
+
+  for (const candidate of candidates) {
+    try {
+      const outcome = await db.transaction(async (tx) => {
+        // Lock order is non-negotiable: case first, then its instalments.
+        const [caseRow] = await tx
+          .select()
+          .from(maturityCases)
+          .where(eq(maturityCases.id, candidate.id))
+          .for('update')
+          .limit(1);
+        if (!caseRow) throw new Error('Case no longer exists.');
+
+        const current = await tx
+          .select()
+          .from(payoutInstalments)
+          .where(and(
+            eq(payoutInstalments.caseId, caseRow.id),
+            eq(payoutInstalments.scheduleVersion, caseRow.scheduleVersion),
+            ne(payoutInstalments.status, 'SUPERSEDED'),
+          ))
+          .for('update');
+
+        if (
+          caseRow.paidCashPaise + caseRow.paidOnlinePaise > 0n ||
+          current.some((row) => row.paidCashPaise + row.paidOnlinePaise > 0n)
+        ) {
+          throw new Error('Payouts have already started; this case was not changed.');
+        }
+
+        if (
+          caseRow.firstPayoutOn === AUGUST_2026_PAYOUT_START &&
+          caseRow.windowDays === AUGUST_2026_WINDOW_DAYS
+        ) {
+          return { skipped: true as const, amountPaise: caseRow.maturityAmountPaise };
+        }
+
+        const branchPolicy = await getBranchPolicy(branchId, tx);
+        const special = august2026PaymentPolicy({
+          calendar: branchPolicy.calendar,
+          windowDays: branchPolicy.defaultWindowDays,
+          roundingPaise: caseRow.roundingPaise,
+          cashPolicy: caseRow.cashPolicy === 'CASH_CAP'
+            ? { kind: 'CASH_CAP', cashCapPerDayPaise: caseRow.cashCapPerDayPaise ?? 0n }
+            : { kind: caseRow.cashPolicy },
+          dailyCashComfortPaise: branchPolicy.dailyCashComfortPaise,
+        });
+
+        if (current.length > 0) {
+          await tx
+            .update(payoutInstalments)
+            .set({ status: 'SUPERSEDED', supersededAt: new Date(), updatedAt: new Date() })
+            .where(inArray(payoutInstalments.id, current.map((row) => row.id)));
+        }
+
+        const replannedCase = {
+          ...caseRow,
+          approvedOn: AUGUST_2026_PAYOUT_START,
+          windowDays: AUGUST_2026_WINDOW_DAYS,
+        };
+        await tx
+          .update(maturityCases)
+          .set({
+            approvedOn: AUGUST_2026_PAYOUT_START,
+            windowDays: AUGUST_2026_WINDOW_DAYS,
+            updatedAt: new Date(),
+          })
+          .where(eq(maturityCases.id, caseRow.id));
+
+        const schedule = await persistSchedule({
+          tx,
+          caseRow: replannedCase,
+          calendar: special.calendar,
+          anchorDate: AUGUST_2026_PAYOUT_START,
+          branchDailyCashComfortPaise: branchPolicy.dailyCashComfortPaise,
+        });
+
+        await tx.insert(caseEvents).values({
+          id: newId('evt'),
+          caseId: caseRow.id,
+          type: 'SCHEDULE_GENERATED',
+          actorId: actor.id,
+          note: `August 2026 authorised payout window: ${schedule.firstPayoutDate} → ${schedule.lastPayoutDate}.`,
+        });
+        await writeAudit(tx, actor, {
+          action: 'schedule.rescheduled',
+          entity: 'MaturityCase',
+          entityId: caseRow.id,
+          branchId,
+          summary: `${caseRow.caseNumber} replanned into the authorised August cohort window; ${formatPaise(caseRow.maturityAmountPaise)} remains exact`,
+          before: {
+            scheduleVersion: caseRow.scheduleVersion,
+            firstPayoutOn: caseRow.firstPayoutOn,
+            deadlineOn: caseRow.deadlineOn,
+            windowDays: caseRow.windowDays,
+          },
+          after: {
+            scheduleVersion: caseRow.scheduleVersion + 1,
+            firstPayoutOn: schedule.firstPayoutDate,
+            deadlineOn: schedule.lastPayoutDate,
+            windowDays: AUGUST_2026_WINDOW_DAYS,
+          },
+          userAgent: 'operator-script/replan-august-2026',
+        });
+
+        return {
+          skipped: false as const,
+          amountPaise: caseRow.maturityAmountPaise,
+          firstPayoutOn: schedule.firstPayoutDate,
+          lastPayoutOn: schedule.lastPayoutDate,
+        };
+      });
+
+      result.totalPaise += outcome.amountPaise;
+      if (outcome.skipped) {
+        result.casesSkipped += 1;
+      } else {
+        result.casesReplanned += 1;
+        result.firstPayoutOn = result.firstPayoutOn === null || outcome.firstPayoutOn < result.firstPayoutOn
+          ? outcome.firstPayoutOn
+          : result.firstPayoutOn;
+        result.lastPayoutOn = result.lastPayoutOn === null || outcome.lastPayoutOn > result.lastPayoutOn
+          ? outcome.lastPayoutOn
+          : result.lastPayoutOn;
+      }
+    } catch (error) {
+      result.failed.push({
+        caseNumber: candidate.caseNumber,
+        message: error instanceof Error ? error.message : 'Unknown replanning error',
       });
     }
   }
