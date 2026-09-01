@@ -10,7 +10,7 @@ const out = process.argv[3] ?? '/tmp/shot.png';
 const email = process.argv[4] ?? 'admin@bank.test';
 const width = Number(process.argv[5] ?? 1440);
 const height = Number(process.argv[6] ?? 900);
-const base = 'http://localhost:3000';
+const base = process.env.BASE_URL ?? 'http://localhost:3000';
 
 // That container path only exists in the Linux sandbox; everywhere else (Windows
 // included) fall through to the browser `npx playwright install chromium` put down.
