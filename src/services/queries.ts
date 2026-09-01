@@ -385,7 +385,7 @@ export async function getRegisterSummary(
   };
 }
 
-/** Sidebar badges only — two light counts, not the full dashboard. */
+/** Navigation badges only — two light counts, not the full dashboard. */
 export async function getNavBadges(
   actor: Actor,
   date = todayISO(),

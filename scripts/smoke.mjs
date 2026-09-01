@@ -103,9 +103,9 @@ try {
   await page.goto(`${BASE}/maturities`, { waitUntil: 'networkidle' });
   await page.waitForSelector('tbody tr', { timeout: 15000 });
 
-  // Read the sidebar from a real page — the 404 above renders no nav.
+  // Read the workspace navigation from a real page — the 404 above renders no nav.
   const navText = await page.locator('nav').first().innerText();
-  check('no Approvals entry in the sidebar', !/approvals/i.test(navText));
+  check('no Approvals entry in the navigation', !/approvals/i.test(navText));
   check('the register has rows', (await page.locator('tbody tr').count()) > 0);
   const sheetText = await page.locator('main').innerText();
   check('the register no longer offers an approval affordance', !/awaiting approval/i.test(sheetText));

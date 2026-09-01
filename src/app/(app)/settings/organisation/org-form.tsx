@@ -33,7 +33,7 @@ export function OrgForm(props: {
   return (
     <Glass className="p-6">
       <form action={formAction} className="space-y-4">
-        <Field label="Organisation name" required error={fe.orgName} hint="Shown on the sign-in screen and in the sidebar">
+        <Field label="Organisation name" required error={fe.orgName} hint="Shown on the sign-in screen and in the workspace header">
           <Input name="orgName" defaultValue={props.orgName} required />
         </Field>
         <Field label="Short name" required error={fe.orgShortName}>

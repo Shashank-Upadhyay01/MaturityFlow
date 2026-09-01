@@ -1,18 +1,18 @@
 'use client';
 
-import { KeyRound, LogOut, Menu, UserCircle2, X } from 'lucide-react';
+import { Building2, KeyRound, LogOut, Menu, UserCircle2, X } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 
 import { logoutAction } from '@/actions/auth';
-import { pageTitleFor } from './nav-config';
-import { Sidebar, type NavBadges } from './sidebar';
-import { ThemeToggle } from './theme-toggle';
+import { UserAvatar } from '@/components/domain/user-avatar';
 import type { SessionUser } from '@/lib/auth/session';
 import { ROLE_LABEL, ROLE_SHORT, activeRole } from '@/lib/rbac';
-import { UserAvatar } from '@/components/domain/user-avatar';
 import { cn } from '@/lib/utils';
+import { pageTitleFor } from './nav-config';
+import { ThemeToggle } from './theme-toggle';
+import { TopNavigation, type NavBadges } from './top-navigation';
 
 export function Topbar({
   session,
@@ -23,146 +23,119 @@ export function Topbar({
   badges: NavBadges;
   todayLabel: string;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [drawer, setDrawer] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const pathname = usePathname();
   const title = pageTitleFor(pathname);
 
   return (
-    <>
-      <header className="glass glass-flat sticky top-0 z-30 flex h-12 items-center gap-3 rounded-none border-x-0 border-t-0 px-4 sm:px-6">
+    <header className="sticky top-0 z-40 border-b border-[var(--glass-border)] bg-[var(--surface-solid)] shadow-[0_1px_3px_rgba(15,23,42,0.05)]">
+      <div className="flex h-12 items-center gap-3 px-3 sm:px-4">
         <button
           type="button"
-          onClick={() => setDrawer(true)}
-          aria-label="Open navigation"
-          className="-ml-1 rounded-[11px] p-1.5 text-[var(--muted-fg)] transition-colors hover:bg-[var(--glass-bg-subtle)] xl:hidden"
+          onClick={() => {
+            setNavigationOpen((open) => !open);
+            setAccountOpen(false);
+          }}
+          aria-label={navigationOpen ? 'Close navigation' : 'Open navigation'}
+          aria-expanded={navigationOpen}
+          className="-ml-1 rounded-[9px] p-1.5 text-[var(--muted-fg)] transition-colors hover:bg-[var(--glass-bg-subtle)] hover:text-[var(--page-fg)] lg:hidden"
         >
-          <Menu className="h-5 w-5" />
+          {navigationOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
 
-        {/*
-          The page name leads. This bar used to open with the date and then run
-          ~800px of empty glass before the avatar, which is why the screen read
-          as two half-used bars stacked on each other.
-        */}
-        <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
-          {/*
-            A locator, not the document heading — most screens print their own <h1> just below
-            this bar, and two <h1>s on one page is worse for a screen reader than none. The
-            Register, which gave its heading up to this bar, carries an sr-only one instead.
-          */}
-          <span className="truncate text-[0.9375rem] font-semibold uppercase leading-none tracking-[0.08em]">
-            {title}
+        <Link href="/dashboard" className="flex shrink-0 items-center gap-2.5" aria-label="Open Summary">
+          <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-gradient-to-br from-[var(--color-brand-400)] to-[var(--color-brand-600)] shadow-[0_4px_12px_-5px_rgba(37,99,235,0.75)]">
+            <Building2 className="h-4 w-4 text-white" />
           </span>
+          <span className="hidden sm:block">
+            <span className="block max-w-[10rem] truncate text-[0.875rem] font-bold leading-tight tracking-[-0.01em]">
+              {session.orgShortName || 'MaturityFlow'}
+            </span>
+            <span className="block max-w-[10rem] truncate text-[0.625rem] leading-tight text-[var(--faint-fg)]">
+              {session.branchName ?? 'Head Office'}
+            </span>
+          </span>
+        </Link>
+
+        <span className="hidden h-6 w-px bg-[var(--glass-border-quiet)] sm:block" aria-hidden />
+
+        <div className="min-w-0 flex-1">
+          <span className="block truncate text-[0.8125rem] font-bold uppercase leading-tight tracking-[0.07em]">{title}</span>
           {session.branchName && (
-            <span className="hidden truncate text-[0.75rem] text-[var(--muted-fg)] sm:block">
+            <span className="block truncate text-[0.625rem] leading-tight text-[var(--faint-fg)]">
               {session.branchCode} · {session.branchName}
             </span>
           )}
         </div>
 
-        <span className="hidden whitespace-nowrap text-[0.75rem] tabular-nums text-[var(--muted-fg)] md:block">
-          {todayLabel}
-        </span>
+        <span className="hidden whitespace-nowrap text-[0.72rem] tabular-nums text-[var(--muted-fg)] md:block">{todayLabel}</span>
 
-        <ThemeToggle />
+        <ThemeToggle className="h-8 w-8 rounded-[10px]" />
 
         <div className="relative">
           <button
             type="button"
-            onClick={() => setMenuOpen((v) => !v)}
+            onClick={() => {
+              setAccountOpen((open) => !open);
+              setNavigationOpen(false);
+            }}
             aria-haspopup="menu"
-            aria-expanded={menuOpen}
+            aria-expanded={accountOpen}
             className={cn(
-              'flex items-center gap-2 rounded-[13px] border border-[var(--glass-border-quiet)] bg-[var(--glass-bg-subtle)] py-1 pl-1 pr-2.5',
-              'transition-all duration-300 hover:bg-[var(--glass-bg-strong)]',
+              'flex items-center gap-2 rounded-[11px] border border-[var(--glass-border-quiet)] bg-[var(--glass-bg-subtle)] py-0.5 pl-0.5 pr-2',
+              'transition-colors hover:bg-[var(--glass-bg-strong)]',
             )}
           >
-            <UserAvatar
-              userId={session.id}
-              name={session.name}
-              hasAvatar={session.hasAvatar}
-              version={session.avatarAt}
-              size="sm"
-            />
+            <UserAvatar userId={session.id} name={session.name} hasAvatar={session.hasAvatar} version={session.avatarAt} size="sm" />
             <span className="hidden text-left sm:block">
-              <span className="block max-w-[9rem] truncate text-[0.8125rem] font-medium leading-tight">
-                {session.name}
-              </span>
-              <span className="block text-[0.6875rem] leading-tight text-[var(--faint-fg)]">
-                {ROLE_SHORT[activeRole(session.role)]}
-              </span>
+              <span className="block max-w-[8rem] truncate text-[0.75rem] font-semibold leading-tight">{session.name}</span>
+              <span className="block text-[0.625rem] leading-tight text-[var(--faint-fg)]">{ROLE_SHORT[activeRole(session.role)]}</span>
             </span>
           </button>
 
-          {menuOpen && (
+          {accountOpen && (
             <>
-              <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} aria-hidden />
-              <div
-                role="menu"
-                className="glass mf-rise absolute right-0 top-[calc(100%+8px)] z-50 w-64 overflow-hidden p-1.5"
-              >
-                <div className="border-b px-3 py-2.5">
-                  <p className="truncate text-[0.875rem] font-medium">{session.name}</p>
-                  <p className="truncate text-[0.75rem] text-[var(--muted-fg)]">
-                    @{session.username} · {session.email}
-                  </p>
-                  <p className="mt-1 text-[0.6875rem] text-[var(--faint-fg)]">
-                    {ROLE_LABEL[activeRole(session.role)]}
-                    {session.branchName ? ` · ${session.branchName}` : ''}
-                  </p>
+              <button type="button" tabIndex={-1} aria-hidden className="fixed inset-0 z-40 cursor-default" onClick={() => setAccountOpen(false)} />
+              <div className="absolute right-0 top-full z-50 pt-2">
+                <div role="menu" className="glass mf-rise w-64 overflow-hidden p-1.5">
+                  <div className="border-b px-3 py-2.5">
+                    <p className="truncate text-[0.875rem] font-semibold">{session.name}</p>
+                    <p className="truncate text-[0.75rem] text-[var(--muted-fg)]">@{session.username} · {session.email}</p>
+                    <p className="mt-1 text-[0.6875rem] text-[var(--faint-fg)]">
+                      {ROLE_LABEL[activeRole(session.role)]}{session.branchName ? ` · ${session.branchName}` : ''}
+                    </p>
+                  </div>
+                  <Link href="/account" onClick={() => setAccountOpen(false)} className="flex items-center gap-2.5 rounded-[9px] px-3 py-2 text-[0.8125rem] text-[var(--muted-fg)] hover:bg-[var(--glass-bg-subtle)] hover:text-[var(--page-fg)]">
+                    <UserCircle2 className="h-4 w-4" />My profile
+                  </Link>
+                  <Link href="/account/password" onClick={() => setAccountOpen(false)} className="flex items-center gap-2.5 rounded-[9px] px-3 py-2 text-[0.8125rem] text-[var(--muted-fg)] hover:bg-[var(--glass-bg-subtle)] hover:text-[var(--page-fg)]">
+                    <KeyRound className="h-4 w-4" />Change password
+                  </Link>
+                  <form action={logoutAction}>
+                    <button type="submit" className="flex w-full items-center gap-2.5 rounded-[9px] px-3 py-2 text-left text-[0.8125rem] text-[var(--color-danger-500)] hover:bg-[color-mix(in_oklab,var(--color-danger-500)_10%,transparent)]">
+                      <LogOut className="h-4 w-4" />Sign out
+                    </button>
+                  </form>
                 </div>
-                <Link
-                  href="/account"
-                  onClick={() => setMenuOpen(false)}
-                  className="flex items-center gap-2.5 rounded-[11px] px-3 py-2 text-[0.875rem] text-[var(--muted-fg)] transition-colors hover:bg-[var(--glass-bg-subtle)] hover:text-[var(--page-fg)]"
-                >
-                  <UserCircle2 className="h-4 w-4" />
-                  My profile
-                </Link>
-                <Link
-                  href="/account/password"
-                  onClick={() => setMenuOpen(false)}
-                  className="flex items-center gap-2.5 rounded-[11px] px-3 py-2 text-[0.875rem] text-[var(--muted-fg)] transition-colors hover:bg-[var(--glass-bg-subtle)] hover:text-[var(--page-fg)]"
-                >
-                  <KeyRound className="h-4 w-4" />
-                  Change password
-                </Link>
-                <form action={logoutAction}>
-                  <button
-                    type="submit"
-                    className="flex w-full items-center gap-2.5 rounded-[11px] px-3 py-2 text-left text-[0.875rem] text-[var(--color-danger-500)] transition-colors hover:bg-[color-mix(in_oklab,var(--color-danger-500)_10%,transparent)]"
-                  >
-                    <LogOut className="h-4 w-4" />
-                    Sign out
-                  </button>
-                </form>
               </div>
             </>
           )}
         </div>
-      </header>
+      </div>
 
-      {drawer && (
-        <div className="fixed inset-0 z-50 xl:hidden">
-          <div
-            className="mf-fade absolute inset-0 bg-black/40 backdrop-blur-sm"
-            onClick={() => setDrawer(false)}
-            aria-hidden
-          />
-          <div className="glass mf-rise absolute left-0 top-0 h-full w-[16.5rem] rounded-l-none p-3">
-            <button
-              type="button"
-              onClick={() => setDrawer(false)}
-              aria-label="Close navigation"
-              className="absolute right-3 top-3 rounded-[9px] p-1.5 text-[var(--faint-fg)] hover:bg-[var(--glass-bg-subtle)]"
-            >
-              <X className="h-4 w-4" />
-            </button>
-            <Sidebar session={session} badges={badges} onNavigate={() => setDrawer(false)} />
+      <div className="hidden h-10 items-center border-t border-[var(--glass-border-quiet)] px-4 lg:flex">
+        <TopNavigation session={session} badges={badges} />
+      </div>
+
+      {navigationOpen && (
+        <>
+          <button type="button" tabIndex={-1} aria-hidden className="fixed inset-x-0 bottom-0 top-12 z-40 bg-black/35 backdrop-blur-[2px] lg:hidden" onClick={() => setNavigationOpen(false)} />
+          <div className="absolute inset-x-0 top-full z-50 max-h-[calc(100dvh-3rem)] overflow-y-auto border-b border-[var(--glass-border)] bg-[var(--surface-solid)] shadow-[0_16px_35px_-20px_rgba(15,23,42,0.55)] lg:hidden">
+            <TopNavigation session={session} badges={badges} mobile onNavigate={() => setNavigationOpen(false)} />
           </div>
-        </div>
+        </>
       )}
-    </>
+    </header>
   );
 }

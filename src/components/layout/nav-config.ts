@@ -27,7 +27,7 @@ export interface NavItem {
 
 export const NAV: { section: string; items: NavItem[] }[] = [
   {
-    section: 'Work',
+    section: 'Daily work',
     items: [
       {
         href: '/maturities',
@@ -35,13 +35,6 @@ export const NAV: { section: string; items: NavItem[] }[] = [
         icon: 'files',
         permission: 'case.view',
         description: 'The branch Excel sheet',
-      },
-      {
-        href: '/import',
-        label: 'Import register',
-        icon: 'upload',
-        permission: 'data.import',
-        description: 'Upload one branch or auto-sort a compiled workbook',
       },
       {
         href: '/cashbook',
@@ -56,20 +49,6 @@ export const NAV: { section: string; items: NavItem[] }[] = [
         icon: 'inbox',
         permission: 'case.approve',
         description: 'Operations review, automatic progression and payout dates',
-      },
-      {
-        href: '/maturity-calendar',
-        label: 'Maturity calendar',
-        icon: 'calendar',
-        permission: 'case.view',
-        description: 'Current and next month upcoming maturities',
-      },
-      {
-        href: '/dashboard',
-        label: 'Summary',
-        icon: 'dashboard',
-        permission: 'case.view',
-        description: 'Totals across the register',
       },
       {
         href: '/payouts',
@@ -89,8 +68,15 @@ export const NAV: { section: string; items: NavItem[] }[] = [
     ],
   },
   {
-    section: 'Plan',
+    section: 'Planning',
     items: [
+      {
+        href: '/maturity-calendar',
+        label: 'Maturity calendar',
+        icon: 'calendar',
+        permission: 'case.view',
+        description: 'Current and next month upcoming maturities',
+      },
       {
         href: '/cash-planner',
         label: 'Cash runway',
@@ -98,6 +84,18 @@ export const NAV: { section: string; items: NavItem[] }[] = [
         permission: 'cash.plan',
         description: 'Cash and NEFT to hold, 14 working days',
       },
+      {
+        href: '/dashboard',
+        label: 'Summary',
+        icon: 'dashboard',
+        permission: 'case.view',
+        description: 'Totals across the register',
+      },
+    ],
+  },
+  {
+    section: 'Directory',
+    items: [
       {
         href: '/customers',
         label: 'Customers',
@@ -120,6 +118,18 @@ export const NAV: { section: string; items: NavItem[] }[] = [
         headOfficeOnly: true,
         description: 'Per-branch rollup',
       },
+    ],
+  },
+  {
+    section: 'Administration',
+    items: [
+      {
+        href: '/import',
+        label: 'Import register',
+        icon: 'upload',
+        permission: 'data.import',
+        description: 'Upload one branch or auto-sort a compiled workbook',
+      },
       {
         href: '/reports',
         label: 'Reports',
@@ -127,11 +137,6 @@ export const NAV: { section: string; items: NavItem[] }[] = [
         permission: 'report.export',
         description: 'Excel and CSV downloads',
       },
-    ],
-  },
-  {
-    section: 'Control',
-    items: [
       {
         href: '/audit',
         label: 'Audit log',
@@ -151,8 +156,8 @@ export const NAV: { section: string; items: NavItem[] }[] = [
 ];
 
 /**
- * Screens that carry a title but never appear in the sidebar, plus the ones
- * whose sidebar label is not what you want printed as a page heading.
+ * Screens that carry a title but never appear in the navigation, plus the ones
+ * whose navigation label is not what you want printed as a page heading.
  */
 const EXTRA_TITLES: Record<string, string> = {
   '/account': 'My profile',
