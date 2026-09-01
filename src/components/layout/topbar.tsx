@@ -11,6 +11,7 @@ import type { SessionUser } from '@/lib/auth/session';
 import { ROLE_LABEL, ROLE_SHORT, activeRole } from '@/lib/rbac';
 import { cn } from '@/lib/utils';
 import { pageTitleFor } from './nav-config';
+import { GlobalSearch } from './global-search';
 import { ThemeToggle } from './theme-toggle';
 import { TopNavigation, type NavBadges } from './top-navigation';
 
@@ -70,6 +71,8 @@ export function Topbar({
         </div>
 
         <span className="hidden whitespace-nowrap text-[0.72rem] tabular-nums text-[var(--muted-fg)] md:block">{todayLabel}</span>
+
+        <GlobalSearch permissions={session.permissions} />
 
         <ThemeToggle className="h-8 w-8 rounded-[10px]" />
 

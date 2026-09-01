@@ -9,8 +9,9 @@ import { Money } from '@/components/ui/money';
 import { getSession, toActor } from '@/lib/auth/session';
 import { ROLE_SCOPE, roleCan, activeRole } from '@/lib/rbac';
 import { cn } from '@/lib/utils';
-import { todayISO } from '@/lib/working-days';
-import { getBranchRollup, getCashbookSummary, getRegisterSummary } from '@/services/queries';
+import { addDays, todayISO } from '@/lib/working-days';
+import { getBranchRollup, getCashbookSummary, getRegisterSummary, getUpcomingLoad } from '@/services/queries';
+import { UpcomingWithdrawals } from './upcoming-withdrawals';
 
 export const metadata = { title: 'Summary' };
 export const dynamic = 'force-dynamic';
@@ -20,12 +21,25 @@ export default async function DashboardPage() {
   if (!session) redirect('/login');
   const actor = toActor(session);
   const today = todayISO();
+  const tomorrow = addDays(today, 1);
   const hq = ROLE_SCOPE[activeRole(session.role)] === 'ALL';
 
-  const [book, branches] = await Promise.all([
+  const [book, branches, upcomingRows] = await Promise.all([
     getRegisterSummary(actor, today),
     hq ? getBranchRollup(actor) : Promise.resolve([]),
+    getUpcomingLoad(actor, 13, tomorrow),
   ]);
+  const upcomingByDate = new Map(upcomingRows.map((row) => [row.date, row]));
+  const upcoming = Array.from({ length: 14 }, (_, offset) => {
+    const date = addDays(tomorrow, offset);
+    const row = upcomingByDate.get(date);
+    return {
+      date,
+      cashPaise: (row?.cashPaise ?? 0n).toString(),
+      onlinePaise: (row?.onlinePaise ?? 0n).toString(),
+      count: row?.count ?? 0,
+    };
+  });
   // This is deliberately a separate read from the maturity register summary. Branch cashbook
   // cash and planned maturity cash answer different questions and must never be netted together.
   const cashbooks = roleCan(session.role, 'cashbook.view')
@@ -92,34 +106,26 @@ export default async function DashboardPage() {
             </div>
           </Glass>
 
-          <Glass className="p-0">
-            <div className="border-b px-5 py-3">
-              <h2 className="text-[0.9375rem] font-semibold tracking-tight">Today</h2>
-            </div>
-            <div className="grid sm:grid-cols-2 sm:divide-x max-sm:divide-y">
-              <Figure
-                label="Due today"
-                value={<Money paise={book.todayApprovedPaise} decimals={false} />}
-                hint={
-                  splitHint(book.todayCashPaise, book.todayOnlinePaise) ??
-                  (book.todayApprovedPaise === 0n ? 'Nothing scheduled for the counter today' : null)
-                }
-              />
-              <Figure
-                label="Given today"
-                value={<Money paise={book.paidTodayPaise} decimals={false} tone="money" />}
-                hint={
-                  book.paidTodayCount === 0
-                    ? 'No withdrawals recorded today'
-                    : `${book.paidTodayCount} withdrawal${book.paidTodayCount === 1 ? '' : 's'}${
-                        splitHint(book.paidTodayCashPaise, book.paidTodayOnlinePaise)
-                          ? ` · ${splitHint(book.paidTodayCashPaise, book.paidTodayOnlinePaise)}`
-                          : ''
-                      }`
-                }
-              />
-            </div>
-          </Glass>
+          <div className="grid min-w-0 gap-3 xl:grid-cols-2">
+            <Glass className="min-w-0 p-0">
+              <div className="border-b px-5 py-3">
+                <h2 className="text-[0.9375rem] font-semibold tracking-tight">Today</h2>
+              </div>
+              <div className="grid grid-cols-2 divide-x">
+                <Figure
+                  label="Due today"
+                  value={<Money paise={book.todayApprovedPaise} decimals={false} />}
+                  hint={splitHint(book.todayCashPaise, book.todayOnlinePaise) ?? (book.todayApprovedPaise === 0n ? 'Nothing scheduled for the counter today' : null)}
+                />
+                <Figure
+                  label="Given today"
+                  value={<Money paise={book.paidTodayPaise} decimals={false} tone="money" />}
+                  hint={book.paidTodayCount === 0 ? 'No withdrawals recorded today' : `${book.paidTodayCount} withdrawal${book.paidTodayCount === 1 ? '' : 's'}${splitHint(book.paidTodayCashPaise, book.paidTodayOnlinePaise) ? ` · ${splitHint(book.paidTodayCashPaise, book.paidTodayOnlinePaise)}` : ''}`}
+                />
+              </div>
+            </Glass>
+            <UpcomingWithdrawals days={upcoming} />
+          </div>
 
           {showAttention && (
             <Glass className="p-0">

@@ -167,10 +167,9 @@ export function buildPlanRow(
   };
 
   const finish = (days: PlanDay[], isProjection: boolean, error: string | null): PlanRow => {
-    // The recommendation is what is LEFT over the days still to come — not the maturity over all
-    // of them. A case half paid with three days to go needs the bigger number, not the original.
-    const open = days.filter((d) => d.state !== 'PAID');
-    const perDayPaise = open.length > 0 ? remainingPaise / BigInt(open.length) : 0n;
+    // Recommendation means what may actually be withdrawn TODAY. Averaging the full remaining
+    // balance across open rows diverges from a rounded schedule (₹88,000 became ₹88,073) and
+    // incorrectly recommends money on alternate off-days.
     const todayDay = days.find((d) => d.dueOn === today);
     const dueTodayPaise = todayDay
       ? todayDay.amountPaise > todayDay.paidPaise
@@ -180,7 +179,7 @@ export function buildPlanRow(
     return {
       ...base,
       parts: days.length,
-      perDayPaise,
+      perDayPaise: dueTodayPaise,
       days,
       dueTodayPaise,
       isProjection,

@@ -15,7 +15,9 @@ import {
   isOnTodaysList,
   isTodayButUnset,
   nextDay,
+  plannedOnDate,
   prevDay,
+  recommendedPerDay,
   resolveDatePreset,
   rowStateOf,
   rowInDateRange,
@@ -530,6 +532,45 @@ describe('schedule-backed Today sorting', () => {
     expect(compareTodayFigures(smallerOnScreen, largerOnScreen, 'today')).toBeLessThan(0);
     expect(compareTodayFigures(smallerOnScreen, largerOnScreen, 'cash')).toBeGreaterThan(0);
     expect(compareTodayFigures(smallerOnScreen, largerOnScreen, 'online')).toBeLessThan(0);
+  });
+});
+
+describe('recommendation on a selected payout day', () => {
+  it('uses the exact rounded instalment instead of a generic quotient', () => {
+    const r = {
+      ...full({ remainingPaise: '88073800' }),
+      todayInstalmentId: 'inst_sep_1',
+      todayDuePaise: '8800000',
+      todayPaidTakenPaise: '0',
+      todayCashDuePaise: '8800000',
+      todayOnlineDuePaise: '0',
+      payoutDays: [
+        {
+          id: 'inst_sep_1',
+          dueOn: '2026-09-01',
+          amountPaise: '8800000',
+          cashPaise: '8800000',
+          onlinePaise: '0',
+          paidPaise: '0',
+          status: 'PENDING',
+        },
+      ],
+    };
+
+    expect(recommendedPerDay(88_073_800n, 88_073_800n, 13)).toBe(8_807_380n);
+    expect(plannedOnDate(r, '2026-09-01').total).toBe(8_800_000n);
+  });
+
+  it('returns zero on an alternate off-day and the exact amount on tomorrow', () => {
+    const r = {
+      ...full({ remainingPaise: '6000000' }),
+      payoutDays: [
+        { id: 'a', dueOn: '2026-09-01', amountPaise: '1000000', cashPaise: '1000000', onlinePaise: '0', paidPaise: '0', status: 'PENDING' },
+        { id: 'b', dueOn: '2026-09-03', amountPaise: '1000000', cashPaise: '1000000', onlinePaise: '0', paidPaise: '0', status: 'PENDING' },
+      ],
+    };
+    expect(plannedOnDate(r, '2026-09-02').total).toBe(0n);
+    expect(plannedOnDate(r, '2026-09-03').total).toBe(1_000_000n);
   });
 });
 

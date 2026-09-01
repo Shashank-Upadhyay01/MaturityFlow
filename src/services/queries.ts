@@ -523,6 +523,43 @@ export async function listCases(actor: Actor, f: CaseFilters = {}) {
   return { rows, total: n };
 }
 
+/** Small, scope-safe index behind the top-bar search. */
+export async function searchWorkspace(actor: Actor, raw: string, limit = 10) {
+  const q = raw.trim().slice(0, 80);
+  if (q.length < 2) return [];
+  const term = `%${q}%`;
+  const scope = caseScope(actor);
+  return db
+    .select({
+      id: maturityCases.id,
+      caseNumber: maturityCases.caseNumber,
+      customerName: customers.name,
+      accountNumber: customers.accountNumber,
+      agentName: agents.name,
+      branchName: branches.name,
+      branchCode: branches.code,
+      status: maturityCases.status,
+    })
+    .from(maturityCases)
+    .innerJoin(customers, eq(customers.id, maturityCases.customerId))
+    .innerJoin(agents, eq(agents.id, maturityCases.agentId))
+    .innerJoin(branches, eq(branches.id, maturityCases.branchId))
+    .where(
+      and(
+        inArray(maturityCases.status, REGISTER_VIEW),
+        scope,
+        or(
+          ilike(customers.name, term),
+          ilike(customers.accountNumber, term),
+          ilike(agents.name, term),
+          ilike(maturityCases.caseNumber, term),
+        ),
+      ),
+    )
+    .orderBy(asc(customers.name), asc(maturityCases.caseNumber))
+    .limit(Math.min(Math.max(limit, 1), 20));
+}
+
 /** Full branch register — the Excel sheet, every row. */
 /**
  * The register, joined to the schedule the system generated for each case.

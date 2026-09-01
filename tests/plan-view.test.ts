@@ -173,8 +173,7 @@ describe('a real schedule is shown as fact', () => {
 });
 
 describe('the recommendation', () => {
-  it('spreads what is LEFT over the days still to come, not the maturity over all of them', () => {
-    // ₹1,20,000 with ₹90,000 already paid across three days: ₹30,000 left, one day to go.
+  it('is zero when the next unpaid part is not withdrawable today', () => {
     const real = [
       inst({ seq: 1, dueOn: '2026-08-20', amountPaise: '3000000', paidCashPaise: '3000000' }),
       inst({ seq: 2, dueOn: '2026-08-21', amountPaise: '3000000', paidCashPaise: '3000000' }),
@@ -183,7 +182,17 @@ describe('the recommendation', () => {
     ];
     const r = buildPlanRow(mk({ paidCashPaise: '9000000' }), real, cal, TODAY);
     expect(r.remainingPaise).toBe(3_000_000n);
-    expect(r.perDayPaise).toBe(3_000_000n); // ₹30,000 over the single remaining day
+    expect(r.perDayPaise).toBe(0n);
+  });
+
+  it('uses the exact rounded amount withdrawable today, not a remaining-balance average', () => {
+    const real = [
+      inst({ seq: 1, dueOn: TODAY, amountPaise: '8800000' }),
+      inst({ seq: 2, dueOn: '2026-08-26', amountPaise: '8807380' }),
+    ];
+    const r = buildPlanRow(mk({ maturityAmountPaise: '17607380' }), real, cal, TODAY);
+    expect(r.dueTodayPaise).toBe(8_800_000n);
+    expect(r.perDayPaise).toBe(8_800_000n);
   });
 
   it('is zero when everything has been paid', () => {

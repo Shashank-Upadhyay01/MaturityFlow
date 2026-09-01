@@ -69,13 +69,14 @@ import {
   isDueToday,
   isOnTodaysList,
   isRangeActive,
+  payoutOnDate,
+  plannedOnDate,
   recommendedPerDay,
   resolveDatePreset,
   rowStateOf,
   rowInDateRange,
   summariseDueToday,
   summariseSelection,
-  todayPlannedSplit,
   type BulkTodayMode,
   type DayState,
   type DateField,
@@ -1033,6 +1034,10 @@ export function RegisterSheet(props: {
 
   const preset = activeDatePreset(range, props.today);
   const dateFilterOn = isRangeActive(range);
+  /** An exact payout-day filter changes the sheet's amount columns to that day. */
+  const selectedPayoutDate =
+    dateField === 'payout' && range.from && range.from === range.to ? range.from : null;
+  const viewDay = selectedPayoutDate ?? props.today;
 
   function toggleSort(col: SortKey) {
     if (sortKey === col) setSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'));
@@ -1060,12 +1065,15 @@ export function RegisterSheet(props: {
     };
     const cmpStr = (a: string, b: string) => a.localeCompare(b, 'en-IN', { numeric: true, sensitivity: 'base' });
     const cmpBig = (a: bigint, b: bigint) => (a < b ? -1 : a > b ? 1 : 0);
-    const perDay = (r: RegisterRow) =>
-      recommendedPerDay(
+    const perDay = (r: RegisterRow) => {
+      const exact = payoutOnDate(r, viewDay);
+      if (exact) return plannedOnDate(r, selectedPayoutDate).total;
+      return recommendedPerDay(
         asBig(r.remainingPaise),
         asBig(r.maturityPaise),
         Number(d(r.id, 'windowDays', String(r.windowDays))) || r.windowDays,
       );
+    };
 
     return [...list].sort((a, b) => {
       let c = 0;
@@ -1113,13 +1121,19 @@ export function RegisterSheet(props: {
           // Scheduled rows display the engine's live figure, so sorting must read that same
           // figure. Using the legacy typed field made the dropdown say "Today descending"
           // while the numbers on screen were visibly unordered.
-          c = compareTodayFigures(a, b, 'today');
+          c = selectedPayoutDate
+            ? cmpBig(plannedOnDate(a, selectedPayoutDate).total, plannedOnDate(b, selectedPayoutDate).total)
+            : compareTodayFigures(a, b, 'today');
           break;
         case 'cash':
-          c = compareTodayFigures(a, b, 'cash');
+          c = selectedPayoutDate
+            ? cmpBig(plannedOnDate(a, selectedPayoutDate).cash, plannedOnDate(b, selectedPayoutDate).cash)
+            : compareTodayFigures(a, b, 'cash');
           break;
         case 'online':
-          c = compareTodayFigures(a, b, 'online');
+          c = selectedPayoutDate
+            ? cmpBig(plannedOnDate(a, selectedPayoutDate).online, plannedOnDate(b, selectedPayoutDate).online)
+            : compareTodayFigures(a, b, 'online');
           break;
         case 'paidToday':
           c = cmpBig(asBig(a.paidTodayActualPaise), asBig(b.paidTodayActualPaise));
@@ -1137,7 +1151,7 @@ export function RegisterSheet(props: {
       return c * dir;
     });
     },
-    [sortKey, sortDir, d],
+    [sortKey, sortDir, d, selectedPayoutDate, viewDay],
   );
 
   /**
@@ -1183,15 +1197,17 @@ export function RegisterSheet(props: {
     (a, r) => {
       const remaining = BigInt(r.remainingPaise);
       const days = Math.max(1, Number(d(r.id, 'windowDays', String(r.windowDays))) || 1);
+      const scheduledDay = payoutOnDate(r, viewDay);
+      const planned = plannedOnDate(r, selectedPayoutDate);
+      const fallback = recommendedPerDay(remaining, BigInt(r.maturityPaise), days);
+      const recommendation = scheduledDay ? planned.total : fallback;
       return {
         maturity: a.maturity + BigInt(r.maturityPaise),
         paid: a.paid + BigInt(r.paidPaise),
         remaining: a.remaining + remaining,
-        today:
-          a.today +
-          (tryParseRupeesToPaise(d(r.id, 'today', rupeesStr(BigInt(r.todayPaise)))) ??
-            BigInt(r.todayPaise)),
-        rec: a.rec + (remaining > 0n ? remaining / BigInt(days) : 0n),
+        today: a.today + (scheduledDay ? planned.total :
+          (tryParseRupeesToPaise(d(r.id, 'today', rupeesStr(BigInt(r.todayPaise)))) ?? BigInt(r.todayPaise))),
+        rec: a.rec + recommendation,
       };
     },
     { maturity: 0n, paid: 0n, remaining: 0n, today: 0n, rec: 0n },
@@ -1379,12 +1395,12 @@ export function RegisterSheet(props: {
     }
   }
 
-  async function savePlannedAmount(row: RegisterRow, amountRupees: string) {
-    if (!row.todayInstalmentId) {
-      toast.error('This row has no scheduled payment for today. Change its Payment Date first.');
+  async function savePlannedAmount(row: RegisterRow, amountRupees: string, instalmentId = row.todayInstalmentId) {
+    if (!instalmentId) {
+      toast.error(`This row has no scheduled payment for ${selectedPayoutDate ? formatDMY(selectedPayoutDate) : 'today'}.`);
       return;
     }
-    const result = await setInstalmentAmountAction(row.id, row.todayInstalmentId, amountRupees || '0');
+    const result = await setInstalmentAmountAction(row.id, instalmentId, amountRupees || '0');
     if (!result.ok) toast.error(result.error);
     else { rememberGridFocus(); router.refresh(); }
   }
@@ -1498,15 +1514,18 @@ export function RegisterSheet(props: {
       case 'days':
         return r.windowDays;
       case 'perDay': {
-        const per = recommendedPerDay(BigInt(r.remainingPaise), BigInt(r.maturityPaise), r.windowDays);
+        const day = payoutOnDate(r, viewDay);
+        const per = day
+          ? plannedOnDate(r, selectedPayoutDate).total
+          : recommendedPerDay(BigInt(r.remainingPaise), BigInt(r.maturityPaise), r.windowDays);
         return per > 0n ? inr(per) : '0';
       }
       case 'today':
-        return inr(BigInt(r.todayPaise));
+        return inr(payoutOnDate(r, viewDay) ? plannedOnDate(r, selectedPayoutDate).total : BigInt(r.todayPaise));
       case 'cash':
-        return inr(BigInt(r.todayCashPaise));
+        return inr(payoutOnDate(r, viewDay) ? plannedOnDate(r, selectedPayoutDate).cash : BigInt(r.todayCashPaise));
       case 'online':
-        return inr(BigInt(r.todayOnlinePaise));
+        return inr(payoutOnDate(r, viewDay) ? plannedOnDate(r, selectedPayoutDate).online : BigInt(r.todayOnlinePaise));
       case 'paidToday':
         return inr(BigInt(r.paidTodayActualPaise));
       case 'paidCashToday':
@@ -2776,7 +2795,7 @@ export function RegisterSheet(props: {
                 const paidP = tryParseRupeesToPaise(paidDraft) ?? BigInt(r.paidPaise);
                 const amtP = tryParseRupeesToPaise(amtDraft) ?? BigInt(r.maturityPaise);
                 const liveRemaining = amtP > paidP ? amtP - paidP : 0n;
-                const rec = recommendedPerDay(liveRemaining, amtP, daysN);
+                const selectedInstalment = payoutOnDate(r, viewDay);
                 /*
                   What this row is actually going to hand over today, and how it divides.
 
@@ -2787,8 +2806,11 @@ export function RegisterSheet(props: {
                   the difference onto the remaining days — and that lives on the Plan board,
                   which is what schedule-edit.ts is for.
                 */
-                const planned = todayPlannedSplit(r);
-                const scheduled = Boolean(r.todayInstalmentId);
+                const planned = plannedOnDate(r, selectedPayoutDate);
+                const scheduled = Boolean(selectedInstalment);
+                const rec = scheduled ? planned.total : recommendedPerDay(liveRemaining, amtP, daysN);
+                const selectedInstalmentId = selectedInstalment?.id ?? null;
+                const isViewingToday = viewDay === props.today;
                 const recCash = scheduled ? planned.cash : BigInt(r.todayCashPaise);
                 const recOnline = scheduled ? planned.online : BigInt(r.todayOnlinePaise);
                 const edit = props.canEdit && !locked;
@@ -2997,7 +3019,7 @@ export function RegisterSheet(props: {
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], recommended: v.replace(/[^0-9]/g, '') } }))}
                             onCommit={(v) => {
                               if (v.trim() === rupeesStr(rec)) return;
-                              void savePlannedAmount(r, v);
+                              void savePlannedAmount(r, v, selectedInstalmentId);
                             }}
                           />
                         )}
@@ -3011,12 +3033,12 @@ export function RegisterSheet(props: {
                               className={cn(num, dayState === 'due' && 'font-semibold text-[var(--color-brand-700)]')}
                               disabled={!props.canSchedule || locked}
                               title={SCHEDULED_TODAY_HINT[dayState]}
-                              value={d(r.id, 'todayDue', rupeesStr(planned.total > 0n ? planned.total : BigInt(r.todayDuePaise)))}
+                              value={d(r.id, 'todayDue', rupeesStr(planned.total))}
                               onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], todayDue: v.replace(/[^0-9]/g, '') } }))}
                               onCommit={(v) => {
-                                const original = rupeesStr(planned.total > 0n ? planned.total : BigInt(r.todayDuePaise));
+                                const original = rupeesStr(planned.total);
                                 if (v.trim() === original) return;
-                                void savePlannedAmount(r, v);
+                                void savePlannedAmount(r, v, selectedInstalmentId);
                               }}
                             />
                           ) : (
@@ -3091,7 +3113,7 @@ export function RegisterSheet(props: {
                         {c.id === 'paidToday' && (
                           <CellInput
                             rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}
-                            group className={cn(num, 'font-semibold')} disabled={!props.canPay || locked || !scheduled}
+                            group className={cn(num, 'font-semibold')} disabled={!props.canPay || locked || !scheduled || !isViewingToday}
                             value={d(r.id, 'paidTodayActual', rupeesStr(BigInt(r.paidTodayActualPaise)))}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidTodayActual: v.replace(/[^0-9]/g, '') } }))}
                             onCommit={(v) => {
@@ -3106,7 +3128,7 @@ export function RegisterSheet(props: {
                         {c.id === 'paidCashToday' && (
                           <CellInput
                             rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}
-                            group className={num} disabled={!props.canPay || locked || !scheduled}
+                            group className={num} disabled={!props.canPay || locked || !scheduled || !isViewingToday}
                             value={d(r.id, 'paidCashActual', rupeesStr(BigInt(r.paidCashTodayPaise)))}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidCashActual: v.replace(/[^0-9]/g, '') } }))}
                             onCommit={(v) => {
@@ -3119,7 +3141,7 @@ export function RegisterSheet(props: {
                         {c.id === 'paidOnlineToday' && (
                           <CellInput
                             rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}
-                            group className={num} disabled={!props.canPay || locked || !scheduled}
+                            group className={num} disabled={!props.canPay || locked || !scheduled || !isViewingToday}
                             value={d(r.id, 'paidOnlineActual', rupeesStr(BigInt(r.paidOnlineTodayPaise)))}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidOnlineActual: v.replace(/[^0-9]/g, '') } }))}
                             onCommit={(v) => {
@@ -3134,9 +3156,9 @@ export function RegisterSheet(props: {
                     <td className={cn(td, 'print:hidden')} colSpan={2}>
                       <DayMark
                         state={dayState}
-                        instalmentId={r.todayInstalmentId}
+                        instalmentId={isViewingToday ? r.todayInstalmentId : null}
                         onlineDuePaise={recOnline}
-                        disabled={locked || !props.canPay}
+                        disabled={locked || !props.canPay || !isViewingToday}
                         busy={Boolean(r.todayInstalmentId && marking[r.todayInstalmentId])}
                         onTaken={(id, t, reference) => void onTaken(id, t, reference)}
                         onNotTaken={(id, clear) => void onNotTaken(id, clear)}
@@ -3231,7 +3253,7 @@ export function RegisterSheet(props: {
           belongs beside the button that closes the day on it.
         */}
         <p className="text-[0.75rem] text-[var(--faint-fg)]">
-          This view · today{' '}
+          This view · {viewDay === props.today ? 'today' : formatDMY(viewDay)}{' '}
           <span className="font-semibold tabular-nums text-[var(--muted-fg)]">
             ₹{inr(totals.today)}
           </span>{' '}

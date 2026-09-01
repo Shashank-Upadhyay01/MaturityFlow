@@ -102,6 +102,17 @@ check(
   emptyTomorrow || uniq.length === 1,
   `dates: ${uniq.join(' | ') || 'none'} across ${payVals.length} rows`,
 );
+const tomorrowDue = await columnNumbers('Due payment');
+const tomorrowRecommended = await columnNumbers('Recommended');
+check(
+  'Tomorrow uses each exact scheduled amount as its recommendation',
+  emptyTomorrow || (
+    tomorrowDue.length > 0 &&
+    tomorrowDue.length === tomorrowRecommended.length &&
+    tomorrowDue.every((value, index) => value === tomorrowRecommended[index])
+  ),
+  `due ${tomorrowDue.join(',')} · recommended ${tomorrowRecommended.join(',')}`,
+);
 await page.screenshot({ path: `/tmp/chk-${tag}-3-tomorrow.png` });
 
 // ---- 6. clearing the date restores the full list ------------------------------------------

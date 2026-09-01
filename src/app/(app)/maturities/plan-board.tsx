@@ -1,7 +1,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { CalendarClock, ChevronRight, Search, Wallet } from 'lucide-react';
+import { CalendarClock, ChevronRight, Wallet } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 
@@ -172,12 +172,12 @@ function CustomerRow({
 
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-5">
           <span className="text-[0.62rem] uppercase tracking-wide text-[var(--faint-fg)]">
-            Recommended
+            Recommended today
           </span>
           <span className="text-[0.78rem] font-semibold tabular-nums text-[var(--color-brand-600)] dark:text-[var(--color-brand-300)]">
             {inr(row.perDayPaise)}
           </span>
-          <span className="text-[0.62rem] text-[var(--faint-fg)]">per day over</span>
+          <span className="text-[0.62rem] text-[var(--faint-fg)]">scheduled across</span>
           <input
             inputMode="numeric"
             aria-label={`Parts for ${row.customerName}`}
@@ -192,6 +192,21 @@ function CustomerRow({
             {row.cadence === 'ALTERNATE' ? 'alternate days' : 'days'}
           </span>
           {row.isProjection && <Badge tone="neutral">projected</Badge>}
+        </div>
+        <div className="mt-1.5 grid grid-cols-3 gap-1 pl-5" aria-label={`Payout comparisons for ${row.customerName}`}>
+          {[12, 6, 3].map((count) => {
+            const amount = row.remainingPaise > 0n
+              ? (row.remainingPaise + BigInt(count) - 1n) / BigInt(count)
+              : 0n;
+            return (
+              <span key={count} className="rounded-[6px] border border-[var(--hairline)] bg-[var(--glass-bg-subtle)] px-1.5 py-1 text-center">
+                <span className="block text-[0.56rem] font-semibold uppercase tracking-wide text-[var(--faint-fg)]">{count} parts</span>
+                <span className="block truncate text-[0.66rem] font-semibold tabular-nums" title="Approximate amount; the final part carries any exact remainder">
+                  ≈ {inr(amount)}
+                </span>
+              </span>
+            );
+          })}
         </div>
       </div>
 
@@ -223,12 +238,11 @@ export function PlanBoard({
   calendars: Record<string, CalendarSnapshot>;
   today: string;
 }) {
-  const [q, setQ] = useState('');
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
-  /** Per-column default, and a per-customer override on top of it. '' means "typing". */
-  const [bandParts, setBandParts] = useState<Record<PlanBand, number | ''>>({
-    LARGE: 12,
-    SMALL: 6,
+  /** Null means "show the committed schedule"; a typed value is an explicit what-if. */
+  const [bandParts, setBandParts] = useState<Record<PlanBand, number | '' | null>>({
+    LARGE: null,
+    SMALL: null,
   });
   const [rowParts, setRowParts] = useState<Record<string, number | ''>>({});
 
@@ -254,7 +268,7 @@ export function PlanBoard({
         const own = rowParts[c.caseId];
         const col = bandParts[band as PlanBand];
         // A blank box means "typing" — fall back rather than flashing an error mid-keystroke.
-        const chosen = own === '' ? undefined : (own ?? (col === '' ? undefined : col));
+        const chosen = own === '' ? undefined : (own ?? (col === '' || col == null ? undefined : col));
         const fallback = defaultPartsFor(BigInt(c.maturityAmountPaise || '1'), c.windowDays);
         const parts = chosen ?? fallback;
         // Only pass a custom count when it actually differs, so an approved case keeps showing
@@ -265,17 +279,7 @@ export function PlanBoard({
     [cases, instalments, calendarByBranch, today, rowParts, bandParts],
   );
 
-  const visible = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    if (!needle) return rows;
-    return rows.filter(
-      (r) =>
-        r.customerName.toLowerCase().includes(needle) ||
-        (r.accountNumber ?? '').toLowerCase().includes(needle) ||
-        r.agentName.toLowerCase().includes(needle) ||
-        r.caseNumber.toLowerCase().includes(needle),
-    );
-  }, [rows, q]);
+  const visible = rows;
 
   // Today is computed from EVERY row, never the filtered view — it is the cash the branch must
   // open with, and it would be worse than useless if it moved when somebody searched a name.
@@ -324,11 +328,11 @@ export function PlanBoard({
           )}
         </div>
         <label className="mt-2 flex items-center gap-1.5 text-[0.65rem] text-[var(--muted-fg)]">
-          Split every case here into
+          What-if: split every case here into
           <input
             inputMode="numeric"
             aria-label={`Default parts for ${title}`}
-            value={bandParts[band]}
+            value={bandParts[band] ?? (band === 'LARGE' ? 12 : 6)}
             onChange={(e) => {
               const raw = e.target.value.replace(/[^\d]/g, '');
               setBandParts((p) => ({ ...p, [band]: raw === '' ? '' : Number(raw) }));
@@ -342,7 +346,7 @@ export function PlanBoard({
       <div className="min-h-0 flex-1 overflow-y-auto">
         {s.rows.length === 0 ? (
           <p className="px-3 py-6 text-center text-[0.72rem] text-[var(--muted-fg)]">
-            Nothing here{q.trim() ? ' matches that search' : ' yet'}.
+            Nothing here yet.
           </p>
         ) : (
           s.rows.map((r) => (
@@ -362,17 +366,6 @@ export function PlanBoard({
 
   return (
     <div className="space-y-3">
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--faint-fg)]" />
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Find a customer, A/c no. or agent"
-          aria-label="Search the plan"
-          className="mf-input h-8 w-full max-w-sm !pl-8 text-[0.8rem]"
-        />
-      </div>
-
       <Glass className="overflow-hidden">
         <div className="flex flex-wrap items-end justify-between gap-2 border-b px-3 py-2.5">
           <div>
