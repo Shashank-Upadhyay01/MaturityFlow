@@ -2,7 +2,8 @@ import { chromium } from 'playwright';
 
 const browser = await chromium.launch({ args: ['--no-sandbox'] });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-await page.goto('http://localhost:3000/login', { waitUntil: 'networkidle' });
+const baseUrl = process.env.BASE_URL ?? 'http://localhost:3000';
+await page.goto(`${baseUrl}/login`, { waitUntil: 'networkidle' });
 await page.fill('input[name="identifier"], input[name="email"], input[type="email"], input[type="text"]', 'admin@bank.test');
 await page.fill('input[type="password"]', 'Maturity@2026');
 await page.click('button[type="submit"]');
@@ -11,7 +12,7 @@ await page.waitForURL((url) => !url.pathname.includes('/login'));
 const checks = [];
 const check = (name, pass, detail = '') => checks.push({ name, pass, detail });
 
-await page.goto('http://localhost:3000/maturities', { waitUntil: 'networkidle' });
+await page.goto(`${baseUrl}/maturities`, { waitUntil: 'networkidle' });
 const registerCells = page.locator('input[data-register-cell="true"]:not(:disabled)');
 const registerHeaders = await page.locator('table thead th').allTextContents();
 for (const label of ['Account number', 'Customer name', 'Agent name', 'Maturity amount', 'Payment date', 'Due payment', 'Recommended payment', 'Paid today', 'Paid in cash', 'Paid online', 'Taken', 'Not taken']) {
@@ -40,14 +41,14 @@ check(
   JSON.stringify({ registerBefore, registerAfter }),
 );
 
-await page.goto('http://localhost:3000/maturity-operations', { waitUntil: 'networkidle' });
+await page.goto(`${baseUrl}/maturity-operations`, { waitUntil: 'networkidle' });
 const opsCells = page.locator('input[data-ops-cell="true"]:not(:disabled)');
 const opsHeaders = await page.locator('table thead th').allTextContents();
-for (const label of ['Account number', 'Customer name', 'Agent name', 'Maturity amount', 'Form submission date', 'Approval date', 'Payment date', 'Due payment', 'Recommended payment', 'Paid today', 'Paid in cash', 'Paid online', 'Taken', 'Not taken']) {
+for (const label of ['Account number', 'Customer name', 'Agent name', 'Maturity amount', 'Maturity date', 'Form submission date', 'Approval date', 'Payment date', 'Due payment', 'Recommended payment', 'Paid today', 'Paid in cash', 'Paid online', 'Taken', 'Not taken']) {
   check(`Operations shows ${label}`, opsHeaders.some((text) => text.toLowerCase().includes(label.toLowerCase())), opsHeaders.join(' | '));
 }
 const opsEditableColumns = await page.locator('tbody tr').first().locator('input[data-ops-cell="true"]:not(:disabled)').evaluateAll((els) => els.map((el) => el.dataset.opsCol));
-for (const column of ['account', 'customer', 'agent', 'amount', 'form', 'review', 'payment', 'due', 'recommended', 'paidToday', 'paidCash', 'paidOnline']) {
+for (const column of ['account', 'customer', 'agent', 'amount', 'maturity', 'form', 'review', 'payment', 'due', 'recommended', 'paidToday', 'paidCash', 'paidOnline']) {
   check(`Operations ${column} is editable for Admin`, opsEditableColumns.includes(column), opsEditableColumns.join(', '));
 }
 const opsGridStyle = await opsCells.first().evaluate((el) => {
@@ -58,7 +59,12 @@ const opsGridStyle = await opsCells.first().evaluate((el) => {
 check('Operations uses square Excel cells', opsGridStyle.radius === '0px' && opsGridStyle.cellBorder !== '0px', JSON.stringify(opsGridStyle));
 const opsScroller = page.locator('table').locator('..');
 const opsOverflow = await opsScroller.evaluate((el) => ({ client: el.clientWidth, scroll: el.scrollWidth }));
-check('All Operations columns fit at 1440px', opsOverflow.scroll <= opsOverflow.client + 2, JSON.stringify(opsOverflow));
+const pageOverflow = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
+check(
+  'Operations overflow stays inside the table scroller',
+  opsOverflow.scroll >= opsOverflow.client && pageOverflow.scroll <= pageOverflow.client + 2,
+  JSON.stringify({ opsOverflow, pageOverflow }),
+);
 await opsCells.first().focus();
 const original = await opsCells.first().inputValue();
 await page.keyboard.press('Control+A');

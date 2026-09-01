@@ -7,12 +7,13 @@ import { toast } from 'sonner';
 
 import { setInstalmentAmountAction } from '@/actions/cases';
 import {
-  addRegisterRowAction,
+  addMaturityOperationsRowAction,
   markNotTakenAction,
   markTakenAction,
   saveRegisterFieldsAction,
   setTodayPaidSplitAction,
 } from '@/actions/register';
+import { DEFAULT_OPERATIONS_MATURITY_ON } from '@/lib/maturity-operations';
 import { cn } from '@/lib/utils';
 
 export interface OperationsRow {
@@ -21,6 +22,7 @@ export interface OperationsRow {
   customerName: string;
   agentName: string;
   maturityRupees: string;
+  maturityOn: string;
   formSubmittedOn: string;
   opsReviewedOn: string;
   paymentOn: string;
@@ -37,7 +39,8 @@ export interface OperationsRow {
 
 const COLUMNS = [
   ['account', 'Account number'], ['customer', 'Customer name'], ['agent', 'Agent name'],
-  ['amount', 'Maturity amount'], ['form', 'Form submission date'], ['review', 'Approval date'],
+  ['amount', 'Maturity amount'], ['maturity', 'Maturity date'], ['form', 'Form submission date'],
+  ['review', 'Approval date'],
   ['payment', 'Payment date'], ['due', 'Due payment'], ['recommended', 'Recommended payment'],
   ['paidToday', 'Paid today'], ['paidCash', 'Paid in cash'], ['paidOnline', 'Paid online'],
   ['taken', 'Taken'], ['notTaken', 'Not taken'],
@@ -146,7 +149,7 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
   async function addRow() {
     if (!addRowBranchId || busy) return;
     setBusy('add-row');
-    const result = await addRegisterRowAction(addRowBranchId);
+    const result = await addMaturityOperationsRowAction(addRowBranchId);
     setBusy(null);
     if (!result.ok) toast.error(result.error); else { toast.success('A new editable row was added.'); router.refresh(); }
   }
@@ -164,7 +167,7 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
   }
 
   const colCount = COLUMNS.filter(([id]) => show(id)).length;
-  const widths: [ColumnId, number][] = [['account', 70], ['customer', 90], ['agent', 78], ['amount', 78], ['form', 98], ['review', 98], ['payment', 98], ['due', 70], ['recommended', 90], ['paidToday', 66], ['paidCash', 66], ['paidOnline', 66], ['taken', 64], ['notTaken', 68]];
+  const widths: [ColumnId, number][] = [['account', 70], ['customer', 90], ['agent', 78], ['amount', 78], ['maturity', 116], ['form', 116], ['review', 116], ['payment', 116], ['due', 70], ['recommended', 90], ['paidToday', 66], ['paidCash', 66], ['paidOnline', 66], ['taken', 64], ['notTaken', 68]];
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -192,7 +195,7 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
 
       <div className="overflow-hidden border border-[var(--hairline)] bg-[var(--surface-solid)]">
         <div className="max-h-[72vh] overflow-auto overscroll-contain">
-          <table className="w-full min-w-[68.75rem] table-fixed border-collapse text-[0.72rem]">
+          <table className="w-full min-w-[79.375rem] table-fixed border-collapse text-[0.72rem]">
             <colgroup>{widths.filter(([id]) => show(id)).map(([id, width]) => <col key={id} style={{ width }} />)}</colgroup>
             <thead><tr>{COLUMNS.filter(([id]) => show(id)).map(([id, label]) => <th key={id} className={cn(head, ['amount', 'due', 'recommended', 'paidToday', 'paidCash', 'paidOnline'].includes(id) && 'text-right')}>{label}</th>)}</tr></thead>
             <tbody>
@@ -206,6 +209,7 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
                     {show('customer') && <td className={cell}><EditableCell row={row.id} col="customer" value={row.customerName} disabled={!canEdit} onCommit={(v) => save(row.id, { customerName: v })} /></td>}
                     {show('agent') && <td className={cell}><EditableCell row={row.id} col="agent" value={row.agentName} disabled={!canEdit} onCommit={(v) => save(row.id, { agentName: v })} /></td>}
                     {show('amount') && <td className={cell}><EditableCell row={row.id} col="amount" type="money" value={row.maturityRupees} disabled={!canEdit} onCommit={(v) => save(row.id, { maturityRupees: v })} /></td>}
+                    {show('maturity') && <td className={cell}><EditableCell row={row.id} col="maturity" type="date" value={row.maturityOn || DEFAULT_OPERATIONS_MATURITY_ON} disabled={!canEdit} onCommit={(v) => save(row.id, { instrumentMaturityOn: v || null })} /></td>}
                     {show('form') && <td className={cell}><EditableCell row={row.id} col="form" type="date" value={row.formSubmittedOn} disabled={!canEdit} onCommit={(v) => save(row.id, { formSubmittedOn: v })} /></td>}
                     {show('review') && <td className={cell}><EditableCell row={row.id} col="review" type="date" value={row.opsReviewedOn} disabled={!canEdit} onCommit={(v) => save(row.id, { opsReviewedOn: v || null })} /></td>}
                     {show('payment') && <td className={cell}><EditableCell row={row.id} col="payment" type="date" value={row.paymentOn} disabled={!canEdit} onCommit={(v) => save(row.id, { paymentOn: v || null })} /></td>}

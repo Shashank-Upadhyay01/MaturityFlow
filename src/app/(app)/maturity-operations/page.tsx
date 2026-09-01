@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 
 import { getSession, toActor } from '@/lib/auth/session';
 import { isAzamgarhHeadBranch } from '@/lib/branch-routing';
+import { DEFAULT_OPERATIONS_MATURITY_ON } from '@/lib/maturity-operations';
 import { recommendedPerDay } from '@/lib/register-view';
 import { roleCan } from '@/lib/rbac';
 import { addDays, toISODateString, todayISO } from '@/lib/working-days';
@@ -45,6 +46,7 @@ export default async function MaturityOperationsPage() {
             customerName: row.customerName,
             agentName: row.agentName,
             maturityRupees: (row.maturityAmountPaise / 100n).toString(),
+            maturityOn: toISODateString(row.instrumentMaturityOn) ?? DEFAULT_OPERATIONS_MATURITY_ON,
             formSubmittedOn: toISODateString(row.formSubmittedOn) ?? row.formSubmittedOn,
             opsReviewedOn: toISODateString(row.opsReviewedOn) ?? '',
             paymentOn,

@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '@/db';
 import { maturityCases, payoutInstalments } from '@/db/schema';
 import { requestMeta, requireActor } from '@/lib/auth/session';
+import { DEFAULT_OPERATIONS_MATURITY_ON } from '@/lib/maturity-operations';
 import { tryParseRupeesToPaise } from '@/lib/money';
 import { assertCan, assertCanTypeRegister, roleCan, type Actor, type ResourceRef } from '@/lib/rbac';
 import type { BulkTodayMode } from '@/lib/register-view';
@@ -136,6 +137,25 @@ export async function addRegisterRowAction(branchId: string): Promise<ActionResu
     assertCanTypeRegister(actor);
     assertCan(actor, 'case.create', { branchId });
     const id = await createBlankRegisterRow(session, branchId);
+    revalidate();
+    return ok({ id });
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+/** Add one Operations-sheet row with the confirmed August cohort maturity date already filled. */
+export async function addMaturityOperationsRowAction(
+  branchId: string,
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    const { session, actor } = await requireActor();
+    assertCanTypeRegister(actor);
+    assertCan(actor, 'case.create', { branchId });
+    const id = await createBlankRegisterRow(session, branchId);
+    await updateRegisterRow(session, id, {
+      instrumentMaturityOn: DEFAULT_OPERATIONS_MATURITY_ON,
+    });
     revalidate();
     return ok({ id });
   } catch (e) {
