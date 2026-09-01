@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 import { getSession } from '@/lib/auth/session';
+import { defaultLandingPage } from '@/lib/landing-page';
 
 export default async function Home() {
   const session = await getSession();
-  redirect(session ? '/maturities' : '/login');
+  redirect(session ? defaultLandingPage(session) : '/login');
 }

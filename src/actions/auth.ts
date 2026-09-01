@@ -8,6 +8,7 @@ import { db } from '@/db';
 import { users } from '@/db/schema';
 import { writeAudit } from '@/lib/audit';
 import { checkPasswordStrength, hashPassword, verifyPassword } from '@/lib/auth/password';
+import { defaultLandingPage, type LandingPage } from '@/lib/landing-page';
 import {
   createSession,
   destroySession,
@@ -26,9 +27,9 @@ const loginSchema = z.object({
 });
 
 export async function loginAction(
-  _prev: ActionResult<{ mustChangePassword: boolean }> | null,
+  _prev: ActionResult<{ mustChangePassword: boolean; next: LandingPage }> | null,
   formData: FormData,
-): Promise<ActionResult<{ mustChangePassword: boolean }>> {
+): Promise<ActionResult<{ mustChangePassword: boolean; next: LandingPage }>> {
   try {
     const parsed = loginSchema.safeParse({
       identifier: formData.get('identifier') ?? formData.get('email'),
@@ -102,7 +103,10 @@ export async function loginAction(
       ...meta,
     });
 
-    return ok({ mustChangePassword: user.mustChangePassword });
+    return ok({
+      mustChangePassword: user.mustChangePassword,
+      next: defaultLandingPage(user),
+    });
   } catch (e) {
     return toActionError(e);
   }
@@ -199,4 +203,3 @@ export async function changePasswordAction(
     return toActionError(e);
   }
 }
-

@@ -25,6 +25,16 @@ export interface NavItem {
   description: string;
 }
 
+export const TOP_LEVEL_NAV: NavItem[] = [
+  {
+    href: '/dashboard',
+    label: 'Summary',
+    icon: 'dashboard',
+    permission: 'case.view',
+    description: 'Totals across the register',
+  },
+];
+
 export const NAV: { section: string; items: NavItem[] }[] = [
   {
     section: 'Daily work',
@@ -83,13 +93,6 @@ export const NAV: { section: string; items: NavItem[] }[] = [
         icon: 'banknote',
         permission: 'cash.plan',
         description: 'Cash and NEFT to hold, 14 working days',
-      },
-      {
-        href: '/dashboard',
-        label: 'Summary',
-        icon: 'dashboard',
-        permission: 'case.view',
-        description: 'Totals across the register',
       },
     ],
   },
@@ -172,7 +175,7 @@ export function pageTitleFor(pathname: string): string {
   const exact = EXTRA_TITLES[pathname];
   if (exact) return exact;
 
-  const items = NAV.flatMap((s) => s.items);
+  const items = [...TOP_LEVEL_NAV, ...NAV.flatMap((s) => s.items)];
   const hit = items
     .filter((i) => pathname === i.href || pathname.startsWith(`${i.href}/`))
     .sort((a, b) => b.href.length - a.href.length)[0];

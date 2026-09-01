@@ -25,7 +25,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { SessionUser } from '@/lib/auth/session';
 import { ROLE_SCOPE, activeRole, roleCan } from '@/lib/rbac';
 import { cn } from '@/lib/utils';
-import { NAV, type NavItem } from './nav-config';
+import { NAV, TOP_LEVEL_NAV, type NavItem } from './nav-config';
 
 const ICONS: Record<NavItem['icon'], LucideIcon> = {
   dashboard: LayoutDashboard,
@@ -128,6 +128,10 @@ export function TopNavigation({
       return !item.headOfficeOnly || ROLE_SCOPE[activeRole(session.role)] === 'ALL';
     }),
   })).filter((section) => section.items.length > 0);
+  const topLevelItems = TOP_LEVEL_NAV.filter((item) => {
+    if (!roleCan(session.role, item.permission)) return false;
+    return !item.headOfficeOnly || ROLE_SCOPE[activeRole(session.role)] === 'ALL';
+  });
 
   useEffect(() => {
     if (!openSection) return;
@@ -153,6 +157,11 @@ export function TopNavigation({
   if (mobile) {
     return (
       <nav aria-label="Main" className="grid gap-3 p-3 sm:grid-cols-2">
+        {topLevelItems.map((item) => (
+          <div key={item.href} className="sm:col-span-2">
+            <Destination item={item} pathname={pathname} badges={badges} compact onNavigate={finishNavigation} />
+          </div>
+        ))}
         {sections.map((section) => (
           <section key={section.section} className="border border-[var(--glass-border-quiet)] bg-[var(--glass-bg-subtle)] p-2">
             <h2 className="px-2 pb-1.5 pt-1 text-[0.6875rem] font-bold uppercase tracking-[0.1em] text-[var(--faint-fg)]">
@@ -171,6 +180,29 @@ export function TopNavigation({
 
   return (
     <nav ref={rootRef} aria-label="Main" className="flex h-10 items-center gap-1">
+      {topLevelItems.map((item) => {
+        const Icon = ICONS[item.icon];
+        const active = isActive(pathname, item.href);
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            aria-current={active ? 'page' : undefined}
+            className={cn(
+              'flex h-8 items-center gap-1.5 rounded-[9px] px-3 text-[0.78rem] font-semibold transition-colors',
+              active
+                ? 'bg-[var(--color-brand-50)] text-[var(--color-brand-700)]'
+                : 'text-[var(--muted-fg)] hover:bg-[var(--glass-bg-subtle)] hover:text-[var(--page-fg)]',
+            )}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {item.label}
+          </Link>
+        );
+      })}
+      {topLevelItems.length > 0 && sections.length > 0 && (
+        <span className="mx-1 h-5 w-px bg-[var(--glass-border-quiet)]" aria-hidden />
+      )}
       {sections.map((section) => {
         const active = section.items.some((item) => isActive(pathname, item.href));
         const expanded = openSection === section.section;

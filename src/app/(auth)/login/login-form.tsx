@@ -39,7 +39,7 @@ export function LoginForm({
   useEffect(() => {
     if (state?.ok) {
       toast.success('Signed in');
-      router.replace(state.data?.mustChangePassword ? '/account/password' : '/maturities');
+      router.replace(state.data?.mustChangePassword ? '/account/password' : (state.data?.next ?? '/maturities'));
       router.refresh();
     }
   }, [state, router]);

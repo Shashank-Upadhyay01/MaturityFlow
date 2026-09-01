@@ -22,9 +22,9 @@ async function login(page, email, password = 'Maturity@2026') {
   await page.fill('#identifier', email);
   await page.fill('#password', password);
   await page.click('button[type=submit]');
-  // The login form lands on /maturities (the Register); /account/password only when
-  // a password change is forced. Keep /dashboard here for older builds.
-  await page.waitForURL(/\/(maturities|dashboard|account)/, { timeout: 20000 });
+  // The login form chooses a role-specific landing page; /account/password appears only when
+  // a password change is forced.
+  await page.waitForURL(/\/(maturities|maturity-operations|dashboard|account)/, { timeout: 20000 });
   // Callers below start from the dashboard, so go there once sign-in has landed
   // rather than depending on whichever page the login form chose.
   if (!/\/account\/password/.test(page.url())) {

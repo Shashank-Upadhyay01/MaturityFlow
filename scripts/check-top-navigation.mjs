@@ -15,9 +15,14 @@ await page.waitForURL((url) => !url.pathname.includes('/login'));
 await page.goto(`${base}/maturity-operations`, { waitUntil: 'networkidle' });
 
 check('Desktop has no sidebar', (await page.locator('aside').count()) === 0);
+check('Summary is a direct top-bar destination', await page.locator('nav').getByRole('link', { name: 'Summary', exact: true }).isVisible());
 for (const category of ['Daily work', 'Planning', 'Directory', 'Administration']) {
   check(`Desktop shows ${category}`, await page.getByRole('button', { name: new RegExp(`^${category}`) }).isVisible());
 }
+await page.getByRole('button', { name: /^Planning/ }).click();
+const planningLinks = await page.locator('nav').getByRole('link').allTextContents();
+check('Summary is no longer inside Planning', planningLinks.filter((text) => text.trim() === 'Summary').length === 1, planningLinks.join(' | '));
+await page.getByRole('button', { name: /^Planning/ }).click();
 
 await page.getByRole('button', { name: /^Daily work/ }).click();
 const dailyLinks = await page.locator('nav').getByRole('link').allTextContents();
@@ -37,6 +42,7 @@ await page.reload({ waitUntil: 'networkidle' });
 const mobileToggle = page.getByRole('button', { name: 'Open navigation' });
 check('Mobile uses a top navigation toggle', await mobileToggle.isVisible());
 await mobileToggle.click();
+check('Mobile navigation keeps Summary outside category panels', await page.locator('nav').getByRole('link', { name: 'Summary', exact: true }).isVisible());
 for (const category of ['Daily work', 'Planning', 'Directory', 'Administration']) {
   check(`Mobile shows ${category}`, await page.getByRole('heading', { name: category }).isVisible());
 }
