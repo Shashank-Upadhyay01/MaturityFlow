@@ -73,9 +73,11 @@ export function CustomerStatement({
         @page { size: A4 landscape; margin: 11mm 10mm; }
         .stmt { color: #000; background: #fff; font-size: 10.5px; line-height: 1.45; }
         .stmt table { width: 100%; border-collapse: collapse; }
+        .stmt .payment-table { table-layout: fixed; }
         .stmt th, .stmt td { border: 1px solid #999; padding: 4px 6px; vertical-align: top; }
         .stmt thead th { background: #eee; font-weight: 600; text-align: left; }
         .stmt .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .stmt .payment-table th.num, .stmt .payment-table td.num { text-align: right; }
         .stmt .caseHead td { background: #f4f4f4; font-weight: 600; }
         .stmt tfoot td { background: #eee; font-weight: 700; }
         .stmt tbody tr { break-inside: avoid; }
@@ -137,10 +139,6 @@ export function CustomerStatement({
                   <td>{head.agentName}</td>
                 </tr>
                 <tr>
-                  <td>Address</td>
-                  <td colSpan={5}>{head.address ?? '—'}</td>
-                </tr>
-                <tr>
                   <td>Maturities</td>
                   <td className="num">{cases.length}</td>
                   <td>Total</td>
@@ -149,31 +147,35 @@ export function CustomerStatement({
                   <td className="num">{money(totals.paid)}</td>
                 </tr>
                 <tr>
-                  <td>Payout bank</td>
-                  <td colSpan={3}>
-                    {head.payoutBank ?? '—'}
-                    {head.payoutAccount ? ` · ${head.payoutAccount}` : ''}
-                    {head.payoutIfsc ? ` · ${head.payoutIfsc}` : ''}
-                  </td>
                   <td>Still owed</td>
-                  <td className="num">
+                  <td className="num" colSpan={5}>
                     <strong>{money(totals.left)}</strong>
                   </td>
                 </tr>
               </tbody>
             </table>
 
-            <table>
+            <table className="payment-table">
+              <colgroup>
+                <col style={{ width: '5%' }} />
+                <col style={{ width: '16%' }} />
+                <col style={{ width: '18%' }} />
+                <col style={{ width: '13%' }} />
+                <col style={{ width: '13%' }} />
+                <col style={{ width: '11%' }} />
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '9%' }} />
+              </colgroup>
               <thead>
                 <tr>
-                  <th style={{ width: '5%' }}>#</th>
-                  <th style={{ width: '13%' }}>Payment date</th>
+                  <th>#</th>
+                  <th>Payment date</th>
                   <th className="num">Scheduled</th>
                   <th className="num">Cash</th>
                   <th className="num">Online</th>
                   <th className="num">Paid</th>
                   <th className="num">Remaining</th>
-                  <th style={{ width: '12%' }}>State</th>
+                  <th>State</th>
                 </tr>
               </thead>
               <tbody>
