@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import { Check, Columns3, ExternalLink, Plus, ShieldAlert, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -48,8 +48,8 @@ const COLUMNS = [
 type ColumnId = (typeof COLUMNS)[number][0];
 
 const rupees = (paise: string) => (BigInt(paise || '0') / 100n).toString();
-const inputClass = 'h-8 w-full min-w-0 rounded-none border-0 bg-transparent px-1.5 text-[0.75rem] text-[var(--page-fg)] outline-none focus:bg-[var(--input-bg)] focus:shadow-[inset_0_0_0_2px_var(--ring)] disabled:cursor-default disabled:opacity-65';
-const head = 'sticky top-0 z-10 border border-[var(--hairline)] bg-[var(--surface-solid)] px-1.5 py-1.5 text-left text-[0.625rem] font-bold uppercase leading-tight tracking-[0.035em] text-[var(--muted-fg)]';
+const inputClass = 'h-9 w-full min-w-0 rounded-none border-0 bg-transparent px-2 text-[0.8125rem] font-medium leading-none text-[var(--page-fg)] outline-none focus:bg-[var(--color-brand-50)] focus:shadow-[inset_0_0_0_2px_var(--ring)] disabled:cursor-default disabled:opacity-75';
+const head = 'sticky top-0 h-11 border border-[var(--hairline)] bg-[color-mix(in_oklab,var(--color-brand-500)_8%,var(--surface-solid))] px-2 py-2 text-left text-[0.6875rem] font-extrabold uppercase leading-[1.15] tracking-[0.025em] text-[var(--page-fg)]';
 const cell = 'border border-[var(--hairline)] p-0 align-middle';
 
 function EditableCell({ row, col, value, type = 'text', disabled, onCommit }: {
@@ -67,7 +67,12 @@ function EditableCell({ row, col, value, type = 'text', disabled, onCommit }: {
   return (
     <input
       data-ops-cell="true" data-ops-row={row} data-ops-col={col}
-      className={cn(inputClass, type === 'money' && 'text-right tabular-nums')}
+      className={cn(
+        inputClass,
+        type === 'money' && 'font-mono font-semibold text-right tabular-nums',
+        type === 'date' && 'font-mono text-[0.75rem] tabular-nums',
+        col === 'account' && 'font-mono tabular-nums',
+      )}
       type={type === 'date' ? 'date' : 'text'} inputMode={type === 'money' ? 'numeric' : undefined}
       value={draft} title={draft} disabled={disabled}
       onFocus={(event) => event.currentTarget.select()}
@@ -167,13 +172,26 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
   }
 
   const colCount = COLUMNS.filter(([id]) => show(id)).length;
-  const widths: [ColumnId, number][] = [['account', 70], ['customer', 90], ['agent', 78], ['amount', 78], ['maturity', 116], ['form', 116], ['review', 116], ['payment', 116], ['due', 70], ['recommended', 90], ['paidToday', 66], ['paidCash', 66], ['paidOnline', 66], ['taken', 64], ['notTaken', 68]];
+  const widths: [ColumnId, number][] = [['account', 92], ['customer', 150], ['agent', 140], ['amount', 104], ['maturity', 126], ['form', 136], ['review', 126], ['payment', 126], ['due', 92], ['recommended', 110], ['paidToday', 80], ['paidCash', 80], ['paidOnline', 84], ['taken', 86], ['notTaken', 92]];
+  const widthOf = (id: ColumnId) => widths.find(([key]) => key === id)?.[1] ?? 0;
+  const pinnedLeft = (id: ColumnId): CSSProperties | undefined => {
+    if (id === 'account') return { left: 0 };
+    if (id === 'customer') return { left: show('account') ? widthOf('account') : 0 };
+    return undefined;
+  };
+  const lastPinned = show('customer') ? 'customer' : show('account') ? 'account' : null;
+  const pinnedClass = (id: ColumnId, header = false) => cn(
+    (id === 'account' || id === 'customer') && 'sticky',
+    header ? (id === 'account' || id === 'customer' ? 'z-30' : 'z-20') : 'z-10',
+    id === lastPinned && 'shadow-[3px_0_6px_-5px_rgba(15,23,42,0.55)]',
+  );
+  const visibleWidth = widths.filter(([id]) => show(id)).reduce((total, [, width]) => total + width, 0);
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="inline-flex border border-[var(--hairline)] bg-[var(--surface-solid)] p-0.5">
-          <button type="button" onClick={() => setTab('work')} className={cn('px-3 py-1.5 text-xs', tab === 'work' && 'bg-[var(--color-brand-700)] font-semibold text-white')}>Operations work · {rows.length}</button>
-          <button type="button" onClick={() => setTab('unreviewed')} className={cn('px-3 py-1.5 text-xs', tab === 'unreviewed' && 'bg-[var(--color-brand-700)] font-semibold text-white')}>Not reviewed · {rows.filter((row) => row.needsReview).length}</button>
+          <button type="button" onClick={() => setTab('work')} className={cn('px-3 py-2 text-[0.8125rem] font-medium', tab === 'work' && 'bg-[var(--color-brand-700)] font-semibold text-white dark:text-[var(--color-brand-950)]')}>Operations work · {rows.length}</button>
+          <button type="button" onClick={() => setTab('unreviewed')} className={cn('px-3 py-2 text-[0.8125rem] font-medium', tab === 'unreviewed' && 'bg-[var(--color-brand-700)] font-semibold text-white dark:text-[var(--color-brand-950)]')}>Not reviewed · {rows.filter((row) => row.needsReview).length}</button>
         </div>
         {isAdmin && (
           <div className="relative flex flex-wrap items-center gap-1 text-xs">
@@ -195,18 +213,19 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
 
       <div className="overflow-hidden border border-[var(--hairline)] bg-[var(--surface-solid)]">
         <div className="max-h-[72vh] overflow-auto overscroll-contain">
-          <table className="w-full min-w-[79.375rem] table-fixed border-collapse text-[0.72rem]">
+          <table style={{ minWidth: visibleWidth }} className="w-full table-fixed border-collapse text-[0.8125rem]">
             <colgroup>{widths.filter(([id]) => show(id)).map(([id, width]) => <col key={id} style={{ width }} />)}</colgroup>
-            <thead><tr>{COLUMNS.filter(([id]) => show(id)).map(([id, label]) => <th key={id} className={cn(head, ['amount', 'due', 'recommended', 'paidToday', 'paidCash', 'paidOnline'].includes(id) && 'text-right')}>{label}</th>)}</tr></thead>
+            <thead><tr>{COLUMNS.filter(([id]) => show(id)).map(([id, label]) => <th key={id} style={pinnedLeft(id)} className={cn(head, pinnedClass(id, true), ['amount', 'due', 'recommended', 'paidToday', 'paidCash', 'paidOnline'].includes(id) && 'text-right')}>{label}</th>)}</tr></thead>
             <tbody>
-              {visible.map((row) => {
+              {visible.map((row, rowIndex) => {
                 const due = BigInt(row.duePaise) > 0n;
                 const paidCash = BigInt(row.paidCashTodayPaise) / 100n;
                 const paidOnline = BigInt(row.paidOnlineTodayPaise) / 100n;
+                const rowSurface = rowIndex % 2 === 0 ? 'bg-[var(--surface-solid)]' : 'bg-[var(--glass-bg-subtle)]';
                 return (
-                  <tr key={row.id} className={cn('odd:bg-[var(--surface-solid)] even:bg-[var(--glass-bg-subtle)] hover:bg-[color-mix(in_oklab,var(--color-brand-500)_7%,var(--surface-solid))]', row.needsReview && 'bg-[color-mix(in_oklab,var(--color-warn-600)_6%,var(--surface-solid))]')}>
-                    {show('account') && <td className={cell}><EditableCell row={row.id} col="account" value={row.accountNumber} disabled={!canEdit} onCommit={(v) => save(row.id, { accountNumber: v })} /></td>}
-                    {show('customer') && <td className={cell}><EditableCell row={row.id} col="customer" value={row.customerName} disabled={!canEdit} onCommit={(v) => save(row.id, { customerName: v })} /></td>}
+                  <tr key={row.id} className={cn('group hover:bg-[color-mix(in_oklab,var(--color-brand-500)_7%,var(--surface-solid))]', rowSurface)}>
+                    {show('account') && <td style={pinnedLeft('account')} className={cn(cell, pinnedClass('account'), rowSurface, row.needsReview && 'shadow-[inset_3px_0_0_var(--color-warn-500)]', 'group-hover:bg-[color-mix(in_oklab,var(--color-brand-500)_7%,var(--surface-solid))]')}><EditableCell row={row.id} col="account" value={row.accountNumber} disabled={!canEdit} onCommit={(v) => save(row.id, { accountNumber: v })} /></td>}
+                    {show('customer') && <td style={pinnedLeft('customer')} className={cn(cell, pinnedClass('customer'), rowSurface, 'group-hover:bg-[color-mix(in_oklab,var(--color-brand-500)_7%,var(--surface-solid))]')}><EditableCell row={row.id} col="customer" value={row.customerName} disabled={!canEdit} onCommit={(v) => save(row.id, { customerName: v })} /></td>}
                     {show('agent') && <td className={cell}><EditableCell row={row.id} col="agent" value={row.agentName} disabled={!canEdit} onCommit={(v) => save(row.id, { agentName: v })} /></td>}
                     {show('amount') && <td className={cell}><EditableCell row={row.id} col="amount" type="money" value={row.maturityRupees} disabled={!canEdit} onCommit={(v) => save(row.id, { maturityRupees: v })} /></td>}
                     {show('maturity') && <td className={cell}><EditableCell row={row.id} col="maturity" type="date" value={row.maturityOn || DEFAULT_OPERATIONS_MATURITY_ON} disabled={!canEdit} onCommit={(v) => save(row.id, { instrumentMaturityOn: v || null })} /></td>}
@@ -218,8 +237,8 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
                     {show('paidToday') && <td className={cell}><EditableCell row={row.id} col="paidToday" type="money" value={rupees(row.paidTodayPaise)} disabled={!canPay} onCommit={(v) => { const total = BigInt(v || '0'); const online = paidOnline > total ? 0n : paidOnline; return savePaid(row, total - online, online); }} /></td>}
                     {show('paidCash') && <td className={cell}><EditableCell row={row.id} col="paidCash" type="money" value={paidCash.toString()} disabled={!canPay} onCommit={(v) => savePaid(row, BigInt(v || '0'), paidOnline)} /></td>}
                     {show('paidOnline') && <td className={cell}><EditableCell row={row.id} col="paidOnline" type="money" value={paidOnline.toString()} disabled={!canPay} onCommit={(v) => savePaid(row, paidCash, BigInt(v || '0'))} /></td>}
-                    {show('taken') && <td className={cell}><button type="button" disabled={!canPay || !due || row.todayState === 'PAID' || busy === row.id} onClick={() => void mark(row, true)} className="flex h-8 w-full items-center justify-center gap-1 rounded-none bg-[var(--row-taken)] text-[0.68rem] font-bold text-[var(--row-taken-fg)] hover:bg-[var(--row-taken-strong)] disabled:cursor-not-allowed disabled:opacity-40"><Check className="h-3.5 w-3.5" />Taken</button></td>}
-                    {show('notTaken') && <td className={cell}><button type="button" disabled={!canPay || !due || row.todayState === 'PAID' || row.todayState === 'MISSED' || busy === row.id} onClick={() => void mark(row, false)} className="flex h-8 w-full items-center justify-center gap-1 rounded-none bg-[var(--row-missed)] text-[0.68rem] font-bold text-[var(--row-missed-fg)] hover:bg-[var(--row-missed-strong)] disabled:cursor-not-allowed disabled:opacity-40"><X className="h-3.5 w-3.5" />Not taken</button></td>}
+                    {show('taken') && <td className={cell}><button type="button" disabled={!canPay || !due || row.todayState === 'PAID' || busy === row.id} onClick={() => void mark(row, true)} className="flex h-9 w-full items-center justify-center gap-1 rounded-none bg-[var(--row-taken)] text-xs font-bold text-[var(--row-taken-fg)] hover:bg-[var(--row-taken-strong)] disabled:cursor-not-allowed disabled:opacity-40"><Check className="h-3.5 w-3.5" />Taken</button></td>}
+                    {show('notTaken') && <td className={cell}><button type="button" disabled={!canPay || !due || row.todayState === 'PAID' || row.todayState === 'MISSED' || busy === row.id} onClick={() => void mark(row, false)} className="flex h-9 w-full items-center justify-center gap-1 rounded-none bg-[var(--row-missed)] text-xs font-bold text-[var(--row-missed-fg)] hover:bg-[var(--row-missed-strong)] disabled:cursor-not-allowed disabled:opacity-40"><X className="h-3.5 w-3.5" />Not taken</button></td>}
                   </tr>
                 );
               })}

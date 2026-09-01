@@ -22,10 +22,10 @@ export default async function MaturityOperationsPage() {
   const headBranch = options.branches.find(isAzamgarhHeadBranch) ?? options.branches[0] ?? null;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div>
-        <p className="text-[0.68rem] font-semibold uppercase tracking-[0.09em] text-[var(--color-brand-700)]">15-day maturity control</p>
-        <h1 className="text-xl font-semibold tracking-tight">Operations review</h1>
+        <p className="text-[0.72rem] font-bold uppercase tracking-[0.09em] text-[var(--color-brand-700)]">15-day maturity control</p>
+        <h1 className="text-2xl font-semibold leading-tight tracking-tight">Operations review</h1>
         <p className="mt-1 text-sm text-[var(--muted-fg)]">Day 1 maturity · Day 2 form · Day 3 Operations review or automatic progression · Day 4 payment begins.</p>
       </div>
       <OperationsGrid

@@ -65,6 +65,16 @@ check(
   opsOverflow.scroll >= opsOverflow.client && pageOverflow.scroll <= pageOverflow.client + 2,
   JSON.stringify({ opsOverflow, pageOverflow }),
 );
+const pinnedHeaders = page.locator('thead th').filter({ hasText: /Account number|Customer name/ });
+const pinnedBefore = await pinnedHeaders.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().x)));
+await opsScroller.evaluate((el) => { el.scrollLeft = 320; });
+const pinnedAfter = await pinnedHeaders.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().x)));
+check(
+  'Account and Customer remain frozen during horizontal scrolling',
+  pinnedBefore.length === 2 && pinnedBefore.every((x, index) => Math.abs(x - pinnedAfter[index]) <= 1),
+  JSON.stringify({ pinnedBefore, pinnedAfter }),
+);
+await opsScroller.evaluate((el) => { el.scrollLeft = 0; });
 await opsCells.first().focus();
 const original = await opsCells.first().inputValue();
 await page.keyboard.press('Control+A');

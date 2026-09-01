@@ -20,6 +20,9 @@ const browser = await chromium.launch({
   args: ['--no-sandbox'],
 });
 const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });
+if (process.env.THEME === 'dark' || process.env.THEME === 'light') {
+  await ctx.addInitScript((theme) => localStorage.setItem('mf-theme', theme), process.env.THEME);
+}
 const page = await ctx.newPage();
 
 const errors = [];
