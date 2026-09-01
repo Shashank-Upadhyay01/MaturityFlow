@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Check, Columns3, ExternalLink, Plus, ShieldAlert, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -48,8 +48,8 @@ const COLUMNS = [
 type ColumnId = (typeof COLUMNS)[number][0];
 
 const rupees = (paise: string) => (BigInt(paise || '0') / 100n).toString();
-const inputClass = 'h-9 w-full min-w-0 rounded-none border-0 bg-transparent px-2 text-[0.8125rem] font-medium leading-none text-[var(--page-fg)] outline-none focus:bg-[var(--color-brand-50)] focus:shadow-[inset_0_0_0_2px_var(--ring)] disabled:cursor-default disabled:opacity-75';
-const head = 'sticky top-0 h-11 border border-[var(--hairline)] bg-[color-mix(in_oklab,var(--color-brand-500)_8%,var(--surface-solid))] px-2 py-2 text-left text-[0.6875rem] font-extrabold uppercase leading-[1.15] tracking-[0.025em] text-[var(--page-fg)]';
+const inputClass = 'h-9 w-full min-w-0 rounded-none border-0 bg-transparent px-1.5 text-[0.7rem] font-medium leading-none text-[var(--page-fg)] outline-none focus:bg-[var(--color-brand-50)] focus:shadow-[inset_0_0_0_2px_var(--ring)] disabled:cursor-default disabled:opacity-75 xl:px-2 xl:text-[0.78rem]';
+const head = 'sticky top-0 z-20 h-11 border border-[var(--hairline)] bg-[color-mix(in_oklab,var(--color-brand-500)_8%,var(--surface-solid))] px-1 py-1.5 text-left text-[0.58rem] font-extrabold uppercase leading-[1.15] tracking-[0.015em] text-[var(--page-fg)] xl:px-1.5 xl:text-[0.65rem]';
 const cell = 'border border-[var(--hairline)] p-0 align-middle';
 
 function EditableCell({ row, col, value, type = 'text', disabled, onCommit }: {
@@ -69,9 +69,9 @@ function EditableCell({ row, col, value, type = 'text', disabled, onCommit }: {
       data-ops-cell="true" data-ops-row={row} data-ops-col={col}
       className={cn(
         inputClass,
-        type === 'money' && 'font-mono font-semibold text-right tabular-nums',
-        type === 'date' && 'font-mono text-[0.75rem] tabular-nums',
-        col === 'account' && 'font-mono tabular-nums',
+        type === 'money' && 'font-mono text-[0.64rem] font-semibold text-right tabular-nums xl:text-[0.72rem]',
+        type === 'date' && 'px-1 font-mono text-[0.625rem] tabular-nums xl:text-[0.6875rem]',
+        col === 'account' && 'font-mono text-[0.65rem] tabular-nums xl:text-[0.72rem]',
       )}
       type={type === 'date' ? 'date' : 'text'} inputMode={type === 'money' ? 'numeric' : undefined}
       value={draft} title={draft} disabled={disabled}
@@ -172,20 +172,15 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
   }
 
   const colCount = COLUMNS.filter(([id]) => show(id)).length;
-  const widths: [ColumnId, number][] = [['account', 92], ['customer', 150], ['agent', 140], ['amount', 104], ['maturity', 126], ['form', 136], ['review', 126], ['payment', 126], ['due', 92], ['recommended', 110], ['paidToday', 80], ['paidCash', 80], ['paidOnline', 84], ['taken', 86], ['notTaken', 92]];
-  const widthOf = (id: ColumnId) => widths.find(([key]) => key === id)?.[1] ?? 0;
-  const pinnedLeft = (id: ColumnId): CSSProperties | undefined => {
-    if (id === 'account') return { left: 0 };
-    if (id === 'customer') return { left: show('account') ? widthOf('account') : 0 };
-    return undefined;
-  };
-  const lastPinned = show('customer') ? 'customer' : show('account') ? 'account' : null;
-  const pinnedClass = (id: ColumnId, header = false) => cn(
-    (id === 'account' || id === 'customer') && 'sticky',
-    header ? (id === 'account' || id === 'customer' ? 'z-30' : 'z-20') : 'z-10',
-    id === lastPinned && 'shadow-[3px_0_6px_-5px_rgba(15,23,42,0.55)]',
-  );
-  const visibleWidth = widths.filter(([id]) => show(id)).reduce((total, [, width]) => total + width, 0);
+  // Relative weights keep every visible column inside the available sheet width. They are
+  // normalised again when an Admin hides columns, so the remaining cells still fill the row.
+  const widths: [ColumnId, number][] = [
+    ['account', 5.5], ['customer', 9], ['agent', 8.5], ['amount', 6.5],
+    ['maturity', 7.5], ['form', 8.5], ['review', 7.5], ['payment', 7.5],
+    ['due', 6], ['recommended', 7], ['paidToday', 5], ['paidCash', 5],
+    ['paidOnline', 5], ['taken', 5.5], ['notTaken', 6.5],
+  ];
+  const visibleWeight = widths.filter(([id]) => show(id)).reduce((total, [, weight]) => total + weight, 0);
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -212,10 +207,10 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
       {tab === 'unreviewed' && <div className="flex items-start gap-2 border border-[color-mix(in_oklab,var(--color-warn-600)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-warn-600)_8%,transparent)] px-3 py-2 text-xs text-[var(--muted-fg)]"><ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-warn-600)]" />These cases progressed automatically so payment was not delayed. Enter the actual Operations approval date when review is completed.</div>}
 
       <div className="overflow-hidden border border-[var(--hairline)] bg-[var(--surface-solid)]">
-        <div className="max-h-[72vh] overflow-auto overscroll-contain">
-          <table style={{ minWidth: visibleWidth }} className="w-full table-fixed border-collapse text-[0.8125rem]">
-            <colgroup>{widths.filter(([id]) => show(id)).map(([id, width]) => <col key={id} style={{ width }} />)}</colgroup>
-            <thead><tr>{COLUMNS.filter(([id]) => show(id)).map(([id, label]) => <th key={id} style={pinnedLeft(id)} className={cn(head, pinnedClass(id, true), ['amount', 'due', 'recommended', 'paidToday', 'paidCash', 'paidOnline'].includes(id) && 'text-right')}>{label}</th>)}</tr></thead>
+        <div className="max-h-[72vh] overflow-x-hidden overflow-y-auto overscroll-contain">
+          <table className="w-full table-fixed border-collapse text-[0.8125rem]">
+            <colgroup>{widths.filter(([id]) => show(id)).map(([id, weight]) => <col key={id} style={{ width: `${(weight / visibleWeight) * 100}%` }} />)}</colgroup>
+            <thead><tr>{COLUMNS.filter(([id]) => show(id)).map(([id, label]) => <th key={id} className={cn(head, ['amount', 'due', 'recommended', 'paidToday', 'paidCash', 'paidOnline'].includes(id) && 'text-right')}>{label}</th>)}</tr></thead>
             <tbody>
               {visible.map((row, rowIndex) => {
                 const due = BigInt(row.duePaise) > 0n;
@@ -224,8 +219,8 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
                 const rowSurface = rowIndex % 2 === 0 ? 'bg-[var(--surface-solid)]' : 'bg-[var(--glass-bg-subtle)]';
                 return (
                   <tr key={row.id} className={cn('group hover:bg-[color-mix(in_oklab,var(--color-brand-500)_7%,var(--surface-solid))]', rowSurface)}>
-                    {show('account') && <td style={pinnedLeft('account')} className={cn(cell, pinnedClass('account'), rowSurface, row.needsReview && 'shadow-[inset_3px_0_0_var(--color-warn-500)]', 'group-hover:bg-[color-mix(in_oklab,var(--color-brand-500)_7%,var(--surface-solid))]')}><EditableCell row={row.id} col="account" value={row.accountNumber} disabled={!canEdit} onCommit={(v) => save(row.id, { accountNumber: v })} /></td>}
-                    {show('customer') && <td style={pinnedLeft('customer')} className={cn(cell, pinnedClass('customer'), rowSurface, 'group-hover:bg-[color-mix(in_oklab,var(--color-brand-500)_7%,var(--surface-solid))]')}><EditableCell row={row.id} col="customer" value={row.customerName} disabled={!canEdit} onCommit={(v) => save(row.id, { customerName: v })} /></td>}
+                    {show('account') && <td className={cn(cell, row.needsReview && 'shadow-[inset_3px_0_0_var(--color-warn-500)]')}><EditableCell row={row.id} col="account" value={row.accountNumber} disabled={!canEdit} onCommit={(v) => save(row.id, { accountNumber: v })} /></td>}
+                    {show('customer') && <td className={cell}><EditableCell row={row.id} col="customer" value={row.customerName} disabled={!canEdit} onCommit={(v) => save(row.id, { customerName: v })} /></td>}
                     {show('agent') && <td className={cell}><EditableCell row={row.id} col="agent" value={row.agentName} disabled={!canEdit} onCommit={(v) => save(row.id, { agentName: v })} /></td>}
                     {show('amount') && <td className={cell}><EditableCell row={row.id} col="amount" type="money" value={row.maturityRupees} disabled={!canEdit} onCommit={(v) => save(row.id, { maturityRupees: v })} /></td>}
                     {show('maturity') && <td className={cell}><EditableCell row={row.id} col="maturity" type="date" value={row.maturityOn || DEFAULT_OPERATIONS_MATURITY_ON} disabled={!canEdit} onCommit={(v) => save(row.id, { instrumentMaturityOn: v || null })} /></td>}
@@ -237,8 +232,8 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
                     {show('paidToday') && <td className={cell}><EditableCell row={row.id} col="paidToday" type="money" value={rupees(row.paidTodayPaise)} disabled={!canPay} onCommit={(v) => { const total = BigInt(v || '0'); const online = paidOnline > total ? 0n : paidOnline; return savePaid(row, total - online, online); }} /></td>}
                     {show('paidCash') && <td className={cell}><EditableCell row={row.id} col="paidCash" type="money" value={paidCash.toString()} disabled={!canPay} onCommit={(v) => savePaid(row, BigInt(v || '0'), paidOnline)} /></td>}
                     {show('paidOnline') && <td className={cell}><EditableCell row={row.id} col="paidOnline" type="money" value={paidOnline.toString()} disabled={!canPay} onCommit={(v) => savePaid(row, paidCash, BigInt(v || '0'))} /></td>}
-                    {show('taken') && <td className={cell}><button type="button" disabled={!canPay || !due || row.todayState === 'PAID' || busy === row.id} onClick={() => void mark(row, true)} className="flex h-9 w-full items-center justify-center gap-1 rounded-none bg-[var(--row-taken)] text-xs font-bold text-[var(--row-taken-fg)] hover:bg-[var(--row-taken-strong)] disabled:cursor-not-allowed disabled:opacity-40"><Check className="h-3.5 w-3.5" />Taken</button></td>}
-                    {show('notTaken') && <td className={cell}><button type="button" disabled={!canPay || !due || row.todayState === 'PAID' || row.todayState === 'MISSED' || busy === row.id} onClick={() => void mark(row, false)} className="flex h-9 w-full items-center justify-center gap-1 rounded-none bg-[var(--row-missed)] text-xs font-bold text-[var(--row-missed-fg)] hover:bg-[var(--row-missed-strong)] disabled:cursor-not-allowed disabled:opacity-40"><X className="h-3.5 w-3.5" />Not taken</button></td>}
+                    {show('taken') && <td className={cell}><button type="button" title="Mark as taken" aria-label="Mark as taken" disabled={!canPay || !due || row.todayState === 'PAID' || busy === row.id} onClick={() => void mark(row, true)} className="flex h-9 w-full items-center justify-center gap-0.5 rounded-none bg-[var(--row-taken)] text-[0.65rem] font-bold text-[var(--row-taken-fg)] hover:bg-[var(--row-taken-strong)] disabled:cursor-not-allowed disabled:opacity-40 xl:text-[0.7rem]"><Check className="h-3 w-3 shrink-0" /><span className="hidden xl:inline">Taken</span></button></td>}
+                    {show('notTaken') && <td className={cell}><button type="button" title="Mark as not taken" aria-label="Mark as not taken" disabled={!canPay || !due || row.todayState === 'PAID' || row.todayState === 'MISSED' || busy === row.id} onClick={() => void mark(row, false)} className="flex h-9 w-full items-center justify-center gap-0.5 rounded-none bg-[var(--row-missed)] text-[0.65rem] font-bold text-[var(--row-missed-fg)] hover:bg-[var(--row-missed-strong)] disabled:cursor-not-allowed disabled:opacity-40 xl:text-[0.7rem]"><X className="h-3 w-3 shrink-0" /><span className="hidden xl:inline">Not taken</span></button></td>}
                   </tr>
                 );
               })}

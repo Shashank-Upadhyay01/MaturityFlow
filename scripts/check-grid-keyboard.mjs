@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 
 const browser = await chromium.launch({ args: ['--no-sandbox'] });
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+const page = await browser.newPage({ viewport: { width: 1366, height: 768 } });
 const baseUrl = process.env.BASE_URL ?? 'http://localhost:3000';
 await page.goto(`${baseUrl}/login`, { waitUntil: 'networkidle' });
 await page.fill('input[name="identifier"], input[name="email"], input[type="email"], input[type="text"]', 'admin@bank.test');
@@ -61,20 +61,17 @@ const opsScroller = page.locator('table').locator('..');
 const opsOverflow = await opsScroller.evaluate((el) => ({ client: el.clientWidth, scroll: el.scrollWidth }));
 const pageOverflow = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
 check(
-  'Operations overflow stays inside the table scroller',
-  opsOverflow.scroll >= opsOverflow.client && pageOverflow.scroll <= pageOverflow.client + 2,
+  'All Operations columns fit without horizontal scrolling',
+  opsOverflow.scroll <= opsOverflow.client + 2 && pageOverflow.scroll <= pageOverflow.client + 2,
   JSON.stringify({ opsOverflow, pageOverflow }),
 );
-const pinnedHeaders = page.locator('thead th').filter({ hasText: /Account number|Customer name/ });
-const pinnedBefore = await pinnedHeaders.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().x)));
-await opsScroller.evaluate((el) => { el.scrollLeft = 320; });
-const pinnedAfter = await pinnedHeaders.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().x)));
+const rightmostHeader = page.getByRole('columnheader', { name: 'Not taken', exact: true });
+const [scrollerBox, rightmostBox] = await Promise.all([opsScroller.boundingBox(), rightmostHeader.boundingBox()]);
 check(
-  'Account and Customer remain frozen during horizontal scrolling',
-  pinnedBefore.length === 2 && pinnedBefore.every((x, index) => Math.abs(x - pinnedAfter[index]) <= 1),
-  JSON.stringify({ pinnedBefore, pinnedAfter }),
+  'The rightmost Not taken column is visible without scrolling',
+  Boolean(scrollerBox && rightmostBox && rightmostBox.x + rightmostBox.width <= scrollerBox.x + scrollerBox.width + 2),
+  JSON.stringify({ scrollerBox, rightmostBox }),
 );
-await opsScroller.evaluate((el) => { el.scrollLeft = 0; });
 await opsCells.first().focus();
 const original = await opsCells.first().inputValue();
 await page.keyboard.press('Control+A');
@@ -98,6 +95,18 @@ check(
   'Operations ArrowDown keeps focus in the same column without page scrolling',
   opsAfter.row !== opsBefore.row && opsAfter.col === opsBefore.col && opsAfter.y === opsBefore.y,
   JSON.stringify({ opsBefore, opsAfter }),
+);
+
+await page.setViewportSize({ width: 1024, height: 768 });
+await page.waitForTimeout(100);
+const narrowOverflow = await opsScroller.evaluate((el) => ({ client: el.clientWidth, scroll: el.scrollWidth }));
+const narrowRightmostBox = await rightmostHeader.boundingBox();
+const narrowScrollerBox = await opsScroller.boundingBox();
+check(
+  'Operations remains scrollbar-free at 1024px',
+  narrowOverflow.scroll <= narrowOverflow.client + 2
+    && Boolean(narrowScrollerBox && narrowRightmostBox && narrowRightmostBox.x + narrowRightmostBox.width <= narrowScrollerBox.x + narrowScrollerBox.width + 2),
+  JSON.stringify({ narrowOverflow, narrowScrollerBox, narrowRightmostBox }),
 );
 
 console.log(JSON.stringify({ checks }, null, 2));
