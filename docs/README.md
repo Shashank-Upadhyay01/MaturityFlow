@@ -13,4 +13,5 @@
 | [08 · Runbook](08-RUNBOOK.md) | It is in production and something looks wrong. |
 | [09 · Go-live](09-GO-LIVE.md) | You are switching from demo data to real customers. |
 | [11 · Cloud migration](11-CLOUD-MIGRATION.md) | You are moving from this laptop to a 24/7 cloud URL. |
+| [16 · Production status](16-GO-LIVE-STATUS-2026-09-01.md) | You need the live URL, Vercel/Supabase state or production cautions. |
 | [ADRs](adr) | You are wondering *why* a decision was made. |

@@ -138,11 +138,15 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
 };
 
 export interface RegisterLayout {
+  version: number;
   order: RegisterColId[];
   hidden: RegisterColId[];
 }
 
+export const REGISTER_LAYOUT_VERSION = 2;
+
 export const DEFAULT_REGISTER_LAYOUT: RegisterLayout = {
+  version: REGISTER_LAYOUT_VERSION,
   order: [
     'account', 'customer', 'agent', 'amount', 'paymentDate', 'today', 'perDay',
     'paidToday', 'paidCashToday', 'paidOnlineToday',
@@ -158,15 +162,16 @@ export function parseRegisterLayout(raw: unknown): RegisterLayout {
   const hidden: RegisterColId[] = [];
   const seen = new Set<string>();
   const o = raw && typeof raw === 'object' ? (raw as { order?: unknown; hidden?: unknown }) : {};
+  const version = raw && typeof raw === 'object' ? (raw as { version?: unknown }).version : undefined;
   const hideSet = new Set(
     Array.isArray(o.hidden) ? o.hidden.filter((x): x is string => typeof x === 'string') : [],
   );
 
-  // Upgrade the former default, where "Due payment" meant total remaining and the actual
-  // scheduled day was hidden. Saved custom layouts still work; only that exact legacy shape is
-  // promoted to the corrected sheet requested for the counter.
-  if (hideSet.has('today') && !hideSet.has('remaining')) {
+  // Every saved layout predating the corrected cashier sheet is upgraded once. The version is
+  // persisted when Admin next saves Columns, so later custom layouts remain exactly as chosen.
+  if (version !== REGISTER_LAYOUT_VERSION) {
     return {
+      version: REGISTER_LAYOUT_VERSION,
       order: [...DEFAULT_REGISTER_LAYOUT.order],
       hidden: [...DEFAULT_REGISTER_LAYOUT.hidden],
     };
@@ -184,7 +189,7 @@ export function parseRegisterLayout(raw: unknown): RegisterLayout {
     for (const id of o.order) if (typeof id === 'string') take(id);
   }
   for (const id of REGISTER_COL_IDS) take(id);
-  return { order, hidden };
+  return { version: REGISTER_LAYOUT_VERSION, order, hidden };
 }
 
 export function visibleRegisterCols(layout: RegisterLayout): RegisterColDef[] {

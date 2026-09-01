@@ -63,9 +63,10 @@ dropped over plain HTTP, so otherwise nobody can sign in). Details in `README.md
    one code change, in `src/lib/storage.ts`; see "Known gaps"). After this the laptop is purely a
    dev box; the cloud serves everyone 24/7.
 
-   **Status (2026-08-23):** the Supabase Postgres is already provisioned and in sync — project
-   `maturityflow` (`fktcubdpsgutcvyfdozt`, ap-south-1), all 17 tables, 10 demo logins. What's left
-   is the Vercel import + env vars (needs your accounts). Full runbook: `docs/11-CLOUD-MIGRATION.md`.
+   **Status (2026-09-01):** production is live at `https://kggnl.in` on Vercel project
+   `maturityflow`, deploying `payout-cadence-phase-1`. Supabase project `maturityflow`
+   (`fktcubdpsgutcvyfdozt`, ap-south-1) has all 21 tables through migration 0008. Read
+   `docs/16-GO-LIVE-STATUS-2026-09-01.md` before any production or data operation.
 
 **Local DB note:** the app's `.env` points at `localhost:5432`, which on this laptop is
 **native Windows PostgreSQL 18** (holds the real 107-case register + demo logins). The

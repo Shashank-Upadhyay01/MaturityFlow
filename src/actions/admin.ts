@@ -270,8 +270,8 @@ export async function saveRegisterLayoutAction(
     const { session, actor } = await requireActor();
     assertCan(actor, 'settings.manage', { branchId });
     if (!branchId) return fail('No branch', 'VALIDATION');
-    const { parseRegisterLayout } = await import('@/lib/register-layout');
-    const layout = parseRegisterLayout({ order, hidden });
+    const { parseRegisterLayout, REGISTER_LAYOUT_VERSION } = await import('@/lib/register-layout');
+    const layout = parseRegisterLayout({ version: REGISTER_LAYOUT_VERSION, order, hidden });
     await db.transaction(async (tx) => {
       await tx
         .update(branches)
@@ -526,4 +526,3 @@ export async function saveOrgSettingsAction(
     return toActionError(e);
   }
 }
-

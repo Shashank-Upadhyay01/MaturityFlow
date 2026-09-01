@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_REGISTER_LAYOUT,
   REGISTER_COL_DEFS,
+  REGISTER_LAYOUT_VERSION,
   colWidthRem,
   columnsThatFit,
   excelHeadersForLayout,
@@ -11,7 +12,7 @@ import {
 
 describe('register layout', () => {
   it('fills missing columns from the default order', () => {
-    const layout = parseRegisterLayout({ order: ['agent', 'customer'], hidden: ['perDay'] });
+    const layout = parseRegisterLayout({ version: REGISTER_LAYOUT_VERSION, order: ['agent', 'customer'], hidden: ['perDay'] });
     expect(layout.order[0]).toBe('agent');
     expect(layout.order[1]).toBe('customer');
     expect(layout.order).toContain('amount');
@@ -19,7 +20,7 @@ describe('register layout', () => {
   });
 
   it('cannot hide required columns', () => {
-    const layout = parseRegisterLayout({ order: [], hidden: ['customer', 'amount', 'agent'] });
+    const layout = parseRegisterLayout({ version: REGISTER_LAYOUT_VERSION, order: [], hidden: ['customer', 'amount', 'agent'] });
     const vis = visibleRegisterCols(layout).map((c) => c.id);
     expect(vis).toContain('customer');
     expect(vis).toContain('amount');
@@ -28,6 +29,7 @@ describe('register layout', () => {
 
   it('template headers follow the visible order', () => {
     const layout = parseRegisterLayout({
+      version: REGISTER_LAYOUT_VERSION,
       order: ['customer', 'account', 'amount'],
       hidden: ['perDay', 'cash', 'online'],
     });
@@ -51,6 +53,15 @@ describe('register layout', () => {
       'Paid in Cash',
       'Paid Online',
     ]);
+  });
+
+  it('upgrades a saved pre-grid layout to the current cashier sheet once', () => {
+    const layout = parseRegisterLayout({
+      order: ['customer', 'amount', 'remaining', 'today'],
+      hidden: ['account'],
+    });
+    expect(layout.version).toBe(REGISTER_LAYOUT_VERSION);
+    expect(excelHeadersForLayout(layout)).toEqual(excelHeadersForLayout(DEFAULT_REGISTER_LAYOUT));
   });
 });
 
