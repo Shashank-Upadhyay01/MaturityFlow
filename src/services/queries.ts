@@ -2138,9 +2138,16 @@ export async function getAgentCustomers(actor: Actor, agentId: string) {
       deadlineOn: maturityCases.deadlineOn,
       paymentOn: maturityCases.paymentOn,
       cadence: maturityCases.cadence,
+      branchId: maturityCases.branchId,
       branchName: branches.name,
       agentName: agents.name,
       agentCode: agents.code,
+      windowDays: maturityCases.windowDays,
+      roundingPaise: maturityCases.roundingPaise,
+      distribution: maturityCases.distribution,
+      cashPolicy: maturityCases.cashPolicy,
+      cashCapPerDayPaise: maturityCases.cashCapPerDayPaise,
+      startOnNextWorkingDay: maturityCases.startOnNextWorkingDay,
     })
     .from(maturityCases)
     .innerJoin(customers, eq(customers.id, maturityCases.customerId))
@@ -2154,6 +2161,33 @@ export async function getAgentCustomers(actor: Actor, agentId: string) {
       ),
     )
     .orderBy(asc(customers.name), asc(maturityCases.caseNumber));
+}
+
+/** Active schedule rows for the printable statement of one scoped agent, including completed cases. */
+export async function getAgentStatementInstalments(actor: Actor, agentId: string) {
+  const scope = caseScope(actor);
+  return db
+    .select({
+      caseId: payoutInstalments.caseId,
+      seq: payoutInstalments.seq,
+      dueOn: payoutInstalments.dueOn,
+      amountPaise: payoutInstalments.amountPaise,
+      cashLegPaise: payoutInstalments.cashLegPaise,
+      onlineLegPaise: payoutInstalments.onlineLegPaise,
+      paidCashPaise: payoutInstalments.paidCashPaise,
+      paidOnlinePaise: payoutInstalments.paidOnlinePaise,
+      status: payoutInstalments.status,
+    })
+    .from(payoutInstalments)
+    .innerJoin(maturityCases, eq(maturityCases.id, payoutInstalments.caseId))
+    .where(and(
+      eq(maturityCases.agentId, agentId),
+      eq(payoutInstalments.scheduleVersion, maturityCases.scheduleVersion),
+      ne(payoutInstalments.status, 'SUPERSEDED'),
+      inArray(maturityCases.status, OPEN.concat('COMPLETED')),
+      ...(scope ? [scope] : []),
+    ))
+    .orderBy(asc(payoutInstalments.dueOn), asc(payoutInstalments.seq));
 }
 
 /** The same, for every agent at once — what the Agents page expands into. */

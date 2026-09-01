@@ -131,15 +131,13 @@ export function AgentRows({ agents, cases }: { agents: AgentRow[]; cases: (BookC
                         No customers on this agent yet.
                       </p>
                     ) : (
-                      <div className="overflow-x-auto">
+                      <div>
                         <table className="w-full border-collapse text-[0.75rem]">
                           <thead>
                             <tr className="border-b text-[0.68rem] uppercase tracking-wide text-[var(--faint-fg)]">
                               <th className="py-1.5 pr-2 text-left font-medium">Customer</th>
                               <th className="py-1.5 pr-2 text-left font-medium">A/c no.</th>
-                              <th className="py-1.5 pr-2 text-left font-medium">Case</th>
-                              <th className="py-1.5 pr-2 text-left font-medium">Form in</th>
-                              <th className="py-1.5 pr-2 text-left font-medium">Due by</th>
+                              <th className="py-1.5 pr-2 text-left font-medium">Case & payment timeline</th>
                               <th className="py-1.5 pr-2 text-right font-medium">Maturity</th>
                               <th className="py-1.5 pr-2 text-right font-medium">Received</th>
                               <th className="py-1.5 pr-2 text-right font-medium">Left</th>
@@ -175,12 +173,9 @@ export function AgentRows({ agents, cases }: { agents: AgentRow[]; cases: (BookC
                                       >
                                         {c.caseNumber}
                                       </Link>
-                                    </td>
-                                    <td className="py-1.5 pr-2 tabular-nums text-[var(--muted-fg)]">
-                                      {c.formSubmittedOn ? formatDMY(c.formSubmittedOn) : '—'}
-                                    </td>
-                                    <td className="py-1.5 pr-2 tabular-nums text-[var(--muted-fg)]">
-                                      {c.deadlineOn ? formatDMY(c.deadlineOn) : '—'}
+                                      <span className="mt-0.5 block text-[0.62rem] leading-relaxed tabular-nums text-[var(--faint-fg)]">
+                                        Maturity {c.instrumentMaturityOn ? formatDMY(c.instrumentMaturityOn) : '—'} · Form {c.formSubmittedOn ? formatDMY(c.formSubmittedOn) : '—'} · Approval {c.approvedOn ? formatDMY(c.approvedOn) : '—'} · Starts {c.paymentOn ? formatDMY(c.paymentOn) : '—'} · Due {c.deadlineOn ? formatDMY(c.deadlineOn) : '—'}
+                                      </span>
                                     </td>
                                     <td className="py-1.5 pr-2 text-right">
                                       <Money paise={BigInt(c.maturityAmountPaise)} decimals={false} />
@@ -201,7 +196,7 @@ export function AgentRows({ agents, cases }: { agents: AgentRow[]; cases: (BookC
                           </tbody>
                           <tfoot>
                             <tr className="border-t font-semibold">
-                              <td className="py-2 pr-2" colSpan={5}>
+                              <td className="py-2 pr-2" colSpan={3}>
                                 {summary.customers} customer{summary.customers === 1 ? '' : 's'} ·{' '}
                                 {summary.settledCustomers} fully received
                               </td>

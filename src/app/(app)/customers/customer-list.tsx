@@ -358,6 +358,21 @@ export function CustomerList({
                                       </p>
                                     ) : (
                                       <>
+                                        <div className="mb-2 grid gap-1 rounded-[8px] bg-[var(--glass-bg-subtle)] p-2 text-[0.68rem] sm:grid-cols-3 lg:grid-cols-6">
+                                          {[
+                                            ['Maturity date', c.instrumentMaturityOn ? formatDMY(c.instrumentMaturityOn) : '—'],
+                                            ['Form submission', c.formSubmittedOn ? formatDMY(c.formSubmittedOn) : '—'],
+                                            ['Approval date', c.approvedOn ? formatDMY(c.approvedOn) : '—'],
+                                            ['Payment starts', c.paymentOn ? formatDMY(c.paymentOn) : plan.days[0] ? formatDMY(plan.days[0].dueOn) : '—'],
+                                            ['Final payment due', c.deadlineOn ? formatDMY(c.deadlineOn) : plan.days.at(-1) ? formatDMY(plan.days.at(-1)!.dueOn) : '—'],
+                                            ['Payment pattern', `${plan.parts} parts · ${plan.cadence === 'ALTERNATE' ? 'alternate days' : 'daily'}`],
+                                          ].map(([label, value]) => (
+                                            <span key={label}>
+                                              <span className="block text-[0.58rem] font-medium uppercase tracking-wide text-[var(--faint-fg)]">{label}</span>
+                                              <span className="font-semibold tabular-nums">{value}</span>
+                                            </span>
+                                          ))}
+                                        </div>
                                         <table className="w-full border-collapse text-[0.7rem]">
                                           <thead>
                                             <tr className="text-[0.62rem] uppercase tracking-wide text-[var(--faint-fg)]">
@@ -366,8 +381,11 @@ export function CustomerList({
                                                 Date
                                               </th>
                                               <th className="py-1 pr-2 text-right font-medium">
-                                                Amount
+                                                Scheduled
                                               </th>
+                                              <th className="py-1 pr-2 text-right font-medium">Cash</th>
+                                              <th className="py-1 pr-2 text-right font-medium">Online</th>
+                                              <th className="py-1 pr-2 text-right font-medium">Paid</th>
                                               <th className="py-1 text-left font-medium">State</th>
                                             </tr>
                                           </thead>
@@ -390,6 +408,9 @@ export function CustomerList({
                                                 <td className="py-1 pr-2 text-right tabular-nums">
                                                   {inr(d.amountPaise)}
                                                 </td>
+                                                <td className="py-1 pr-2 text-right tabular-nums">{inr(d.cashPaise)}</td>
+                                                <td className="py-1 pr-2 text-right tabular-nums">{inr(d.onlinePaise)}</td>
+                                                <td className="py-1 pr-2 text-right tabular-nums">{inr(d.paidPaise)}</td>
                                                 <td className="py-1 text-[0.6rem] uppercase tracking-wide">
                                                   {d.state === 'PAID'
                                                     ? 'given'

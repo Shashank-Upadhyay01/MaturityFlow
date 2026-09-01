@@ -4,7 +4,8 @@ import { getSession, toActor } from '@/lib/auth/session';
 import { roleCan } from '@/lib/rbac';
 import { serialize } from '@/lib/serialize';
 import { formatISODate, todayISO } from '@/lib/working-days';
-import { getAgentCustomers } from '@/services/queries';
+import { getCalendarSnapshot } from '@/services/calendar-service';
+import { getAgentCustomers, getAgentStatementInstalments } from '@/services/queries';
 import { loadOrgSettings } from '@/services/org-settings';
 import { AgentStatement } from './agent-statement';
 
@@ -30,11 +31,18 @@ export default async function AgentStatementPage({
   if (!roleCan(session.role, 'agent.view')) redirect('/dashboard');
 
   const actor = toActor(session);
-  const cases = await getAgentCustomers(actor, agentId);
-  const org = await loadOrgSettings();
+  const [cases, instalments, org] = await Promise.all([
+    getAgentCustomers(actor, agentId),
+    getAgentStatementInstalments(actor, agentId),
+    loadOrgSettings(),
+  ]);
 
   // Scoping is applied inside the query, so an empty result means "not yours" or "no customers".
   const head = cases[0];
+  const calendar = head
+    ? await getCalendarSnapshot(head.branchId)
+    : { holidays: [], sundaysOff: true, saturdayRule: 'SECOND_FOURTH' as const };
+  const today = todayISO();
 
   return (
     <AgentStatement
@@ -43,8 +51,11 @@ export default async function AgentStatementPage({
       agentName={head?.agentName ?? 'Agent'}
       agentCode={head?.agentCode ?? ''}
       preparedBy={session.name}
-      preparedOn={formatISODate(todayISO())}
+      preparedOn={formatISODate(today)}
+      today={today}
+      calendar={calendar}
       cases={serialize(cases)}
+      instalments={serialize(instalments)}
     />
   );
 }

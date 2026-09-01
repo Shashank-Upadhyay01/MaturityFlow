@@ -70,7 +70,7 @@ export function CustomerStatement({
   return (
     <>
       <style>{`
-        @page { size: A4 portrait; margin: 14mm 12mm; }
+        @page { size: A4 landscape; margin: 11mm 10mm; }
         .stmt { color: #000; background: #fff; font-size: 10.5px; line-height: 1.45; }
         .stmt table { width: 100%; border-collapse: collapse; }
         .stmt th, .stmt td { border: 1px solid #999; padding: 4px 6px; vertical-align: top; }
@@ -85,12 +85,12 @@ export function CustomerStatement({
         .stmt .missed { background: #fdecec; }
         @media print { .no-print { display: none !important; } html, body { background: #fff !important; } }
         @media screen {
-          .stmt { max-width: 210mm; margin: 0 auto; padding: 14mm 12mm; background: #fff;
+          .stmt { max-width: 297mm; margin: 0 auto; padding: 11mm 10mm; background: #fff;
                   box-shadow: 0 2px 24px rgba(0,0,0,.18); }
         }
       `}</style>
 
-      <div className="no-print mx-auto flex max-w-[210mm] items-center justify-between gap-3 px-4 py-3">
+      <div className="no-print mx-auto flex max-w-[297mm] items-center justify-between gap-3 px-4 py-3">
         <p className="text-[0.8125rem] text-[var(--muted-fg)]">
           The print dialog opens by itself. Choose <strong>Save as PDF</strong> to get a file you
           can send.
@@ -129,12 +129,16 @@ export function CustomerStatement({
             <table style={{ marginBottom: 10 }}>
               <tbody>
                 <tr>
-                  <td>A/c no.</td>
-                  <td>{head.accountNumber ?? '—'}</td>
-                  <td>Phone</td>
-                  <td>{head.phone ?? '—'}</td>
+                  <td>Customer code / A/c no.</td>
+                  <td>{head.customerCode ?? '—'} · {head.accountNumber ?? '—'}</td>
+                  <td>Phone / email</td>
+                  <td>{head.phone ?? '—'}{head.email ? ` · ${head.email}` : ''}</td>
                   <td>Agent</td>
                   <td>{head.agentName}</td>
+                </tr>
+                <tr>
+                  <td>Address</td>
+                  <td colSpan={5}>{head.address ?? '—'}</td>
                 </tr>
                 <tr>
                   <td>Maturities</td>
@@ -163,13 +167,13 @@ export function CustomerStatement({
               <thead>
                 <tr>
                   <th style={{ width: '5%' }}>#</th>
-                  <th style={{ width: '13%' }}>Date</th>
-                  <th style={{ width: '10%' }}>Day</th>
-                  <th className="num" style={{ width: '16%' }}>
-                    Amount
-                  </th>
-                  <th style={{ width: '14%' }}>State</th>
-                  <th>Notes</th>
+                  <th style={{ width: '13%' }}>Payment date</th>
+                  <th className="num">Scheduled</th>
+                  <th className="num">Cash</th>
+                  <th className="num">Online</th>
+                  <th className="num">Paid</th>
+                  <th className="num">Remaining</th>
+                  <th style={{ width: '12%' }}>State</th>
                 </tr>
               </thead>
               <tbody>
@@ -180,19 +184,26 @@ export function CustomerStatement({
                   return (
                     <Fragment key={c.caseId}>
                       <tr className="caseHead">
-                        <td colSpan={3}>
+                        <td colSpan={8}>
                           {c.caseNumber}
                           {c.schemeName ? ` · ${c.schemeName}` : ''}
+                          {' '}· maturity {money(mat)} · {SETTLEMENT_LABEL[settlementOf(c)]}
+                          {' '}· received {money(paid)} · left {money(mat > paid ? mat - paid : 0n)}
                         </td>
-                        <td className="num">{money(mat)}</td>
-                        <td>{SETTLEMENT_LABEL[settlementOf(c)]}</td>
-                        <td>
-                          received {money(paid)} · left {money(mat > paid ? mat - paid : 0n)}
+                      </tr>
+                      <tr>
+                        <td colSpan={8} style={{ fontSize: 9.5, background: '#fafafa' }}>
+                          <strong>Maturity date:</strong> {c.instrumentMaturityOn ? formatDMY(c.instrumentMaturityOn) : '—'} ·{' '}
+                          <strong>Form submission:</strong> {c.formSubmittedOn ? formatDMY(c.formSubmittedOn) : '—'} ·{' '}
+                          <strong>Approval date:</strong> {c.approvedOn ? formatDMY(c.approvedOn) : '—'} ·{' '}
+                          <strong>Payment starts:</strong> {c.paymentOn ? formatDMY(c.paymentOn) : plan.days[0] ? formatDMY(plan.days[0].dueOn) : '—'} ·{' '}
+                          <strong>Final payment due:</strong> {c.deadlineOn ? formatDMY(c.deadlineOn) : plan.days.at(-1) ? formatDMY(plan.days.at(-1)!.dueOn) : '—'} ·{' '}
+                          <strong>Pattern:</strong> {plan.parts} parts, {plan.cadence === 'ALTERNATE' ? 'alternate days' : 'daily'}
                         </td>
                       </tr>
                       {plan.error ? (
                         <tr>
-                          <td colSpan={6}>{plan.error}</td>
+                          <td colSpan={8}>{plan.error}</td>
                         </tr>
                       ) : (
                         plan.days.map((d) => (
@@ -209,9 +220,12 @@ export function CustomerStatement({
                             }
                           >
                             <td>{d.seq}</td>
-                            <td>{formatDMY(d.dueOn)}</td>
-                            <td>{weekdayShort(d.dueOn)}</td>
+                            <td>{formatDMY(d.dueOn)} · {weekdayShort(d.dueOn)}</td>
                             <td className="num">{money(d.amountPaise)}</td>
+                            <td className="num">{money(d.cashPaise)}</td>
+                            <td className="num">{money(d.onlinePaise)}</td>
+                            <td className="num">{money(d.paidPaise)}</td>
+                            <td className="num">{money(d.amountPaise > d.paidPaise ? d.amountPaise - d.paidPaise : 0n)}</td>
                             <td>
                               {d.state === 'PAID'
                                 ? 'Given'
@@ -223,13 +237,6 @@ export function CustomerStatement({
                                       ? 'Missed'
                                       : 'Upcoming'}
                             </td>
-                            <td>
-                              {d.seq === 1
-                                ? plan.isProjection
-                                  ? 'Projected — set on approval'
-                                  : `Approved ${plan.approvedOn ? formatDMY(plan.approvedOn) : ''}`
-                                : ''}
-                            </td>
                           </tr>
                         ))
                       )}
@@ -239,11 +246,11 @@ export function CustomerStatement({
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={3}>
+                  <td colSpan={2}>
                     Total — {cases.length} maturit{cases.length === 1 ? 'y' : 'ies'}
                   </td>
                   <td className="num">{money(totals.maturity)}</td>
-                  <td colSpan={2}>
+                  <td colSpan={5}>
                     received {money(totals.paid)} · still owed {money(totals.left)}
                   </td>
                 </tr>

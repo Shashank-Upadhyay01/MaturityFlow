@@ -13,7 +13,10 @@ import {
   summariseBook,
   type BookCase,
 } from '@/lib/agent-book';
-import { formatDMY } from '@/lib/working-days';
+import { buildPlanRow, type PlanCase, type PlanInstalment } from '@/lib/plan-view';
+import { formatDMY, makeCalendar, weekdayShort, type SaturdayRule } from '@/lib/working-days';
+
+type AgentStatementCase = BookCase & PlanCase;
 
 /**
  * An agent's customer statement, laid out for A4 and printed by the browser.
@@ -29,7 +32,10 @@ export function AgentStatement({
   agentCode,
   preparedBy,
   preparedOn,
+  today,
+  calendar,
   cases,
+  instalments,
 }: {
   orgName: string;
   branchName: string;
@@ -37,10 +43,17 @@ export function AgentStatement({
   agentCode: string;
   preparedBy: string;
   preparedOn: string;
-  cases: BookCase[];
+  today: string;
+  calendar: { holidays: string[]; sundaysOff: boolean; saturdayRule: SaturdayRule };
+  cases: AgentStatementCase[];
+  instalments: PlanInstalment[];
 }) {
   const groups = useMemo(() => groupByCustomer(cases), [cases]);
   const summary = useMemo(() => summariseBook(groups), [groups]);
+  const cal = useMemo(() => makeCalendar(calendar.holidays, {
+    sundaysOff: calendar.sundaysOff,
+    saturdayRule: calendar.saturdayRule,
+  }), [calendar]);
   const [ready, setReady] = useState(false);
 
   // Let the fonts and table settle before the dialog opens, or the first page prints mid-layout.
@@ -61,13 +74,19 @@ export function AgentStatement({
         like the sheet that will come out, so what someone checks is what they send.
       */}
       <style>{`
-        @page { size: A4 portrait; margin: 14mm 12mm; }
+        @page { size: A4 landscape; margin: 10mm; }
         .stmt { color: #000; background: #fff; font-size: 10.5px; line-height: 1.45; }
         .stmt table { width: 100%; border-collapse: collapse; }
         .stmt th, .stmt td { border: 1px solid #999; padding: 4px 6px; vertical-align: top; }
         .stmt thead th { background: #eee; font-weight: 600; text-align: left; }
         .stmt .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
         .stmt .cust td { background: #f4f4f4; font-weight: 600; }
+        .stmt .case-block { break-inside: avoid; margin-top: 10px; }
+        .stmt .case-title { background: #e8e8e8; border: 1px solid #888; border-bottom: 0; padding: 5px 7px; font-weight: 700; }
+        .stmt .lifecycle { border: 1px solid #999; border-bottom: 0; padding: 5px 7px; font-size: 9.5px; background: #fafafa; }
+        .stmt .paid { background: #eaf6ec; }
+        .stmt .today { background: #e8eefc; font-weight: 700; }
+        .stmt .missed { background: #fdecec; }
         .stmt tfoot td { background: #eee; font-weight: 700; }
         /* A customer's rows are never split across a page break. */
         .stmt tbody tr { break-inside: avoid; }
@@ -78,16 +97,16 @@ export function AgentStatement({
         }
         @media screen {
           .stmt {
-            max-width: 210mm;
+            max-width: 297mm;
             margin: 0 auto;
-            padding: 14mm 12mm;
+            padding: 10mm;
             background: #fff;
             box-shadow: 0 2px 24px rgba(0,0,0,.18);
           }
         }
       `}</style>
 
-      <div className="no-print mx-auto flex max-w-[210mm] items-center justify-between gap-3 px-4 py-3">
+      <div className="no-print mx-auto flex max-w-[297mm] items-center justify-between gap-3 px-4 py-3">
         <p className="text-[0.8125rem] text-[var(--muted-fg)]">
           The print dialog opens by itself. Choose <strong>Save as PDF</strong> to get a file you
           can send.
@@ -150,6 +169,7 @@ export function AgentStatement({
             This agent has no customers on the register.
           </p>
         ) : (
+          <>
           <table>
             <thead>
               <tr>
@@ -215,6 +235,55 @@ export function AgentStatement({
               </tr>
             </tfoot>
           </table>
+
+          <h2 style={{ fontSize: 12, margin: '14px 0 4px', borderBottom: '1px solid #000', paddingBottom: 3 }}>
+            Detailed customer payment schedules
+          </h2>
+          {cases.map((c) => {
+            const plan = buildPlanRow(c, instalments, cal, today);
+            return (
+              <section className="case-block" key={`schedule-${c.caseId}`}>
+                <div className="case-title">
+                  {c.customerName} · A/c {c.accountNumber ?? '—'} · {c.caseNumber}
+                  {c.schemeName ? ` · ${c.schemeName}` : ''} · {money(BigInt(c.maturityAmountPaise))}
+                </div>
+                <div className="lifecycle">
+                  <strong>Maturity date:</strong> {c.instrumentMaturityOn ? formatDMY(c.instrumentMaturityOn) : '—'} ·{' '}
+                  <strong>Form submission:</strong> {c.formSubmittedOn ? formatDMY(c.formSubmittedOn) : '—'} ·{' '}
+                  <strong>Approval date:</strong> {c.approvedOn ? formatDMY(c.approvedOn) : '—'} ·{' '}
+                  <strong>Payment starts:</strong> {c.paymentOn ? formatDMY(c.paymentOn) : plan.days[0] ? formatDMY(plan.days[0].dueOn) : '—'} ·{' '}
+                  <strong>Final due:</strong> {c.deadlineOn ? formatDMY(c.deadlineOn) : plan.days.at(-1) ? formatDMY(plan.days.at(-1)!.dueOn) : '—'} ·{' '}
+                  <strong>Pattern:</strong> {plan.parts} parts, {plan.cadence === 'ALTERNATE' ? 'alternate days' : 'daily'}
+                </div>
+                {plan.error ? <p style={{ border: '1px solid #999', padding: 6 }}>{plan.error}</p> : (
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>#</th><th>Payment date</th><th className="num">Scheduled</th>
+                        <th className="num">Cash</th><th className="num">Online</th>
+                        <th className="num">Paid</th><th className="num">Remaining</th><th>State</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {plan.days.map((d) => (
+                        <tr key={`${c.caseId}-${d.seq}`} className={d.state === 'PAID' ? 'paid' : d.state === 'DUE_TODAY' ? 'today' : d.state === 'OVERDUE' ? 'missed' : ''}>
+                          <td>{d.seq}</td>
+                          <td>{formatDMY(d.dueOn)} · {weekdayShort(d.dueOn)}</td>
+                          <td className="num">{money(d.amountPaise)}</td>
+                          <td className="num">{money(d.cashPaise)}</td>
+                          <td className="num">{money(d.onlinePaise)}</td>
+                          <td className="num">{money(d.paidPaise)}</td>
+                          <td className="num">{money(d.amountPaise > d.paidPaise ? d.amountPaise - d.paidPaise : 0n)}</td>
+                          <td>{d.state === 'PAID' ? 'Given' : d.state === 'PARTIAL' ? 'Part given' : d.state === 'DUE_TODAY' ? 'Due today' : d.state === 'OVERDUE' ? 'Missed' : 'Upcoming'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </section>
+            );
+          })}
+          </>
         )}
 
         <p style={{ marginTop: 12, fontSize: 9, color: '#444' }}>

@@ -32,8 +32,8 @@ import {
   voidCashbookEntry,
 } from '@/services/cashbook-service';
 
-function refreshCashbook(): void {
-  revalidatePath('/cashbook');
+function refreshCashbook(includeCurrentPage = true): void {
+  if (includeCurrentPage) revalidatePath('/cashbook');
   revalidatePath('/dashboard');
   revalidatePath('/reports');
 }
@@ -148,6 +148,8 @@ export async function addCashbookEntryAction(input: {
   partyName?: string;
   reference?: string;
   note?: string;
+  /** Spreadsheet typing refreshes once after an idle pause instead of once per cell. */
+  deferPageRefresh?: boolean;
 }): Promise<ActionResult<{ id: string; version: number }>> {
   try {
     const { session, actor } = await requireActor();
@@ -161,7 +163,7 @@ export async function addCashbookEntryAction(input: {
       reference: input.reference,
       note: input.note,
     });
-    refreshCashbook();
+    refreshCashbook(!input.deferPageRefresh);
     return ok(result);
   } catch (error) {
     return toActionError(error);
@@ -176,6 +178,7 @@ export async function updateCashbookEntryAction(input: {
   partyName?: string;
   reference?: string;
   note?: string;
+  deferPageRefresh?: boolean;
 }): Promise<ActionResult<{ version: number }>> {
   try {
     const { session, actor } = await requireActor();
@@ -190,7 +193,7 @@ export async function updateCashbookEntryAction(input: {
       reference: input.reference,
       note: input.note,
     });
-    refreshCashbook();
+    refreshCashbook(!input.deferPageRefresh);
     return ok(result);
   } catch (error) {
     return toActionError(error);
@@ -200,6 +203,7 @@ export async function updateCashbookEntryAction(input: {
 export async function voidCashbookEntryAction(
   id: string,
   reason: string,
+  deferPageRefresh = false,
 ): Promise<ActionResult<{ version: number }>> {
   try {
     const { session, actor } = await requireActor();
@@ -207,7 +211,7 @@ export async function voidCashbookEntryAction(
     if (!resource) return fail('Cashbook entry not found.', 'NOT_FOUND');
     assertCan(actor, 'cashbook.edit', { branchId: resource.branchId });
     const result = await voidCashbookEntry(session, id, reason);
-    refreshCashbook();
+    refreshCashbook(!deferPageRefresh);
     return ok(result);
   } catch (error) {
     return toActionError(error);
@@ -223,6 +227,7 @@ export async function addCashbookCommitmentAction(input: {
   reference?: string;
   note?: string;
   dueOn?: string;
+  deferPageRefresh?: boolean;
 }): Promise<ActionResult<{ id: string; version: number }>> {
   try {
     const { session, actor } = await requireActor();
@@ -236,7 +241,7 @@ export async function addCashbookCommitmentAction(input: {
       note: input.note,
       dueOn: validDate(input.dueOn ?? '', true),
     });
-    refreshCashbook();
+    refreshCashbook(!input.deferPageRefresh);
     return ok(result);
   } catch (error) {
     return toActionError(error);
@@ -293,6 +298,7 @@ export async function setCashbookCommitmentSettledAction(
 export async function voidCashbookCommitmentAction(
   id: string,
   reason: string,
+  deferPageRefresh = false,
 ): Promise<ActionResult<{ version: number }>> {
   try {
     const { session, actor } = await requireActor();
@@ -300,7 +306,7 @@ export async function voidCashbookCommitmentAction(
     if (!resource) return fail('Named item not found.', 'NOT_FOUND');
     assertCan(actor, 'cashbook.edit', { branchId: resource.branchId });
     const result = await voidCashbookCommitment(session, id, reason);
-    refreshCashbook();
+    refreshCashbook(!deferPageRefresh);
     return ok(result);
   } catch (error) {
     return toActionError(error);

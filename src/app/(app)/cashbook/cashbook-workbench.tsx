@@ -52,7 +52,6 @@ import {
   type CashbookDayFigures,
   type CashbookCommitmentKind,
   type CashbookDenominationField,
-  type CashbookEntryChannel,
   type DailyCashbookTotals,
 } from '@/lib/daily-cashbook';
 import { formatPaise, paiseToDecimalString, tryParseRupeesToPaise } from '@/lib/money';
@@ -120,6 +119,7 @@ type MovementKey = MovementColumn['key'];
 type CommitmentColumn = (typeof COMMITMENT_COLUMNS)[number];
 type SheetColumn = (typeof SHEET_COLUMNS)[number];
 type SheetKey = SheetColumn['key'];
+type CellSelection = { anchor: string; focus: string };
 type NamedDrafts = Record<CashbookCommitmentKind, { partyName: string; amount: string }>;
 // 'cashFlow' now renders the note mix. The id is deliberately NOT renamed: it is the key
 // saved layouts are stored under in localStorage, and the restore guard drops any saved
@@ -165,7 +165,6 @@ const COMMITMENT_UI_META: Record<CashbookCommitmentKind, { label: string; shortL
 };
 
 const SHEET_ROWS = 20;
-const CHANNEL_CATEGORIES: ReadonlySet<MovementKey> = new Set(['newLoan', 'savings', 'renewal']);
 
 function sheetMoneyInput(paise: string): string {
   const amount = BigInt(paise);
@@ -240,6 +239,29 @@ function initialCellDrafts(view: View): Record<string, string> {
       });
   }
   return drafts;
+}
+
+function initialCellIds(view: View): Record<string, string> {
+  const ids: Record<string, string> = {};
+  for (const column of MOVEMENT_COLUMNS) {
+    view.entries.filter((row) => entryBelongs(row, column.key)).forEach((row, index) => {
+      ids[cellKey(column.key, index)] = row.id;
+    });
+  }
+  for (const column of COMMITMENT_COLUMNS) {
+    view.currentCommitments.filter((item) => item.kind === column.kind).forEach((item, index) => {
+      ids[cellKey(column.key, index)] = item.id;
+    });
+  }
+  return ids;
+}
+
+function cellPosition(key: string): { column: number; row: number } | null {
+  const separator = key.lastIndexOf(':');
+  const columnKey = key.slice(0, separator);
+  const row = Number(key.slice(separator + 1));
+  const column = SHEET_COLUMNS.findIndex((item) => item.key === columnKey);
+  return separator > 0 && column >= 0 && Number.isInteger(row) ? { column, row } : null;
 }
 
 function ShareMenu({ view, canExport }: { view: View; canExport: boolean }) {
@@ -336,8 +358,9 @@ export function CashbookWorkbench({
   const [pending, startTransition] = useTransition();
   const [figures, setFigures] = useState<FigureForm>(() => initialFigures(view));
   const [cellDrafts, setCellDrafts] = useState<Record<string, string>>(() => initialCellDrafts(view));
+  const [cellIds, setCellIds] = useState<Record<string, string>>(() => initialCellIds(view));
   const [savingCell, setSavingCell] = useState<string | null>(null);
-  const [receiptChannel, setReceiptChannel] = useState<CashbookEntryChannel>('CASH');
+  const [selection, setSelection] = useState<CellSelection | null>(null);
   const [activeNamedKind, setActiveNamedKind] = useState<CashbookCommitmentKind>('GIVEN_CASH');
   const [namedOpen, setNamedOpen] = useState(false);
   const [arranging, setArranging] = useState(false);
@@ -349,12 +372,18 @@ export function CashbookWorkbench({
   const [draggedToolbar, setDraggedToolbar] = useState<ToolbarId | null>(null);
   const activeCellRef = useRef<string | null>(null);
   const keyboardMoveRef = useRef(false);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gridDirtyRef = useRef(false);
   const [namedDrafts, setNamedDrafts] = useState<NamedDrafts>({
     GIVEN_CASH: { partyName: '', amount: '' },
     DUE_AMOUNT: { partyName: '', amount: '' },
     PENDING_WITHDRAWAL: { partyName: '', amount: '' },
   });
   const focusStorageKey = `mf-cashbook-focus:${view.branch.id}:${view.date}`;
+
+  useEffect(() => () => {
+    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+  }, []);
 
   useEffect(() => {
     let restoreTimer: ReturnType<typeof setTimeout> | undefined;
@@ -411,15 +440,6 @@ export function CashbookWorkbench({
     coinsPaise: liveMoney(figures.coins),
   }), [figures]);
 
-  const totals = useMemo(
-    () => calculateDailyCashbook(
-      view.entries.map((row) => ({ category: row.category, channel: row.channel, amountPaise: BigInt(row.amountPaise) })),
-      liveFigures,
-      view.currentCommitments.map((item) => ({ kind: item.kind, amountPaise: BigInt(item.amountPaise) })),
-    ),
-    [liveFigures, view.currentCommitments, view.entries],
-  );
-
   const columnEntries = useMemo(
     () => Object.fromEntries(
       MOVEMENT_COLUMNS.map((column) => [column.key, view.entries.filter((row) => entryBelongs(row, column.key))]),
@@ -434,6 +454,30 @@ export function CashbookWorkbench({
     [view.currentCommitments],
   );
 
+  const liveEntries = useMemo(() => MOVEMENT_COLUMNS.flatMap((column) => {
+    const entries = columnEntries[column.key];
+    return Array.from({ length: Math.max(SHEET_ROWS, entries.length + 1) }, (_, rowIndex) => {
+      const row = entries[rowIndex];
+      if (isDerivedProjection(row, column.key)) return null;
+      const amountPaise = tryParseRupeesToPaise((cellDrafts[cellKey(column.key, rowIndex)] ?? '').trim());
+      if (amountPaise === null || amountPaise <= 0n) return null;
+      return {
+        category: row?.category ?? column.category,
+        channel: row?.channel ?? column.channel,
+        amountPaise,
+      };
+    }).filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+  }), [cellDrafts, columnEntries]);
+
+  const totals = useMemo(
+    () => calculateDailyCashbook(
+      liveEntries,
+      liveFigures,
+      view.currentCommitments.map((item) => ({ kind: item.kind, amountPaise: BigInt(item.amountPaise) })),
+    ),
+    [liveEntries, liveFigures, view.currentCommitments],
+  );
+
   const visibleRows = Math.max(
     SHEET_ROWS,
     ...MOVEMENT_COLUMNS.map((column) => columnEntries[column.key].length + 1),
@@ -441,33 +485,33 @@ export function CashbookWorkbench({
   );
   const namedItems = view.outstandingCommitments.filter((item) => item.kind === activeNamedKind);
 
-  useEffect(() => {
-    function keepKeyboardInsideGrid(event: globalThis.KeyboardEvent) {
-      if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(event.key)) return;
-      const active = document.activeElement as HTMLElement | null;
-      if (active?.dataset.cashCell) return;
-      if (active && active !== document.body && active !== document.documentElement) return;
-      const stored = activeCellRef.current ?? sessionStorage.getItem(focusStorageKey);
-      if (!stored) return;
-      const [columnKey, rowText] = stored.split(':');
-      const columnIndex = SHEET_COLUMNS.findIndex((column) => column.key === columnKey);
-      const rowIndex = Number(rowText);
-      if (columnIndex < 0 || !Number.isInteger(rowIndex)) return;
-      event.preventDefault();
-      let nextColumn = columnIndex;
-      let nextRow = rowIndex;
-      if (event.key === 'ArrowUp') nextRow = Math.max(0, rowIndex - 1);
-      if (event.key === 'ArrowDown' || event.key === 'Enter') nextRow = Math.min(visibleRows - 1, rowIndex + 1);
-      if (event.key === 'ArrowLeft') nextColumn = Math.max(0, columnIndex - 1);
-      if (event.key === 'ArrowRight') nextColumn = Math.min(SHEET_COLUMNS.length - 1, columnIndex + 1);
-      const targetKey = `${SHEET_COLUMNS[nextColumn].key}:${nextRow}`;
-      activeCellRef.current = targetKey;
-      sessionStorage.setItem(focusStorageKey, targetKey);
-      requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-cash-cell="${targetKey}"]`)?.focus({ preventScroll: true }));
+  const selectedCells = useMemo(() => {
+    if (!selection) return new Set<string>();
+    const anchor = cellPosition(selection.anchor);
+    const focus = cellPosition(selection.focus);
+    if (!anchor || !focus) return new Set<string>();
+    const keys = new Set<string>();
+    for (let column = Math.min(anchor.column, focus.column); column <= Math.max(anchor.column, focus.column); column += 1) {
+      for (let row = Math.min(anchor.row, focus.row); row <= Math.max(anchor.row, focus.row); row += 1) {
+        keys.add(cellKey(SHEET_COLUMNS[column].key, row));
+      }
     }
-    window.addEventListener('keydown', keepKeyboardInsideGrid, true);
-    return () => window.removeEventListener('keydown', keepKeyboardInsideGrid, true);
-  }, [focusStorageKey, visibleRows]);
+    return keys;
+  }, [selection]);
+
+  const selectionStats = useMemo(() => {
+    let count = 0;
+    let sum = 0n;
+    for (const key of selectedCells) {
+      const value = (cellDrafts[key] ?? '').trim();
+      if (!value) continue;
+      const parsed = tryParseRupeesToPaise(value);
+      if (parsed === null) continue;
+      count += 1;
+      sum += parsed;
+    }
+    return { count, sum, average: count ? sum / BigInt(count) : 0n };
+  }, [cellDrafts, selectedCells]);
 
   function navigate(date: string, branchId = view.branch.id) {
     router.push(`/cashbook?branch=${encodeURIComponent(branchId)}&date=${encodeURIComponent(date)}`);
@@ -484,22 +528,42 @@ export function CashbookWorkbench({
     });
   }
 
+  function scheduleGridRefresh() {
+    gridDirtyRef.current = true;
+    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    refreshTimerRef.current = setTimeout(() => {
+      refreshTimerRef.current = null;
+      const active = document.activeElement as HTMLElement | null;
+      // Never replace the focused spreadsheet DOM while the clerk is still typing.
+      // Live totals already use the draft values; the server snapshot can wait until focus leaves.
+      if (active?.dataset.cashCell) return;
+      gridDirtyRef.current = false;
+      router.refresh();
+    }, 800);
+  }
+
   async function saveCell(column: MovementColumn, rowIndex: number): Promise<void> {
     if (!canMutate) return;
     const key = cellKey(column.key, rowIndex);
     const value = (cellDrafts[key] ?? '').trim();
-    const row = columnEntries[column.key][rowIndex];
+    const rowId = cellIds[key];
+    const row = view.entries.find((entry) => entry.id === rowId) ?? columnEntries[column.key][rowIndex];
     if (isDerivedProjection(row, column.key)) return;
     if (!value && !row) return;
     if (!value && row) {
       setSavingCell(key);
-      const result = await voidCashbookEntryAction(row.id, 'Cleared from cashbook sheet');
+      const result = await voidCashbookEntryAction(row.id, 'Cleared from cashbook sheet', true);
       setSavingCell(null);
       if (!result.ok) {
         setCellDrafts((old) => ({ ...old, [key]: sheetMoneyInput(row.amountPaise) }));
         toast.error(result.error ?? 'Could not clear the cell.');
       } else {
-        router.refresh();
+        setCellIds((old) => {
+          const next = { ...old };
+          delete next[key];
+          return next;
+        });
+        scheduleGridRefresh();
       }
       return;
     }
@@ -511,6 +575,7 @@ export function CashbookWorkbench({
     }
 
     setSavingCell(key);
+    let createdId: string | undefined;
     const result = row
       ? await updateCashbookEntryAction({
           id: row.id,
@@ -520,37 +585,51 @@ export function CashbookWorkbench({
           partyName: row.partyName ?? '',
           reference: row.reference ?? '',
           note: row.note ?? '',
+          deferPageRefresh: true,
         })
       : await addCashbookEntryAction({
           branchId: view.branch.id,
           date: view.date,
           category: column.category,
-          channel: CHANNEL_CATEGORIES.has(column.key) ? receiptChannel : column.channel,
+          channel: column.channel,
           amount: value,
           partyName: '',
           reference: '',
           note: '',
+          deferPageRefresh: true,
+        }).then((created) => {
+          if (created.ok) createdId = created.data.id;
+          return created;
         });
     setSavingCell(null);
     if (!result.ok) toast.error(result.error ?? 'Could not save the cell.');
-    else router.refresh();
+    else {
+      if (createdId) setCellIds((old) => ({ ...old, [key]: createdId! }));
+      scheduleGridRefresh();
+    }
   }
 
   async function saveCommitmentCell(column: CommitmentColumn, rowIndex: number): Promise<void> {
     if (!canMutate) return;
     const key = cellKey(column.key, rowIndex);
     const value = (cellDrafts[key] ?? '').trim();
-    const item = columnCommitments[column.key][rowIndex];
+    const itemId = cellIds[key];
+    const item = view.currentCommitments.find((entry) => entry.id === itemId) ?? columnCommitments[column.key][rowIndex];
     if (!value && !item) return;
     if (!value && item) {
       setSavingCell(key);
-      const result = await voidCashbookCommitmentAction(item.id, 'Cleared from cashbook sheet');
+      const result = await voidCashbookCommitmentAction(item.id, 'Cleared from cashbook sheet', true);
       setSavingCell(null);
       if (!result.ok) {
         setCellDrafts((old) => ({ ...old, [key]: sheetMoneyInput(item.amountPaise) }));
         toast.error(result.error ?? 'Could not clear the cell.');
       } else {
-        router.refresh();
+        setCellIds((old) => {
+          const next = { ...old };
+          delete next[key];
+          return next;
+        });
+        scheduleGridRefresh();
       }
       return;
     }
@@ -582,16 +661,18 @@ export function CashbookWorkbench({
       dueOn: '',
       reference: '',
       note: '',
+      deferPageRefresh: true,
     });
     setSavingCell(null);
     if (!result.ok) {
       toast.error(result.error ?? 'Could not save the named item.');
     } else {
-      router.refresh();
+      if (result.data?.id) setCellIds((old) => ({ ...old, [key]: result.data.id }));
+      scheduleGridRefresh();
     }
   }
 
-  function moveCell(columnIndex: number, rowIndex: number, key: string) {
+  function moveCell(columnIndex: number, rowIndex: number, key: string, extendSelection = false) {
     let nextColumn = columnIndex;
     let nextRow = rowIndex;
     if (key === 'ArrowUp') nextRow = Math.max(0, rowIndex - 1);
@@ -599,6 +680,9 @@ export function CashbookWorkbench({
     if (key === 'ArrowLeft') nextColumn = Math.max(0, columnIndex - 1);
     if (key === 'ArrowRight') nextColumn = Math.min(SHEET_COLUMNS.length - 1, columnIndex + 1);
     const targetKey = `${SHEET_COLUMNS[nextColumn].key}:${nextRow}`;
+    setSelection((current) => extendSelection
+      ? { anchor: current?.anchor ?? cellKey(SHEET_COLUMNS[columnIndex].key, rowIndex), focus: targetKey }
+      : { anchor: targetKey, focus: targetKey });
     activeCellRef.current = targetKey;
     keyboardMoveRef.current = true;
     sessionStorage.setItem(focusStorageKey, targetKey);
@@ -612,11 +696,21 @@ export function CashbookWorkbench({
   function rememberCellFocus(key: string) {
     activeCellRef.current = key;
     sessionStorage.setItem(focusStorageKey, key);
+    if (!keyboardMoveRef.current) setSelection({ anchor: key, focus: key });
   }
 
   function clearGridFocus() {
     activeCellRef.current = null;
+    setSelection(null);
     sessionStorage.removeItem(focusStorageKey);
+    if (gridDirtyRef.current) {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = setTimeout(() => {
+        refreshTimerRef.current = null;
+        gridDirtyRef.current = false;
+        router.refresh();
+      }, 100);
+    }
   }
 
   function handleCellBlur(nextTarget: EventTarget | null) {
@@ -634,7 +728,7 @@ export function CashbookWorkbench({
   ) {
     if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(event.key)) return;
     event.preventDefault();
-    moveCell(columnIndex, rowIndex, event.key);
+    moveCell(columnIndex, rowIndex, event.key, event.shiftKey && event.key !== 'Enter');
   }
 
   function saveFigures(event: FormEvent) {
@@ -853,7 +947,7 @@ export function CashbookWorkbench({
   return (
     <div className="mx-auto w-full max-w-[1600px] space-y-3 pb-6" onPointerDownCapture={(event) => { if (event.target instanceof Element && !event.target.closest('[data-cash-cell]')) clearGridFocus(); }}>
       <h1 className="sr-only">Daily cashbook — {view.branch.name}</h1>
-      <Glass className="overflow-visible" style={{ zIndex: 40 }}>
+      <Glass className="overflow-visible" style={{ zIndex: 20 }}>
         <div className="flex flex-wrap items-center gap-1 px-2 py-1.5">
           {toolbarItem('date', 'date', <div className="flex h-9 w-full items-center gap-0.5 rounded-[9px] border bg-[var(--input-bg)] px-0.5"><Button type="button" size="icon" variant="ghost" className="h-8 w-6" onClick={() => navigate(addDays(view.date, -1))} aria-label="Previous day"><ArrowLeft className="h-3.5 w-3.5" /></Button><Input type="date" value={view.date} onChange={(event) => navigate(event.target.value)} aria-label="Cashbook date" className="h-8 min-w-0 flex-1 border-0 bg-transparent px-0.5 py-0 text-[0.8rem] font-semibold" /><Button type="button" size="icon" variant="ghost" className="h-8 w-6" onClick={() => navigate(addDays(view.date, 1))} aria-label="Next day"><ArrowRight className="h-3.5 w-3.5" /></Button></div>)}
           {toolbarItem('branch', 'branch', <Select value={view.branch.id} onChange={(event) => navigate(view.date, event.target.value)} aria-label="Branch" className="h-9 w-full min-w-0 py-0 text-[0.8rem] font-semibold">{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.code} — {branch.name}</option>)}</Select>)}
@@ -878,27 +972,12 @@ export function CashbookWorkbench({
           onDrop={() => movePanel('ledger')}
         >
         <Glass className="flex h-full min-w-0 flex-col overflow-hidden">
-          <div className="flex shrink-0 flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex shrink-0 items-center border-b px-4 py-3">
             <div className="flex items-start gap-1.5">
               {panelDragHandle('ledger', 'movements sheet')}
               <div>
               <h2 className="text-[0.95rem] font-semibold tracking-[-0.01em]">Today’s movements</h2>
               <p className="text-[0.72rem] text-[var(--muted-fg)]">Enter saves and moves down · arrows move between cells · Backspace or Delete clears a cell.</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[0.72rem] font-medium text-[var(--muted-fg)]">New Loan, Savings & Renewal:</span>
-              <div className="inline-flex rounded-[11px] border bg-[var(--input-bg)] p-0.5">
-                {(['CASH', 'ACCOUNT'] as const).map((channel) => (
-                  <button
-                    key={channel}
-                    type="button"
-                    onClick={() => setReceiptChannel(channel)}
-                    className={cn('rounded-[8px] px-2 py-1 text-[0.7rem] font-semibold', receiptChannel === channel ? 'bg-[var(--color-brand-600)] text-white' : 'text-[var(--muted-fg)]')}
-                  >
-                    {channel === 'CASH' ? 'Cash' : 'By account'}
-                  </button>
-                ))}
               </div>
             </div>
           </div>
@@ -911,7 +990,7 @@ export function CashbookWorkbench({
                 return (
                   <section key={column.key} className="flex min-h-full min-w-0 flex-col overflow-hidden border-r border-[var(--input-border)] last:border-r-0">
                     <div className="sticky top-0 z-10 flex h-12 min-w-0 shrink-0 items-center justify-center overflow-hidden border-b border-[var(--input-border)] px-1 text-center text-[0.67rem] font-bold leading-[1.08] tracking-[0.005em] text-[var(--page-fg)]" style={{ background: column.head, boxShadow: `inset 0 3px 0 ${column.accent}` }}>
-                      <span className="min-w-0 break-words">{column.label}{!commitmentColumn && CHANNEL_CATEGORIES.has(column.key as MovementKey) && <small className="mt-1 block text-[0.58rem] font-semibold opacity-75">{receiptChannel === 'CASH' ? 'CASH' : 'ACCOUNT'}</small>}</span>
+                      <span className="min-w-0 break-words">{column.label}</span>
                     </div>
                     {Array.from({ length: visibleRows }, (_, rowIndex) => {
                       const row = entries[rowIndex];
@@ -919,7 +998,7 @@ export function CashbookWorkbench({
                       const derived = !commitmentColumn && isDerivedProjection(row as EntryRow | undefined, column.key);
                       if (derived) {
                         return (
-                          <div key={key} data-cash-cell={key} tabIndex={0} onFocus={() => rememberCellFocus(key)} onBlur={(event) => handleCellBlur(event.relatedTarget)} onKeyDown={(event) => handleCellKeyDown(event, columnIndex, rowIndex)} className="flex min-h-8 flex-1 items-center justify-end border-b border-[var(--input-border)] bg-[var(--glass-bg-subtle)] px-2 text-[0.78rem] font-semibold tabular-nums text-[var(--muted-fg)] outline-none focus:relative focus:z-10 focus:ring-2 focus:ring-inset focus:ring-[var(--color-brand-500)]" title={`Derived from ${(row as EntryRow).category.toLowerCase().replaceAll('_', ' ')}`}>
+                          <div key={key} data-cash-cell={key} tabIndex={0} onFocus={() => rememberCellFocus(key)} onBlur={(event) => handleCellBlur(event.relatedTarget)} onKeyDown={(event) => handleCellKeyDown(event, columnIndex, rowIndex)} className={cn("flex min-h-8 flex-1 items-center justify-end border-b border-[var(--input-border)] bg-[var(--glass-bg-subtle)] px-2 text-[0.78rem] font-semibold tabular-nums text-[var(--muted-fg)] outline-none focus:relative focus:z-10 focus:ring-2 focus:ring-inset focus:ring-[var(--color-brand-500)]", selectedCells.has(key) && 'bg-[var(--color-brand-50)] text-[var(--color-brand-700)] ring-1 ring-inset ring-[var(--color-brand-400)]')} title={`Derived from ${(row as EntryRow).category.toLowerCase().replaceAll('_', ' ')}`}>
                             {row ? formatPaise(BigInt(row.amountPaise), { symbol: false, decimals: false }) : ''}
                           </div>
                         );
@@ -943,6 +1022,7 @@ export function CashbookWorkbench({
                           className={cn(
                             'min-h-8 w-full flex-1 border-0 border-b border-[var(--input-border)] bg-[var(--surface-solid)] px-2 text-right text-[0.78rem] font-semibold tabular-nums text-[var(--page-fg)] outline-none transition-colors',
                             'focus:relative focus:z-10 focus:bg-[var(--color-brand-50)] focus:text-[var(--color-brand-700)] focus:ring-2 focus:ring-inset focus:ring-[var(--color-brand-500)]',
+                            selectedCells.has(key) && 'bg-[var(--color-brand-50)] text-[var(--color-brand-700)] ring-1 ring-inset ring-[var(--color-brand-400)]',
                             savingCell === key && 'bg-[var(--color-brand-50)]',
                           )}
                         />
@@ -952,6 +1032,16 @@ export function CashbookWorkbench({
                 );
               })}
             </div>
+          </div>
+          <div className="flex h-7 shrink-0 items-center justify-end gap-3 border-t bg-[var(--surface-solid)] px-3 text-[0.68rem] font-semibold tabular-nums text-[var(--muted-fg)]" data-cashbook-selection-summary>
+            {selectedCells.size > 1 ? (
+              <>
+                <span>{selectedCells.size} cells selected</span>
+                <span>Count <strong className="text-[var(--page-fg)]">{selectionStats.count}</strong></span>
+                <span>Sum <strong className="text-[var(--page-fg)]">{formatPaise(selectionStats.sum, { decimals: false })}</strong></span>
+                <span>Average <strong className="text-[var(--page-fg)]">{formatPaise(selectionStats.average, { decimals: false })}</strong></span>
+              </>
+            ) : <span className="font-medium text-[var(--faint-fg)]">Shift + Arrow keys selects a range</span>}
           </div>
         </Glass>
         {panelResizeHandle('ledger', 'movements sheet')}

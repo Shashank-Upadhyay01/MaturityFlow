@@ -6,7 +6,7 @@
  * Captures desktop light/dark and mobile views, checks for browser errors/overflow, and proves
  * the authenticated CSV/PNG endpoints answer without changing the book.
  */
-/* global document */
+/* global document, window, getComputedStyle */
 import { mkdirSync, existsSync, writeFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 
@@ -45,6 +45,33 @@ async function check(name, viewport, dark = false) {
   else await page.evaluate(() => document.documentElement.classList.remove('dark'));
   await page.waitForTimeout(700);
 
+  let spreadsheet = null;
+  let stacking = null;
+  if (name === 'desktop-light') {
+    const cells = page.locator('[data-cash-cell]');
+    await cells.first().focus();
+    await page.keyboard.press('Shift+ArrowDown');
+    await page.keyboard.press('Shift+ArrowDown');
+    spreadsheet = {
+      channelToggleRemoved: !(await page.getByText('New Loan, Savings & Renewal:', { exact: true }).count()),
+      selectionSummary: await page.locator('[data-cashbook-selection-summary]').innerText(),
+      focusedCell: await page.evaluate(() => document.activeElement?.getAttribute('data-cash-cell')),
+    };
+    await page.evaluate(() => window.scrollTo(0, 500));
+    await page.getByRole('button', { name: /^Daily work/ }).click();
+    const menuLink = page.locator('nav').getByRole('link', { name: /^Register/ });
+    const [headerBox, menuBox] = await Promise.all([
+      page.getByRole('banner').boundingBox(),
+      menuLink.boundingBox(),
+    ]);
+    stacking = {
+      menuVisible: await menuLink.isVisible(),
+      menuBelowHeader: Boolean(headerBox && menuBox && menuBox.y >= headerBox.y),
+      headerZ: await page.getByRole('banner').evaluate((el) => getComputedStyle(el).zIndex),
+      toolbarZ: await page.locator('[data-cashbook-grid]').evaluate((el) => getComputedStyle(el.previousElementSibling).zIndex),
+    };
+  }
+
   const branchId = await page.locator('select').first().inputValue();
   const date = await page.locator('input[type="date"]').first().inputValue();
   const layout = await page.evaluate(() => ({
@@ -76,7 +103,7 @@ async function check(name, viewport, dark = false) {
   }
 
   await context.close();
-  return { name, layout, endpoints, errors };
+  return { name, layout, spreadsheet, stacking, endpoints, errors };
 }
 
 const results = [];
