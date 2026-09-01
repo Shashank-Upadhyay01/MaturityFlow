@@ -28,6 +28,7 @@ import { getCaseDetail } from '@/services/queries';
 import { CaseActions } from './case-actions';
 import { CaseDocuments } from './case-documents';
 import { PaymentRows } from './payment-rows';
+import { PrintCaseButton } from './print-case-button';
 import { CaseTimeline } from './case-timeline';
 import { ScheduleAdjust } from './schedule-adjust';
 import { WindowReplan } from './window-replan';
@@ -83,17 +84,20 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           }
           description={`${detail.customer.name}${detail.customer.phone ? ` · ${detail.customer.phone}` : ''} · agent ${detail.agent.name}`}
           actions={
-            <CaseActions
-              caseId={c.id}
-              status={c.status}
-              hasPayments={paid > 0n}
-              permissions={{
-                hold: roleCan(session.role, 'case.hold'),
-                cancel: roleCan(session.role, 'case.cancel'),
-                reschedule: roleCan(session.role, 'schedule.reschedule'),
-                submit: roleCan(session.role, 'case.submit'),
-              }}
-            />
+            <div className="flex flex-wrap items-center gap-2 print:hidden">
+              <PrintCaseButton />
+              <CaseActions
+                caseId={c.id}
+                status={c.status}
+                hasPayments={paid > 0n}
+                permissions={{
+                  hold: roleCan(session.role, 'case.hold'),
+                  cancel: roleCan(session.role, 'case.cancel'),
+                  reschedule: roleCan(session.role, 'schedule.reschedule'),
+                  submit: roleCan(session.role, 'case.submit'),
+                }}
+              />
+            </div>
           }
         />
       </div>

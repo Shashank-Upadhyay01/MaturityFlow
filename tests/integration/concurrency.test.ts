@@ -33,6 +33,7 @@ import {
   markInstalmentMissed,
   markInstalmentTaken,
   recordPayout,
+  replaceInstalmentPayout,
 } from '@/services/payout-service';
 import { todayISO } from '@/lib/working-days';
 
@@ -287,6 +288,39 @@ describe('Register Taken / Not taken', () => {
 
     await markInstalmentMissed(cashierA, inst.id, { clear: true });
     expect((await firstInstalment(caseId)).status).toBe('PENDING');
+  });
+
+  it('edits spreadsheet payment cells by reversing and replacing the live ledger row', async () => {
+    const caseId = await makeApprovedCase('100000');
+    const inst = await firstInstalment(caseId);
+    await db.update(payoutInstalments).set({ dueOn: todayISO() }).where(eq(payoutInstalments.id, inst.id));
+
+    await recordPayout(cashierA, {
+      instalmentId: inst.id,
+      cashPaise: rupees('4000'),
+      onlinePaise: rupees('1000'),
+      reference: 'UTR-ORIGINAL',
+    });
+    await replaceInstalmentPayout(cashierA, {
+      instalmentId: inst.id,
+      cashPaise: rupees('2500'),
+      onlinePaise: rupees('500'),
+      reference: 'UTR-CORRECTED',
+      reason: 'Counter entry correction',
+    });
+
+    const transactions = await db
+      .select()
+      .from(payoutTransactions)
+      .where(eq(payoutTransactions.instalmentId, inst.id));
+    expect(transactions).toHaveLength(2);
+    expect(transactions.filter((row) => row.reversedAt === null)).toHaveLength(1);
+    expect(transactions.find((row) => row.reversedAt === null)?.totalPaise).toBe(rupees('3000'));
+    const after = await firstInstalment(caseId);
+    const c = await caseRow(caseId);
+    expect(after.paidCashPaise).toBe(rupees('2500'));
+    expect(after.paidOnlinePaise).toBe(rupees('500'));
+    expect(c.paidCashPaise + c.paidOnlinePaise).toBe(rupees('3000'));
   });
 });
 

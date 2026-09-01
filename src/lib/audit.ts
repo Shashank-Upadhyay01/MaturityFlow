@@ -33,6 +33,7 @@ export type AuditAction =
   | 'schedule.rescheduled'
   | 'payout.recorded'
   | 'payout.reversed'
+  | 'payout.corrected'
   | 'payout.missed'
   | 'payout.missed_cleared'
   | 'cash.opening_set'
@@ -139,6 +140,7 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'schedule.rescheduled': 'Rescheduled',
   'payout.recorded': 'Payout recorded',
   'payout.reversed': 'Payout reversed',
+  'payout.corrected': 'Payout corrected',
   'payout.missed': 'Marked not paid',
   'payout.missed_cleared': 'Not-paid mark cleared',
   'cash.opening_set': 'Cash opening set',

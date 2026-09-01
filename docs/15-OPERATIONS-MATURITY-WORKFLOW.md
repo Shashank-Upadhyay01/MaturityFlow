@@ -53,3 +53,24 @@ The idempotent, audited repair is `scripts/backfill-august-operations-dates.ts`.
 Admin retains every application permission and receives direct links to Register, Import, Audit,
 and Settings from the Maturities workbench. “Deep control” never means unaudited raw database
 writes or arbitrary table creation; money invariants and row-lock order remain mandatory.
+
+## Spreadsheet editing contract
+
+Both Register and Maturities use flat Excel-style grids: one continuous border system, square
+cells, and a blue inset outline for the active cell. Arrow keys move within the grid without
+scrolling the page, Enter moves down, and Backspace/Delete edit the selected cell. Money cells
+accept whole rupees only.
+
+The visible **Due Payment** is the live instalment for the selected working day; it is not the
+case's total remaining balance. Editing Due Payment or Recommended Payment uses
+`setInstalmentAmountAction`, which keeps settled days fixed and rebalances later unpaid days.
+Editing Paid Today, Paid in Cash, or Paid Online calls `replaceInstalmentPayout`: existing live
+transactions for that instalment and value date are reversed, retained in the ledger, and
+replaced by one corrected transaction inside a case-first locked transaction with an audit row.
+An online value always requires a UTR and changing an existing payment requires a reason.
+
+The Operations admin toolbar can add a row and show/hide columns. The Register retains its saved
+column-order tool. The former saved default (Remaining Amount visible and Due Payment hidden) is
+automatically upgraded to the corrected counter layout. Case detail has a **Print full details**
+control; the print contains maturity, form submission, Operations approval and payment dates as
+well as the complete money, schedule, document, payment and timeline information.

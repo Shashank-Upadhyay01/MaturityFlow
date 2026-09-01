@@ -74,6 +74,7 @@ export default async function MaturitiesPage() {
             withdrawalsToday={desk.withdrawalsToday}
             paidTodayPaise={desk.paidTodayPaise.toString()}
             canEdit={canType}
+            canSchedule={canOnSheet('schedule.override')}
             canPay={canOnSheet('payout.record')}
             canSubmit={canOnSheet('case.submit')}
             canImport={canOnSheet('data.import') && !compiledView}

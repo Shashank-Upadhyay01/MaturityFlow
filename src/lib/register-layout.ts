@@ -68,11 +68,11 @@ export interface RegisterColDef {
 
 export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
   account: {
-    id: 'account', label: 'A/c no.', excel: 'Savings Account Number', w: 'w-[5.5rem]', priority: 3,
+    id: 'account', label: 'Account number', excel: 'Savings Account Number', w: 'w-[5.5rem]', priority: 3,
     hint: 'The customer\u2019s savings account number \u2014 what the payout is checked against.',
   },
   customer: {
-    id: 'customer', label: 'Customer', excel: 'Customer Name', required: true, w: 'w-[8.2rem]', priority: 1,
+    id: 'customer', label: 'Customer name', excel: 'Customer Name', required: true, w: 'w-[8.2rem]', priority: 1,
     hint: 'Who the money belongs to. Never dropped, however narrow the screen.',
   },
   maturityDate: {
@@ -84,11 +84,11 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
     hint: 'The day the agent handed the form in. A record, not a deadline \u2014 it does not move the schedule.',
   },
   paymentDate: {
-    id: 'paymentDate', label: 'Payment', excel: 'Payment Date', w: 'w-[5.2rem]', priority: 1,
+    id: 'paymentDate', label: 'Payment date', excel: 'Payment Date', w: 'w-[5.2rem]', priority: 1,
     hint: 'The first day of this case\u2019s payout window.',
   },
   amount: {
-    id: 'amount', label: 'Amount', excel: 'Maturity Amount', right: true, required: true, w: 'w-[5.2rem]', priority: 1,
+    id: 'amount', label: 'Maturity amount', excel: 'Maturity Amount', right: true, required: true, w: 'w-[5.2rem]', priority: 1,
     hint: 'The full maturity amount owed to the customer.',
   },
   paid: {
@@ -96,11 +96,11 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
     hint: 'How much has gone out so far, cash and online together.',
   },
   remaining: {
-    id: 'remaining', label: 'Due payment', excel: 'Remaining Amount', right: true, required: true, w: 'w-[5.4rem]', priority: 1,
+    id: 'remaining', label: 'Remaining', excel: 'Remaining Amount', right: true, w: 'w-[5.4rem]', priority: 2,
     hint: 'Amount minus paid \u2014 what the bank still owes this customer.',
   },
   agent: {
-    id: 'agent', label: 'Agent', excel: "Customer's Agent Name", w: 'w-[6.5rem]', priority: 1,
+    id: 'agent', label: 'Agent name', excel: "Customer's Agent Name", w: 'w-[6.5rem]', priority: 1,
     hint: 'The agent who brought this customer in.',
   },
   days: {
@@ -108,12 +108,12 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
     hint: 'The TOTAL window in working days \u2014 15 means 3 processing days plus 12 that pay.',
   },
   perDay: {
-    id: 'perDay', label: 'Recommended', excel: 'Recommended Payment', right: true, w: 'w-[6rem]', priority: 1,
+    id: 'perDay', label: 'Recommended payment', excel: 'Recommended Payment', right: true, w: 'w-[7rem]', priority: 1,
     hint: 'Remaining spread over the days that actually pay \u2014 not over the whole window.',
   },
   today: {
-    id: 'today', label: 'Due today', excel: 'Due Payment', right: true, w: 'w-[5.3rem]', priority: 1,
-    hint: 'What the schedule plans to hand over today. Read-only once a case is scheduled \u2014 change it on the Plan board.',
+    id: 'today', label: 'Due payment', excel: 'Due Payment', right: true, required: true, w: 'w-[5.7rem]', priority: 1,
+    hint: 'What the schedule plans to hand over today. Admins can edit it directly; later unpaid days are re-balanced automatically.',
   },
   cash: {
     id: 'cash', label: 'Cash', excel: 'Today Cash', right: true, w: 'w-[5.25rem]', priority: 3,
@@ -128,7 +128,7 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
     hint: 'The amount actually recorded today, cash and online together.',
   },
   paidCashToday: {
-    id: 'paidCashToday', label: 'Paid cash', excel: 'Paid in Cash', right: true, w: 'w-[5rem]', priority: 2,
+    id: 'paidCashToday', label: 'Paid in cash', excel: 'Paid in Cash', right: true, w: 'w-[5rem]', priority: 2,
     hint: 'Cash actually handed over today.',
   },
   paidOnlineToday: {
@@ -144,11 +144,11 @@ export interface RegisterLayout {
 
 export const DEFAULT_REGISTER_LAYOUT: RegisterLayout = {
   order: [
-    'account', 'customer', 'agent', 'amount', 'paymentDate', 'remaining', 'perDay',
+    'account', 'customer', 'agent', 'amount', 'paymentDate', 'today', 'perDay',
     'paidToday', 'paidCashToday', 'paidOnlineToday',
-    'today', 'paid', 'cash', 'online', 'days', 'formDate', 'maturityDate',
+    'remaining', 'paid', 'cash', 'online', 'days', 'formDate', 'maturityDate',
   ],
-  hidden: ['today', 'paid', 'cash', 'online', 'days', 'formDate', 'maturityDate'],
+  hidden: ['remaining', 'paid', 'cash', 'online', 'days', 'formDate', 'maturityDate'],
 };
 
 const ID_SET = new Set<string>(REGISTER_COL_IDS);
@@ -161,6 +161,16 @@ export function parseRegisterLayout(raw: unknown): RegisterLayout {
   const hideSet = new Set(
     Array.isArray(o.hidden) ? o.hidden.filter((x): x is string => typeof x === 'string') : [],
   );
+
+  // Upgrade the former default, where "Due payment" meant total remaining and the actual
+  // scheduled day was hidden. Saved custom layouts still work; only that exact legacy shape is
+  // promoted to the corrected sheet requested for the counter.
+  if (hideSet.has('today') && !hideSet.has('remaining')) {
+    return {
+      order: [...DEFAULT_REGISTER_LAYOUT.order],
+      hidden: [...DEFAULT_REGISTER_LAYOUT.hidden],
+    };
+  }
 
   const take = (id: string) => {
     if (!ID_SET.has(id) || seen.has(id)) return;

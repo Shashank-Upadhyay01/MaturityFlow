@@ -1,10 +1,11 @@
 import { redirect } from 'next/navigation';
 
 import { getSession, toActor } from '@/lib/auth/session';
+import { isAzamgarhHeadBranch } from '@/lib/branch-routing';
 import { recommendedPerDay } from '@/lib/register-view';
 import { roleCan } from '@/lib/rbac';
 import { addDays, toISODateString, todayISO } from '@/lib/working-days';
-import { listRegister } from '@/services/queries';
+import { getFormOptions, listRegister } from '@/services/queries';
 import { OperationsGrid } from './operations-grid';
 
 export const metadata = { title: 'Maturities' };
@@ -16,7 +17,8 @@ export default async function MaturityOperationsPage() {
   const actor = toActor(session);
   if (!roleCan(session.role, 'case.approve')) redirect('/dashboard');
   const today = todayISO();
-  const rows = await listRegister(actor, today);
+  const [rows, options] = await Promise.all([listRegister(actor, today), getFormOptions(actor)]);
+  const headBranch = options.branches.find(isAzamgarhHeadBranch) ?? options.branches[0] ?? null;
 
   return (
     <div className="space-y-3">
@@ -27,8 +29,10 @@ export default async function MaturityOperationsPage() {
       </div>
       <OperationsGrid
         canEdit={roleCan(session.role, 'case.approve')}
+        canSchedule={roleCan(session.role, 'schedule.override')}
         canPay={roleCan(session.role, 'payout.record')}
         isAdmin={session.role === 'ADMIN' || session.role === 'OPS_HEAD'}
+        addRowBranchId={headBranch?.id ?? null}
         rows={rows.map((row) => {
           const paid = row.paidCashPaise + row.paidOnlinePaise;
           const remaining = row.maturityAmountPaise - paid;

@@ -92,6 +92,7 @@ export async function saveRegisterRowAction(
 function revalidateCase(id?: string) {
   revalidatePath('/dashboard');
   revalidatePath('/maturities');
+  revalidatePath('/maturity-operations');
   revalidatePath('/payouts');
   revalidatePath('/cash-planner');
   if (id) revalidatePath(`/maturities/${id}`);

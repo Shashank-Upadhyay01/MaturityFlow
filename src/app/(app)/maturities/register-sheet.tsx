@@ -27,6 +27,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { saveRegisterLayoutAction } from '@/actions/admin';
+import { setInstalmentAmountAction } from '@/actions/cases';
 import { importRegisterAction } from '@/actions/import';
 import {
   createRegisterRowWithFieldsAction,
@@ -41,6 +42,7 @@ import {
   requestCloseDayAction,
   saveDayCashAction,
   saveRegisterFieldsAction,
+  setTodayPaidSplitAction,
 } from '@/actions/register';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/field';
@@ -149,11 +151,11 @@ function rupeesStr(p: bigint) {
 }
 
 const th =
-  'px-0.5 py-1.5 text-left text-[0.62rem] font-semibold uppercase tracking-[0.04em] text-[var(--faint-fg)] whitespace-nowrap';
-const td = 'px-0.5 py-0.5 align-middle';
+  'border border-[var(--hairline)] bg-[var(--surface-solid)] px-1 py-1.5 text-left text-[0.62rem] font-bold uppercase leading-tight tracking-[0.03em] text-[var(--muted-fg)]';
+const td = 'border border-[var(--hairline)] p-0 align-middle';
 const num = 'text-right tabular-nums';
 const cell =
-  'box-border h-7 w-full min-w-0 rounded-[6px] border border-[var(--input-border)] bg-[var(--input-bg)] px-0.5 text-[0.7rem] leading-none text-[var(--page-fg)] outline-none focus:border-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60';
+  'box-border h-8 w-full min-w-0 rounded-none border-0 bg-transparent px-1 text-[0.7rem] leading-none text-[var(--page-fg)] outline-none focus:bg-[var(--input-bg)] focus:shadow-[inset_0_0_0_2px_var(--ring)] disabled:cursor-default disabled:opacity-60';
 
 function SortTh({
   label,
@@ -188,7 +190,7 @@ function SortTh({
         type="button"
         onClick={() => onSort(col)}
         className={cn(
-          'inline-flex items-center gap-1 hover:text-[var(--page-fg)]',
+          'inline-flex items-center gap-1 whitespace-normal leading-tight hover:text-[var(--page-fg)]',
           right && 'w-full justify-end',
           active && 'text-[var(--page-fg)]',
         )}
@@ -242,7 +244,8 @@ function CellInput({
       data-register-row={rowKey}
       data-register-column={cellKey}
       value={!focused && group ? groupIndian(value) : value}
-      onFocus={() => setFocused(true)}
+      onFocus={(e) => { setFocused(true); e.currentTarget.select(); }}
+      onClick={(e) => e.currentTarget.select()}
       onChange={(e) => onChange(e.target.value)}
       onBlur={(e) => {
         setFocused(false);
@@ -255,6 +258,7 @@ function CellInput({
         // Arrow keys belong to the spreadsheet while a cell has focus. Even at an edge there is
         // nowhere for the page to scroll to and no reason to drop the cell selection.
         e.preventDefault();
+        e.stopPropagation();
 
         const current = e.currentTarget;
         const table = current.closest('table');
@@ -270,7 +274,8 @@ function CellInput({
         const delta = direction === 'ArrowUp' || direction === 'ArrowLeft' ? -1 : 1;
         const next = peers[at + delta];
         if (!next) return;
-        next.focus();
+        next.focus({ preventScroll: true });
+        next.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         next.select();
       }}
     />
@@ -884,6 +889,7 @@ export function RegisterSheet(props: {
   withdrawalsToday: number;
   paidTodayPaise: string;
   canEdit: boolean;
+  canSchedule: boolean;
   canPay: boolean;
   canSubmit: boolean;
   canImport: boolean;
@@ -1361,6 +1367,51 @@ export function RegisterSheet(props: {
       }
       router.refresh();
     }
+  }
+
+  function rememberGridFocus() {
+    const active = document.activeElement as HTMLInputElement | null;
+    if (active?.dataset.registerRow && active.dataset.registerColumn) {
+      restoreFocusRef.current = {
+        row: active.dataset.registerRow,
+        column: active.dataset.registerColumn,
+      };
+    }
+  }
+
+  async function savePlannedAmount(row: RegisterRow, amountRupees: string) {
+    if (!row.todayInstalmentId) {
+      toast.error('This row has no scheduled payment for today. Change its Payment Date first.');
+      return;
+    }
+    const result = await setInstalmentAmountAction(row.id, row.todayInstalmentId, amountRupees || '0');
+    if (!result.ok) toast.error(result.error);
+    else { rememberGridFocus(); router.refresh(); }
+  }
+
+  async function savePaidSplit(row: RegisterRow, cashRupees: bigint, onlineRupees: bigint) {
+    if (!row.todayInstalmentId) {
+      toast.error('This row has no scheduled payment for today.');
+      return;
+    }
+    const reference = onlineRupees > 0n
+      ? window.prompt('Enter UTR / transfer reference for the online amount:')
+      : null;
+    if (onlineRupees > 0n && !reference?.trim()) return;
+    const replacing = BigInt(row.paidTodayActualPaise) > 0n;
+    const reason = replacing
+      ? window.prompt('Reason for correcting the recorded payment:', 'Spreadsheet correction')
+      : 'Spreadsheet entry';
+    if (replacing && !reason?.trim()) return;
+    const result = await setTodayPaidSplitAction(
+      row.todayInstalmentId,
+      cashRupees.toString(),
+      onlineRupees.toString(),
+      reference?.trim() || null,
+      reason?.trim() || null,
+    );
+    if (!result.ok) toast.error(result.error);
+    else { rememberGridFocus(); router.refresh(); }
   }
 
   /**
@@ -2649,17 +2700,17 @@ export function RegisterSheet(props: {
         </Glass>
       )}
 
-      <Glass className="overflow-hidden">
+      <div className="overflow-hidden border border-[var(--hairline)] bg-[var(--surface-solid)]">
         {/*
           No `min-w` and no horizontal scroll: `columnsThatFit` has already chosen a set of
           columns that fits the measured width, and anything it could not fit is one click away
           in the row expander. A sheet that scrolls sideways loses the customer's name off the
           left edge exactly when the clerk is reading the cash figure.
         */}
-        <div ref={gridRef} className="min-h-[18rem] max-h-[min(66vh,46rem)] overflow-y-auto overflow-x-hidden">
+        <div ref={gridRef} className="min-h-[18rem] max-h-[min(66vh,46rem)] overflow-y-auto overflow-x-hidden overscroll-contain">
           <table className="w-full table-fixed border-collapse text-[0.7rem]">
-            <thead className="sticky top-0 z-10 bg-[var(--glass-bg-strong)] backdrop-blur-md">
-              <tr className="border-b border-[var(--hairline)]">
+            <thead className="sticky top-0 z-10 bg-[var(--surface-solid)]">
+              <tr>
                 <th className={cn(th, 'w-7 print:hidden')}>
                   <TriCheckbox
                     checked={allVisibleSelected}
@@ -2685,7 +2736,6 @@ export function RegisterSheet(props: {
                     className={c.w}
                   />
                 ))}
-                {hasExtras && <th className={cn(th, 'w-9 print:hidden')} aria-label="More columns" />}
                 {/*
                   Not "Given" — the question is whether the customer came, not how it was handed
                   over. Rendered for every role, including the ones that cannot answer it: this
@@ -2694,6 +2744,7 @@ export function RegisterSheet(props: {
                 */}
                 <th className={cn(th, 'w-16 text-center text-[var(--row-taken-fg)] print:hidden')}>Taken</th>
                 <th className={cn(th, 'w-16 text-center text-[var(--row-missed-fg)] print:hidden')}>Not taken</th>
+                {hasExtras && <th className={cn(th, 'w-9 print:hidden')} aria-label="More columns" />}
               </tr>
             </thead>
             <tbody>
@@ -2773,7 +2824,7 @@ export function RegisterSheet(props: {
                     key={r.id}
                     data-register-row={r.id}
                     className={cn(
-                      'border-b border-[var(--hairline)] hover:bg-[var(--glass-bg-subtle)]',
+                      'odd:bg-[var(--surface-solid)] even:bg-[var(--glass-bg-subtle)] hover:bg-[color-mix(in_oklab,var(--color-brand-500)_7%,var(--surface-solid))]',
                       tint,
                     )}
                   >
@@ -2933,22 +2984,41 @@ export function RegisterSheet(props: {
                             }}
                           />
                         )}
-                        {c.id === 'perDay' && <span className="text-[var(--muted-fg)]">{inr(rec)}</span>}
+                        {c.id === 'perDay' && (
+                          <CellInput
+                            rowKey={r.id}
+                            cellKey={c.id}
+                            ariaLabel={`${c.label} for ${r.customerName}`}
+                            group
+                            className={num}
+                            disabled={!props.canSchedule || locked || !scheduled}
+                            title="Edit the recommended amount; later unpaid days rebalance automatically"
+                            value={d(r.id, 'recommended', rupeesStr(rec))}
+                            onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], recommended: v.replace(/[^0-9]/g, '') } }))}
+                            onCommit={(v) => {
+                              if (v.trim() === rupeesStr(rec)) return;
+                              void savePlannedAmount(r, v);
+                            }}
+                          />
+                        )}
                         {c.id === 'today' &&
                           (scheduled ? (
-                            <span
-                              className={cn(
-                                num,
-                                'flex h-7 items-center justify-end gap-1 px-1 text-[0.7rem]',
-                                dayState === 'due' && 'font-semibold text-[var(--color-brand-700)]',
-                                dayState === 'taken' && 'text-[var(--row-taken-fg)] line-through',
-                                dayState === 'missed' && 'font-semibold text-[var(--row-missed-fg)]',
-                                dayState === 'partial' && 'font-semibold text-[var(--row-partial-fg)]',
-                              )}
+                            <CellInput
+                              rowKey={r.id}
+                              cellKey={c.id}
+                              ariaLabel={`${c.label} for ${r.customerName}`}
+                              group
+                              className={cn(num, dayState === 'due' && 'font-semibold text-[var(--color-brand-700)]')}
+                              disabled={!props.canSchedule || locked}
                               title={SCHEDULED_TODAY_HINT[dayState]}
-                            >
-                              {planned.total > 0n ? inr(planned.total) : inr(BigInt(r.todayDuePaise))}
-                            </span>
+                              value={d(r.id, 'todayDue', rupeesStr(planned.total > 0n ? planned.total : BigInt(r.todayDuePaise)))}
+                              onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], todayDue: v.replace(/[^0-9]/g, '') } }))}
+                              onCommit={(v) => {
+                                const original = rupeesStr(planned.total > 0n ? planned.total : BigInt(r.todayDuePaise));
+                                if (v.trim() === original) return;
+                                void savePlannedAmount(r, v);
+                              }}
+                            />
                           ) : (
                             <CellInput
                               rowKey={r.id}
@@ -3018,9 +3088,47 @@ export function RegisterSheet(props: {
                               }}
                             />
                           ))}
-                        {c.id === 'paidToday' && <span className="font-semibold">{inr(BigInt(r.paidTodayActualPaise))}</span>}
-                        {c.id === 'paidCashToday' && <span>{inr(BigInt(r.paidCashTodayPaise))}</span>}
-                        {c.id === 'paidOnlineToday' && <span>{inr(BigInt(r.paidOnlineTodayPaise))}</span>}
+                        {c.id === 'paidToday' && (
+                          <CellInput
+                            rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}
+                            group className={cn(num, 'font-semibold')} disabled={!props.canPay || locked || !scheduled}
+                            value={d(r.id, 'paidTodayActual', rupeesStr(BigInt(r.paidTodayActualPaise)))}
+                            onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidTodayActual: v.replace(/[^0-9]/g, '') } }))}
+                            onCommit={(v) => {
+                              if (v.trim() === rupeesStr(BigInt(r.paidTodayActualPaise))) return;
+                              const total = BigInt(v || '0');
+                              const currentOnline = BigInt(d(r.id, 'paidOnlineActual', rupeesStr(BigInt(r.paidOnlineTodayPaise))) || '0');
+                              const online = currentOnline > total ? 0n : currentOnline;
+                              void savePaidSplit(r, total - online, online);
+                            }}
+                          />
+                        )}
+                        {c.id === 'paidCashToday' && (
+                          <CellInput
+                            rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}
+                            group className={num} disabled={!props.canPay || locked || !scheduled}
+                            value={d(r.id, 'paidCashActual', rupeesStr(BigInt(r.paidCashTodayPaise)))}
+                            onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidCashActual: v.replace(/[^0-9]/g, '') } }))}
+                            onCommit={(v) => {
+                              if (v.trim() === rupeesStr(BigInt(r.paidCashTodayPaise))) return;
+                              const online = BigInt(d(r.id, 'paidOnlineActual', rupeesStr(BigInt(r.paidOnlineTodayPaise))) || '0');
+                              void savePaidSplit(r, BigInt(v || '0'), online);
+                            }}
+                          />
+                        )}
+                        {c.id === 'paidOnlineToday' && (
+                          <CellInput
+                            rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}
+                            group className={num} disabled={!props.canPay || locked || !scheduled}
+                            value={d(r.id, 'paidOnlineActual', rupeesStr(BigInt(r.paidOnlineTodayPaise)))}
+                            onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidOnlineActual: v.replace(/[^0-9]/g, '') } }))}
+                            onCommit={(v) => {
+                              if (v.trim() === rupeesStr(BigInt(r.paidOnlineTodayPaise))) return;
+                              const cash = BigInt(d(r.id, 'paidCashActual', rupeesStr(BigInt(r.paidCashTodayPaise))) || '0');
+                              void savePaidSplit(r, cash, BigInt(v || '0'));
+                            }}
+                          />
+                        )}
                       </td>
                     ))}
                     <td className={cn(td, 'print:hidden')} colSpan={2}>
@@ -3099,7 +3207,7 @@ export function RegisterSheet(props: {
             </tbody>
           </table>
         </div>
-      </Glass>
+      </div>
 
       <div className="flex flex-wrap items-center gap-2 print:hidden">
         {props.canRequestClose && !closed && !closeRequested && (

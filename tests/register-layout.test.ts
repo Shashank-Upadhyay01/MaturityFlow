@@ -45,7 +45,7 @@ describe('register layout', () => {
       "Customer's Agent Name",
       'Maturity Amount',
       'Payment Date',
-      'Remaining Amount',
+      'Due Payment',
       'Recommended Payment',
       'Paid Today',
       'Paid in Cash',
@@ -83,7 +83,7 @@ describe('columnsThatFit', () => {
     const kept = shown.map((c) => c.id);
     const gone = dropped.map((c) => c.id);
     expect(kept).toContain('customer');
-    expect(kept).toContain('remaining');
+    expect(kept).toContain('today');
     expect(gone.length).toBeGreaterThan(0);
     // Among the columns that *may* be dropped, nothing dropped outranks anything kept.
     // Required columns are exempt: they survive however badly they rank.

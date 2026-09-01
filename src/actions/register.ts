@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 
 import { db } from '@/db';
 import { maturityCases, payoutInstalments } from '@/db/schema';
-import { requireActor } from '@/lib/auth/session';
+import { requestMeta, requireActor } from '@/lib/auth/session';
 import { tryParseRupeesToPaise } from '@/lib/money';
 import { assertCan, assertCanTypeRegister, roleCan, type Actor, type ResourceRef } from '@/lib/rbac';
 import type { BulkTodayMode } from '@/lib/register-view';
@@ -17,7 +17,12 @@ import {
   type BulkOutcome,
   type CaseRef,
 } from '@/services/register-bulk';
-import { markInstalmentMissed, markInstalmentTaken, type Tender } from '@/services/payout-service';
+import {
+  markInstalmentMissed,
+  markInstalmentTaken,
+  replaceInstalmentPayout,
+  type Tender,
+} from '@/services/payout-service';
 import {
   MAX_BLANK_ROWS_PER_CALL,
   confirmCloseDay,
@@ -286,6 +291,37 @@ export async function markNotTakenAction(
     assertCanTypeRegister(actor);
     assertCan(actor, 'payout.record', c);
     await markInstalmentMissed(session, instalmentId, { clear });
+    revalidate();
+    return ok();
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+/** Set today's visible Cash/Online cells while retaining every superseded receipt in the ledger. */
+export async function setTodayPaidSplitAction(
+  instalmentId: string,
+  cashRupees: string,
+  onlineRupees: string,
+  reference: string | null = null,
+  reason: string | null = null,
+): Promise<ActionResult> {
+  try {
+    const { session, actor } = await requireActor();
+    const c = await scopeByInstalment(instalmentId);
+    if (!c) return fail('Row not found', 'NOT_FOUND');
+    assertCanTypeRegister(actor);
+    assertCan(actor, 'payout.record', c);
+    const cashPaise = tryParseRupeesToPaise(cashRupees);
+    const onlinePaise = tryParseRupeesToPaise(onlineRupees);
+    if (cashPaise == null || onlinePaise == null) {
+      return fail('Enter whole rupee amounts.', 'VALIDATION');
+    }
+    await replaceInstalmentPayout(
+      session,
+      { instalmentId, cashPaise, onlinePaise, reference, reason },
+      await requestMeta(),
+    );
     revalidate();
     return ok();
   } catch (e) {

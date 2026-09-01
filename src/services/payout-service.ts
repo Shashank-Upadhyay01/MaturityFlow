@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, eq, lte, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lte, sql } from 'drizzle-orm';
 import { db } from '@/db';
 import {
   caseEvents,
@@ -483,6 +483,192 @@ export async function reversePayout(
     });
 
     return { ok: true as const, remainingPaise: c.maturityAmountPaise - paid };
+  });
+}
+
+/**
+ * Replace the cash/online split recorded for one scheduled day.
+ *
+ * Spreadsheet entry needs a "set this cell" operation, while the payout ledger must remain
+ * append-only. We bridge those two models by reversing every live transaction for this
+ * instalment on the selected value date, then inserting one replacement transaction. The case
+ * row is locked first, followed by the instalment and its transactions, preserving the global
+ * lock order used by every payout writer.
+ */
+export async function replaceInstalmentPayout(
+  actor: SessionUser,
+  input: {
+    instalmentId: string;
+    cashPaise: bigint;
+    onlinePaise: bigint;
+    reference?: string | null;
+    reason?: string | null;
+    valueDate?: string;
+  },
+  meta: { ip?: string | null; userAgent?: string | null } = {},
+) {
+  if (input.cashPaise < 0n || input.onlinePaise < 0n) {
+    throw new PayoutError('Paid amounts cannot be negative.', 'NEGATIVE');
+  }
+
+  return db.transaction(async (tx) => {
+    const [ref] = await tx
+      .select({ caseId: payoutInstalments.caseId })
+      .from(payoutInstalments)
+      .where(eq(payoutInstalments.id, input.instalmentId))
+      .limit(1);
+    if (!ref) throw new PayoutError('Instalment not found', 'NOT_FOUND');
+
+    const [c] = await tx
+      .select()
+      .from(maturityCases)
+      .where(eq(maturityCases.id, ref.caseId))
+      .for('update')
+      .limit(1);
+    if (!c) throw new PayoutError('Case not found', 'NOT_FOUND');
+    if (!PAYABLE_STATUSES.has(c.status) && c.status !== 'COMPLETED') {
+      throw new PayoutError('This row is not open for payment.', 'NOT_PAYABLE');
+    }
+
+    const [inst] = await tx
+      .select()
+      .from(payoutInstalments)
+      .where(eq(payoutInstalments.id, input.instalmentId))
+      .for('update')
+      .limit(1);
+    if (!inst) throw new PayoutError('Instalment not found', 'NOT_FOUND');
+    if (inst.status === 'SUPERSEDED' || inst.status === 'CANCELLED') {
+      throw new PayoutError('This instalment is no longer part of the live schedule.', 'SUPERSEDED');
+    }
+
+    const valueDate = input.valueDate ?? todayISO();
+    const current = await tx
+      .select()
+      .from(payoutTransactions)
+      .where(
+        and(
+          eq(payoutTransactions.instalmentId, inst.id),
+          eq(payoutTransactions.valueDate, valueDate),
+          isNull(payoutTransactions.reversedAt),
+        ),
+      )
+      .for('update');
+
+    const oldCash = current.reduce((sum, row) => sum + row.cashPaise, 0n);
+    const oldOnline = current.reduce((sum, row) => sum + row.onlinePaise, 0n);
+    const oldTotal = oldCash + oldOnline;
+    const newTotal = input.cashPaise + input.onlinePaise;
+    const instCashWithoutToday = inst.paidCashPaise - oldCash;
+    const instOnlineWithoutToday = inst.paidOnlinePaise - oldOnline;
+    const caseCashWithoutToday = c.paidCashPaise - oldCash;
+    const caseOnlineWithoutToday = c.paidOnlinePaise - oldOnline;
+
+    if (
+      instCashWithoutToday < 0n || instOnlineWithoutToday < 0n ||
+      caseCashWithoutToday < 0n || caseOnlineWithoutToday < 0n
+    ) {
+      throw new PayoutError('The payout ledger is inconsistent; correction was not applied.', 'LEDGER_MISMATCH');
+    }
+    if (instCashWithoutToday + instOnlineWithoutToday + newTotal > inst.amountPaise) {
+      throw new PayoutError(
+        `Cannot set ${formatPaise(newTotal)} — this day has only ${formatPaise(inst.amountPaise - instCashWithoutToday - instOnlineWithoutToday)} left.`,
+        'EXCEEDS_INSTALMENT',
+      );
+    }
+    if (caseCashWithoutToday + caseOnlineWithoutToday + newTotal > c.maturityAmountPaise) {
+      throw new PayoutError('The entered payment exceeds the case balance.', 'EXCEEDS_REMAINING');
+    }
+    if (input.onlinePaise > 0n && !input.reference?.trim()) {
+      throw new PayoutError('Online payment needs a UTR / reference.', 'REF_REQUIRED');
+    }
+    if (oldTotal > 0n && !input.reason?.trim()) {
+      throw new PayoutError('Enter a reason for changing a recorded payment.', 'REASON_REQUIRED');
+    }
+
+    const now = new Date();
+    if (current.length > 0) {
+      await tx
+        .update(payoutTransactions)
+        .set({
+          reversedAt: now,
+          reversedById: actor.id,
+          reversalReason: input.reason?.trim() || 'Spreadsheet correction',
+        })
+        .where(inArray(payoutTransactions.id, current.map((row) => row.id)));
+    }
+
+    let replacementId: string | null = null;
+    if (newTotal > 0n) {
+      replacementId = newId('txn');
+      await tx.insert(payoutTransactions).values({
+        id: replacementId,
+        caseId: c.id,
+        instalmentId: inst.id,
+        branchId: c.branchId,
+        cashPaise: input.cashPaise,
+        onlinePaise: input.onlinePaise,
+        totalPaise: newTotal,
+        reference: input.reference?.trim() || null,
+        remarks: input.reason?.trim() || 'Spreadsheet entry',
+        valueDate,
+        recordedById: actor.id,
+      });
+    }
+
+    const newInstCash = instCashWithoutToday + input.cashPaise;
+    const newInstOnline = instOnlineWithoutToday + input.onlinePaise;
+    const newInstPaid = newInstCash + newInstOnline;
+    await tx
+      .update(payoutInstalments)
+      .set({
+        paidCashPaise: newInstCash,
+        paidOnlinePaise: newInstOnline,
+        status: newInstPaid <= 0n ? 'PENDING' : newInstPaid >= inst.amountPaise ? 'PAID' : 'PARTIAL',
+        updatedAt: now,
+      })
+      .where(eq(payoutInstalments.id, inst.id));
+
+    const newCaseCash = caseCashWithoutToday + input.cashPaise;
+    const newCaseOnline = caseOnlineWithoutToday + input.onlinePaise;
+    const newCasePaid = newCaseCash + newCaseOnline;
+    const complete = newCasePaid >= c.maturityAmountPaise;
+    await tx
+      .update(maturityCases)
+      .set({
+        paidCashPaise: newCaseCash,
+        paidOnlinePaise: newCaseOnline,
+        status: complete ? 'COMPLETED' : newCasePaid > 0n ? 'IN_PROGRESS' : 'APPROVED',
+        completedAt: complete ? now : null,
+        updatedAt: now,
+      })
+      .where(eq(maturityCases.id, c.id));
+
+    await tx.insert(caseEvents).values({
+      id: newId('evt'),
+      caseId: c.id,
+      type: newTotal > 0n ? 'PAYMENT_RECORDED' : 'PAYMENT_REVERSED',
+      actorId: actor.id,
+      note: `Day ${inst.seq} (${valueDate}) corrected from ${formatPaise(oldTotal)} to ${formatPaise(newTotal)} (${formatPaise(input.cashPaise)} cash / ${formatPaise(input.onlinePaise)} online)`,
+    });
+
+    await writeAudit(tx, actor, {
+      action: 'payout.corrected',
+      entity: 'PayoutInstalment',
+      entityId: inst.id,
+      branchId: c.branchId,
+      summary: `${c.caseNumber} day ${inst.seq}: payment corrected from ${formatPaise(oldTotal)} to ${formatPaise(newTotal)}`,
+      before: { cashPaise: oldCash, onlinePaise: oldOnline, totalPaise: oldTotal },
+      after: {
+        cashPaise: input.cashPaise,
+        onlinePaise: input.onlinePaise,
+        totalPaise: newTotal,
+        replacementTransactionId: replacementId,
+        reason: input.reason?.trim() || null,
+      },
+      ...meta,
+    });
+
+    return { totalPaise: newTotal, replacementTransactionId: replacementId };
   });
 }
 
