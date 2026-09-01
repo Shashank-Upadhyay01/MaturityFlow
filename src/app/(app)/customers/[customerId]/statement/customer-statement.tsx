@@ -1,7 +1,7 @@
 'use client';
 
 import { Printer } from 'lucide-react';
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { formatPaise } from '@/lib/money';
 import { SETTLEMENT_LABEL, settlementOf } from '@/lib/agent-book';
@@ -74,6 +74,7 @@ export function CustomerStatement({
         .stmt { color: #000; background: #fff; font-size: 10.5px; line-height: 1.45; }
         .stmt table { width: 100%; border-collapse: collapse; }
         .stmt .payment-table { table-layout: fixed; }
+        .stmt .case-table { margin-bottom: 10px; }
         .stmt th, .stmt td { border: 1px solid #999; padding: 4px 6px; vertical-align: top; }
         .stmt thead th { background: #eee; font-weight: 600; text-align: left; }
         .stmt .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -155,36 +156,23 @@ export function CustomerStatement({
               </tbody>
             </table>
 
-            <table className="payment-table">
-              <colgroup>
-                <col style={{ width: '5%' }} />
-                <col style={{ width: '16%' }} />
-                <col style={{ width: '18%' }} />
-                <col style={{ width: '13%' }} />
-                <col style={{ width: '13%' }} />
-                <col style={{ width: '11%' }} />
-                <col style={{ width: '15%' }} />
-                <col style={{ width: '9%' }} />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Payment date</th>
-                  <th className="num">Scheduled</th>
-                  <th className="num">Cash</th>
-                  <th className="num">Online</th>
-                  <th className="num">Paid</th>
-                  <th className="num">Remaining</th>
-                  <th>State</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cases.map((c) => {
-                  const plan = buildPlanRow(c, instalments, cal, today);
-                  const paid = BigInt(c.paidCashPaise) + BigInt(c.paidOnlinePaise);
-                  const mat = BigInt(c.maturityAmountPaise);
-                  return (
-                    <Fragment key={c.caseId}>
+            {cases.map((c) => {
+              const plan = buildPlanRow(c, instalments, cal, today);
+              const paid = BigInt(c.paidCashPaise) + BigInt(c.paidOnlinePaise);
+              const mat = BigInt(c.maturityAmountPaise);
+              return (
+                <table className="payment-table case-table" key={c.caseId}>
+                  <colgroup>
+                    <col style={{ width: '5%' }} />
+                    <col style={{ width: '16%' }} />
+                    <col style={{ width: '18%' }} />
+                    <col style={{ width: '13%' }} />
+                    <col style={{ width: '13%' }} />
+                    <col style={{ width: '11%' }} />
+                    <col style={{ width: '15%' }} />
+                    <col style={{ width: '9%' }} />
+                  </colgroup>
+                  <thead>
                       <tr className="caseHead">
                         <td colSpan={8}>
                           {c.caseNumber}
@@ -203,12 +191,24 @@ export function CustomerStatement({
                           <strong>Pattern:</strong> {plan.parts} parts, {plan.cadence === 'ALTERNATE' ? 'alternate days' : 'daily'}
                         </td>
                       </tr>
-                      {plan.error ? (
-                        <tr>
-                          <td colSpan={8}>{plan.error}</td>
-                        </tr>
-                      ) : (
-                        plan.days.map((d) => (
+                      <tr>
+                        <th>#</th>
+                        <th>Payment date</th>
+                        <th className="num">Scheduled</th>
+                        <th className="num">Cash</th>
+                        <th className="num">Online</th>
+                        <th className="num">Paid</th>
+                        <th className="num">Remaining</th>
+                        <th>State</th>
+                      </tr>
+                  </thead>
+                  <tbody>
+                    {plan.error ? (
+                      <tr>
+                        <td colSpan={8}>{plan.error}</td>
+                      </tr>
+                    ) : (
+                      plan.days.map((d) => (
                           <tr
                             key={`${c.caseId}-${d.seq}`}
                             className={
@@ -240,13 +240,24 @@ export function CustomerStatement({
                                       : 'Upcoming'}
                             </td>
                           </tr>
-                        ))
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-              <tfoot>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              );
+            })}
+            <table className="payment-table">
+              <colgroup>
+                <col style={{ width: '5%' }} />
+                <col style={{ width: '16%' }} />
+                <col style={{ width: '18%' }} />
+                <col style={{ width: '13%' }} />
+                <col style={{ width: '13%' }} />
+                <col style={{ width: '11%' }} />
+                <col style={{ width: '15%' }} />
+                <col style={{ width: '9%' }} />
+              </colgroup>
+              <tbody>
                 <tr>
                   <td colSpan={2}>
                     Total — {cases.length} maturit{cases.length === 1 ? 'y' : 'ies'}
@@ -256,7 +267,7 @@ export function CustomerStatement({
                     received {money(totals.paid)} · still owed {money(totals.left)}
                   </td>
                 </tr>
-              </tfoot>
+              </tbody>
             </table>
           </>
         )}
