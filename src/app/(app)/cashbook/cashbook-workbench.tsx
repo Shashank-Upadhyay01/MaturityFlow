@@ -165,6 +165,16 @@ const COMMITMENT_UI_META: Record<CashbookCommitmentKind, { label: string; shortL
 };
 
 const SHEET_ROWS = 20;
+/**
+ * How far the sheet can go.
+ *
+ * A branch works a few dozen lines on a normal day and several hundred on a heavy one, so the
+ * ceiling is 500 — but rendering 500 × 11 empty cells up front costs a visibly slower keystroke
+ * for the 99% of days that never reach row 40. Rows are therefore revealed as the cursor walks
+ * into them: the capacity is always 500, the DOM only ever holds what has been reached.
+ */
+const MAX_SHEET_ROWS = 500;
+const ROW_REVEAL_BUFFER = 10;
 
 function sheetMoneyInput(paise: string): string {
   const amount = BigInt(paise);
@@ -199,20 +209,29 @@ function initialFigures(view: View): FigureForm {
   };
 }
 
+/**
+ * Which column a saved entry belongs in.
+ *
+ * Receiving used to claim every CASH receipt, so a figure typed into New loan, Savings deposit or
+ * Renewal appeared a second time in Receiving as a read-only echo. On a sheet whose whole job is
+ * to be added up by eye that reads as double counting, and the clerk cannot tell the echo from a
+ * real receipt. Receiving now shows only what it writes.
+ *
+ * By account is deliberately left wide. It is a DEDUCTION in `expectedPhysicalCash`, so narrowing
+ * it would change the reconciliation for an account-channel renewal — a row this screen cannot
+ * currently create, but the arithmetic is not mine to quietly redefine.
+ */
+const RECEIPT_CATEGORIES: readonly string[] = ['OTHER_RECEIPT', 'NEW_LOAN', 'SAVINGS_DEPOSIT', 'RENEWAL'];
+
 function entryBelongs(row: EntryRow, key: MovementKey): boolean {
-  const receipt = ['OTHER_RECEIPT', 'NEW_LOAN', 'SAVINGS_DEPOSIT', 'RENEWAL'].includes(row.category);
-  if (key === 'receiving') return row.channel === 'CASH' && receipt;
+  if (key === 'receiving') return row.channel === 'CASH' && row.category === 'OTHER_RECEIPT';
   if (key === 'newLoan') return row.category === 'NEW_LOAN';
   if (key === 'savings') return row.category === 'SAVINGS_DEPOSIT';
   if (key === 'withdrawal') return row.category === 'WITHDRAWAL';
-  if (key === 'byAccount') return row.channel === 'ACCOUNT' && receipt;
+  if (key === 'byAccount') return row.channel === 'ACCOUNT' && RECEIPT_CATEGORIES.includes(row.category);
   if (key === 'expenses') return row.category === 'EXPENSE';
   if (key === 'renewal') return row.category === 'RENEWAL';
   return row.category === 'OPENING_BALANCE';
-}
-
-function isDerivedProjection(row: EntryRow | undefined, key: MovementKey): boolean {
-  return Boolean(row && (key === 'receiving' || key === 'byAccount') && row.category !== 'OTHER_RECEIPT');
 }
 
 function isCommitmentColumn(column: SheetColumn): column is CommitmentColumn {
@@ -371,6 +390,8 @@ export function CashbookWorkbench({
   const [toolbarWidths, setToolbarWidths] = useState<Record<ToolbarId, number>>(DEFAULT_TOOLBAR_WIDTHS);
   const [draggedToolbar, setDraggedToolbar] = useState<ToolbarId | null>(null);
   const activeCellRef = useRef<string | null>(null);
+  /** Grows as the cursor approaches the last rendered row; never shrinks within a session. */
+  const [revealedRows, setRevealedRows] = useState(SHEET_ROWS);
   const keyboardMoveRef = useRef(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gridDirtyRef = useRef(false);
@@ -458,7 +479,6 @@ export function CashbookWorkbench({
     const entries = columnEntries[column.key];
     return Array.from({ length: Math.max(SHEET_ROWS, entries.length + 1) }, (_, rowIndex) => {
       const row = entries[rowIndex];
-      if (isDerivedProjection(row, column.key)) return null;
       const amountPaise = tryParseRupeesToPaise((cellDrafts[cellKey(column.key, rowIndex)] ?? '').trim());
       if (amountPaise === null || amountPaise <= 0n) return null;
       return {
@@ -478,10 +498,14 @@ export function CashbookWorkbench({
     [liveEntries, liveFigures, view.currentCommitments],
   );
 
-  const visibleRows = Math.max(
-    SHEET_ROWS,
-    ...MOVEMENT_COLUMNS.map((column) => columnEntries[column.key].length + 1),
-    ...COMMITMENT_COLUMNS.map((column) => columnCommitments[column.key].length + 1),
+  const visibleRows = Math.min(
+    MAX_SHEET_ROWS,
+    Math.max(
+      SHEET_ROWS,
+      revealedRows,
+      ...MOVEMENT_COLUMNS.map((column) => columnEntries[column.key].length + 1),
+      ...COMMITMENT_COLUMNS.map((column) => columnCommitments[column.key].length + 1),
+    ),
   );
   const namedItems = view.outstandingCommitments.filter((item) => item.kind === activeNamedKind);
 
@@ -548,7 +572,6 @@ export function CashbookWorkbench({
     const value = (cellDrafts[key] ?? '').trim();
     const rowId = cellIds[key];
     const row = view.entries.find((entry) => entry.id === rowId) ?? columnEntries[column.key][rowIndex];
-    if (isDerivedProjection(row, column.key)) return;
     if (!value && !row) return;
     if (!value && row) {
       setSavingCell(key);
@@ -676,7 +699,7 @@ export function CashbookWorkbench({
     let nextColumn = columnIndex;
     let nextRow = rowIndex;
     if (key === 'ArrowUp') nextRow = Math.max(0, rowIndex - 1);
-    if (key === 'ArrowDown' || key === 'Enter') nextRow = Math.min(visibleRows - 1, rowIndex + 1);
+    if (key === 'ArrowDown' || key === 'Enter') nextRow = Math.min(MAX_SHEET_ROWS - 1, rowIndex + 1);
     if (key === 'ArrowLeft') nextColumn = Math.max(0, columnIndex - 1);
     if (key === 'ArrowRight') nextColumn = Math.min(SHEET_COLUMNS.length - 1, columnIndex + 1);
     const targetKey = `${SHEET_COLUMNS[nextColumn].key}:${nextRow}`;
@@ -686,10 +709,23 @@ export function CashbookWorkbench({
     activeCellRef.current = targetKey;
     keyboardMoveRef.current = true;
     sessionStorage.setItem(focusStorageKey, targetKey);
-    const target = document.querySelector<HTMLElement>(`[data-cash-cell="${targetKey}"]`);
+    // Reveal the row before reaching for it: a cell that has not rendered cannot take focus.
+    setRevealedRows((current) => Math.min(
+      MAX_SHEET_ROWS,
+      Math.max(current, nextRow + 1 + ROW_REVEAL_BUFFER),
+    ));
+    const focusTarget = () => {
+      const target = document.querySelector<HTMLElement>(`[data-cash-cell="${targetKey}"]`);
+      // Focus without the browser's own scroll, then bring the cell into view ourselves.
+      // `block: 'nearest'` is what makes it feel like a spreadsheet: the sheet only moves when
+      // the cursor would otherwise leave it, and it moves by exactly one row or column.
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      return Boolean(target);
+    };
     // Move synchronously. Leaving a one-frame gap after blurring lets the browser
     // hand focus to <body>, where a fast second arrow press scrolls the page.
-    target?.focus({ preventScroll: true });
+    if (!focusTarget()) requestAnimationFrame(focusTarget);
     queueMicrotask(() => { keyboardMoveRef.current = false; });
   }
 
@@ -995,14 +1031,6 @@ export function CashbookWorkbench({
                     {Array.from({ length: visibleRows }, (_, rowIndex) => {
                       const row = entries[rowIndex];
                       const key = cellKey(column.key, rowIndex);
-                      const derived = !commitmentColumn && isDerivedProjection(row as EntryRow | undefined, column.key);
-                      if (derived) {
-                        return (
-                          <div key={key} data-cash-cell={key} tabIndex={0} onFocus={() => rememberCellFocus(key)} onBlur={(event) => handleCellBlur(event.relatedTarget)} onKeyDown={(event) => handleCellKeyDown(event, columnIndex, rowIndex)} className={cn("flex min-h-8 flex-1 items-center justify-end border-b border-[var(--input-border)] bg-[var(--glass-bg-subtle)] px-2 text-[0.78rem] font-semibold tabular-nums text-[var(--muted-fg)] outline-none focus:relative focus:z-10 focus:ring-2 focus:ring-inset focus:ring-[var(--color-brand-500)]", selectedCells.has(key) && 'bg-[var(--color-brand-50)] text-[var(--color-brand-700)] ring-1 ring-inset ring-[var(--color-brand-400)]')} title={`Derived from ${(row as EntryRow).category.toLowerCase().replaceAll('_', ' ')}`}>
-                            {row ? formatPaise(BigInt(row.amountPaise), { symbol: false, decimals: false }) : ''}
-                          </div>
-                        );
-                      }
                       const commitment = commitmentColumn ? row as View['currentCommitments'][number] | undefined : undefined;
                       return (
                         <input
@@ -1049,13 +1077,12 @@ export function CashbookWorkbench({
 
         <section
           data-cashbook-panel="cashFlow"
-          className={cn('cashbook-panel relative min-w-0', draggedPanel === 'cashFlow' && 'opacity-60')}
+          className={cn('cashbook-panel relative min-w-0 self-start', draggedPanel === 'cashFlow' && 'opacity-60')}
           style={{ order: panelOrder.indexOf('cashFlow'), '--cashbook-span': panelSpans.cashFlow } as CSSProperties}
           onDragOver={(event) => arranging && event.preventDefault()}
           onDrop={() => movePanel('cashFlow')}
         >
           <GlassCard
-            className="h-full"
             title={<span className="flex items-center gap-1.5">{panelDragHandle('cashFlow', 'note mix')}<Layers className="h-4 w-4 text-[var(--color-brand-500)]" />Note mix</span>}
             action={<Badge tone="money"><span className="h-1.5 w-1.5 rounded-full bg-current" />Live</Badge>}
             bodyClassName="h-[19rem] p-0 sm:p-0"
