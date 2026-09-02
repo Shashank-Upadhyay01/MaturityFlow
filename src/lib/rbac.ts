@@ -269,6 +269,14 @@ export function canTypeRegister(role: Role): boolean {
 }
 
 /**
+ * Admin may correct any workflow date on any screen, including after payment has started
+ * and after the register day is closed. Other roles still follow the ordinary locks.
+ */
+export function canOverrideDates(role: Role): boolean {
+  return activeRole(role) === 'ADMIN';
+}
+
+/**
  * The guard every *Register* mutation starts with, alongside its usual `assertCan`.
  *
  * `assertCan` alone is not enough here: an agent holds `case.create` and `case.submit`, and with

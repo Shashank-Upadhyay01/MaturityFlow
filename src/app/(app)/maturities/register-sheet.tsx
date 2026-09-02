@@ -98,6 +98,7 @@ import { formatPaise, tryParseRupeesToPaise } from '@/lib/money';
 import { cn } from '@/lib/utils';
 import { formatDMY } from '@/lib/working-days';
 import type { Role } from '@/db/schema';
+import { canOverrideDates } from '@/lib/rbac';
 
 export interface RegisterRow {
   id: string;
@@ -1676,6 +1677,7 @@ export function RegisterSheet(props: {
   }
 
   const locked = closed;
+  const editDates = props.canEdit && (!locked || canOverrideDates(props.role));
 
   /**
    * Blank rows belong on an unfiltered sheet and nowhere else.
@@ -2858,6 +2860,7 @@ export function RegisterSheet(props: {
                 const recCash = scheduled ? planned.cash : BigInt(r.todayCashPaise);
                 const recOnline = scheduled ? planned.online : BigInt(r.todayOnlinePaise);
                 const edit = props.canEdit && !locked;
+                const datesOpen = editDates;
                 const matShown = r.instrumentMaturityOn ? formatDMY(r.instrumentMaturityOn) : '';
                 const formShown = formatDMY(r.formSubmittedOn);
                 const payShown = r.paymentOn ? formatDMY(r.paymentOn) : '';
@@ -2946,7 +2949,7 @@ export function RegisterSheet(props: {
                             cellKey={c.id}
                             ariaLabel={`${c.label} for ${r.customerName}`}
                             className="tabular-nums"
-                            disabled={!edit}
+                            disabled={!datesOpen}
                             placeholder="dd/mm/yyyy"
                             value={d(r.id, 'mat', matShown)}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], mat: v } }))}
@@ -2962,7 +2965,7 @@ export function RegisterSheet(props: {
                             cellKey={c.id}
                             ariaLabel={`${c.label} for ${r.customerName}`}
                             className="tabular-nums"
-                            disabled={!edit}
+                            disabled={!datesOpen}
                             placeholder="dd/mm/yyyy"
                             value={d(r.id, 'form', formShown)}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], form: v } }))}
@@ -2978,7 +2981,7 @@ export function RegisterSheet(props: {
                             cellKey={c.id}
                             ariaLabel={`${c.label} for ${r.customerName}`}
                             className="tabular-nums"
-                            disabled={!edit}
+                            disabled={!datesOpen}
                             placeholder="dd/mm/yyyy"
                             value={d(r.id, 'pay', payShown)}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], pay: v } }))}

@@ -20,9 +20,9 @@ import { Progress } from '@/components/ui/progress';
 import { TBody, TD, TH, THead, TR, Table } from '@/components/ui/table';
 import { getSession, toActor } from '@/lib/auth/session';
 import { formatPaise, percentOf } from '@/lib/money';
-import { roleCan } from '@/lib/rbac';
+import { canOverrideDates, roleCan } from '@/lib/rbac';
 import { serialize } from '@/lib/serialize';
-import { daysBetween, formatISODate, formatISODateShort, todayISO, weekdayShort } from '@/lib/working-days';
+import { daysBetween, formatISODate, formatISODateShort, toISODateString, todayISO, weekdayShort } from '@/lib/working-days';
 import { getCalendarSnapshot } from '@/services/calendar-service';
 import { getCaseDetail } from '@/services/queries';
 import { CaseActions } from './case-actions';
@@ -32,6 +32,7 @@ import { PrintCaseButton } from './print-case-button';
 import { CaseTimeline } from './case-timeline';
 import { ScheduleAdjust } from './schedule-adjust';
 import { WindowReplan } from './window-replan';
+import { WorkflowDatesEditor } from './workflow-dates';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,6 +64,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
   const calendar = await getCalendarSnapshot(c.branchId);
   const canOverride = roleCan(session.role, 'schedule.override');
   const canReplan = roleCan(session.role, 'schedule.reschedule');
+  const canEditDates = canOverrideDates(session.role);
 
   return (
     <div className="space-y-6">
@@ -170,7 +172,16 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           </div>
         </Glass>
 
-        <GlassCard className="mf-rise lg:col-span-2" title="Maturity workflow dates">
+        <GlassCard className="mf-rise lg:col-span-2" title="Maturity workflow dates" subtitle={canEditDates ? 'Admin can correct any of these dates, including after payment has started.' : undefined}>
+          {canEditDates ? (
+            <WorkflowDatesEditor
+              caseId={c.id}
+              maturityOn={toISODateString(c.instrumentMaturityOn) ?? ''}
+              formOn={toISODateString(c.formSubmittedOn) ?? c.formSubmittedOn}
+              reviewOn={toISODateString(c.opsReviewedOn) ?? ''}
+              paymentOn={toISODateString(c.paymentOn) ?? toISODateString(c.firstPayoutOn) ?? toISODateString(c.approvedOn) ?? ''}
+            />
+          ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-[15px] border border-[var(--input-border)] p-4">
               <p className="flex items-center gap-2 text-[0.75rem] font-semibold uppercase tracking-[0.08em] text-[var(--faint-fg)]">
@@ -227,6 +238,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
               <p className="mt-1 text-[0.75rem] text-[var(--muted-fg)]">Day 4 · first withdrawal</p>
             </div>
           </div>
+          )}
 
           <div className="mt-5 grid gap-4 border-t pt-5 sm:grid-cols-4">
             <KeyValue label="Window">{c.windowDays} working days</KeyValue>

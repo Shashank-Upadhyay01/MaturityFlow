@@ -26,7 +26,8 @@ import { addDays, makeCalendar, todayISO } from '@/lib/working-days';
 import { sql } from 'drizzle-orm';
 import { caseCounters } from '@/db/schema';
 import { getBranchPolicy } from '@/services/calendar-service';
-import { persistSchedule } from '@/services/schedule-service';
+import { persistReschedule, persistSchedule } from '@/services/schedule-service';
+import { canOverrideDates } from '@/lib/rbac';
 
 export function recommendSplit(todayPaise: bigint, remainingPaise: bigint, cap = DEFAULT_CASH_CAP_PAISE) {
   const need = todayPaise < remainingPaise ? todayPaise : remainingPaise;
@@ -253,7 +254,8 @@ export async function updateRegisterRow(
       patch.maturityRupees !== undefined ||
       patch.windowDays !== undefined;
     const alreadyPaid = row.paidCashPaise + row.paidOnlinePaise;
-    if (affectsSchedule && row.scheduleVersion > 0 && alreadyPaid > 0n) {
+    const adminOverride = canOverrideDates(actor.role);
+    if (affectsSchedule && row.scheduleVersion > 0 && alreadyPaid > 0n && !adminOverride) {
       throw new Error(
         'Maturity amount and schedule dates are locked after payment starts. Reverse the payout first, then edit the row.',
       );
@@ -271,7 +273,7 @@ export async function updateRegisterRow(
         finalPayment = earliest;
         setCase.paymentOn = earliest;
       }
-      if (finalPayment && finalPayment < earliest) {
+      if (!adminOverride && finalPayment && finalPayment < earliest) {
         throw new Error(`Payment date cannot be before ${earliest} (the fourth calendar day).`);
       }
     }
@@ -281,14 +283,16 @@ export async function updateRegisterRow(
       setCase.opsReviewedOn === null
         ? null
         : ((setCase.opsReviewedOn as string | undefined) ?? row.opsReviewedOn);
-    if (finalMaturity && finalForm < finalMaturity) {
-      throw new Error('Form submission date cannot be before the maturity date.');
-    }
-    if (finalReview && finalReview < finalForm) {
-      throw new Error('Operations review date cannot be before form submission.');
-    }
-    if (finalPayment && finalReview && finalPayment < finalReview) {
-      throw new Error('Payment date cannot be before Operations review.');
+    if (!adminOverride) {
+      if (finalMaturity && finalForm < finalMaturity) {
+        throw new Error('Form submission date cannot be before the maturity date.');
+      }
+      if (finalReview && finalReview < finalForm) {
+        throw new Error('Operations review date cannot be before form submission.');
+      }
+      if (finalPayment && finalReview && finalPayment < finalReview) {
+        throw new Error('Payment date cannot be before Operations review.');
+      }
     }
 
     const remainingNow = () =>
@@ -331,26 +335,20 @@ export async function updateRegisterRow(
     await tx.update(maturityCases).set(setCase).where(eq(maturityCases.id, caseId));
 
     if (affectsSchedule && row.scheduleVersion > 0 && finalPayment && policy) {
-      await tx
-        .update(payoutInstalments)
-        .set({ status: 'SUPERSEDED', supersededAt: new Date(), updatedAt: new Date() })
-        .where(
-          and(
-            eq(payoutInstalments.caseId, caseId),
-            eq(payoutInstalments.scheduleVersion, row.scheduleVersion),
-            inArray(payoutInstalments.status, ['PENDING', 'MISSED', 'PARTIAL']),
-          ),
-        );
+      // INV-5: approvedOn cannot predate formSubmittedOn. Admin may still start payouts on
+      // the requested payment date; the stored approval column just stays legal.
+      const approvedOnWrite =
+        finalForm && finalPayment < finalForm ? finalForm : finalPayment;
       const nextRow = {
         ...row,
         ...setCase,
         maturityAmountPaise: amount,
         paymentOn: finalPayment,
-        approvedOn: finalPayment,
+        approvedOn: approvedOnWrite,
       };
       await tx
         .update(maturityCases)
-        .set({ approvedOn: finalPayment, paymentOn: finalPayment, updatedAt: new Date() })
+        .set({ approvedOn: approvedOnWrite, paymentOn: finalPayment, updatedAt: new Date() })
         .where(eq(maturityCases.id, caseId));
       const scheduleCalendar =
         patch.paymentOn !== undefined
@@ -359,13 +357,33 @@ export async function updateRegisterRow(
               finalPayment.slice(0, 7),
             ])
           : policy.calendar;
-      await persistSchedule({
-        tx,
-        caseRow: nextRow,
-        calendar: scheduleCalendar,
-        anchorDate: finalPayment,
-        branchDailyCashComfortPaise: policy.dailyCashComfortPaise,
-      });
+      if (alreadyPaid > 0n) {
+        await persistReschedule({
+          tx,
+          caseRow: nextRow,
+          calendar: scheduleCalendar,
+          fromDate: finalPayment,
+          branchDailyCashComfortPaise: policy.dailyCashComfortPaise,
+        });
+      } else {
+        await tx
+          .update(payoutInstalments)
+          .set({ status: 'SUPERSEDED', supersededAt: new Date(), updatedAt: new Date() })
+          .where(
+            and(
+              eq(payoutInstalments.caseId, caseId),
+              eq(payoutInstalments.scheduleVersion, row.scheduleVersion),
+              inArray(payoutInstalments.status, ['PENDING', 'MISSED', 'PARTIAL']),
+            ),
+          );
+        await persistSchedule({
+          tx,
+          caseRow: nextRow,
+          calendar: scheduleCalendar,
+          anchorDate: finalPayment,
+          branchDailyCashComfortPaise: policy.dailyCashComfortPaise,
+        });
+      }
       await tx.insert(caseEvents).values({
         id: newId('evt'),
         caseId,

@@ -13,6 +13,7 @@ import {
   assertCan,
   assertCanTypeRegister,
   can,
+  canOverrideDates,
   canTypeRegister,
   permissionsOf,
   roleCan,
@@ -100,6 +101,13 @@ describe('permission grants', () => {
     expect(() => assertCan(agent, 'case.approve', { branchId: 'b1', agentId: 'a1' })).toThrow(
       ForbiddenError,
     );
+  });
+
+  it('only Admin may override workflow dates after payment or on a closed day', () => {
+    expect(canOverrideDates('ADMIN')).toBe(true);
+    for (const r of ['CMD', 'CEO', 'BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const) {
+      expect(canOverrideDates(r)).toBe(false);
+    }
   });
 
   it('staff may type the register; auditor and agent may not', () => {
