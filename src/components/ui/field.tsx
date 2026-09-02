@@ -57,7 +57,7 @@ export function Field({
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
       {label && (
-        directControl ? (
+        directControl || htmlFor ? (
           <label
             htmlFor={controlId}
             className="flex items-center gap-1 text-[0.8125rem] font-medium text-[var(--muted-fg)]"

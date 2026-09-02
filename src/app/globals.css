@@ -437,6 +437,73 @@ table th {
 @keyframes mf-fade { from { opacity: 0; } to { opacity: 1; } }
 .mf-fade { animation: mf-fade 160ms ease-out both; }
 
+/* The K mark combines a secure enclosure with a compact ledger motif. Its
+   login animation is deliberately slow and quiet; the working UI stays still. */
+.brand-mark {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  color: white;
+}
+.brand-mark__tile {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  height: 100%;
+  width: 100%;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, white 25%, transparent);
+  border-radius: 30%;
+  background:
+    linear-gradient(145deg, color-mix(in oklab, var(--color-brand-400) 92%, white), var(--color-brand-700));
+  box-shadow:
+    0 12px 30px -14px color-mix(in oklab, var(--color-brand-700) 75%, transparent),
+    inset 0 1px 0 color-mix(in oklab, white 28%, transparent);
+}
+.brand-mark__tile::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  background: linear-gradient(120deg, transparent 28%, rgb(255 255 255 / 0.16) 46%, transparent 64%);
+  transform: translateX(-120%);
+}
+.brand-mark__orbit {
+  position: absolute;
+  inset: -10%;
+  border: 1px solid color-mix(in oklab, var(--color-brand-400) 34%, transparent);
+  border-radius: 34%;
+  opacity: 0;
+}
+.brand-mark--animated .brand-mark__tile {
+  animation: brand-mark-arrive 700ms var(--ease-out-quint) both;
+}
+.brand-mark--animated .brand-mark__tile::after {
+  animation: brand-mark-sheen 950ms 420ms var(--ease-out-quint) both;
+}
+.brand-mark--animated .brand-mark__stroke,
+.brand-mark--animated .brand-mark__ledger {
+  stroke-dasharray: 80;
+  stroke-dashoffset: 80;
+  animation: brand-mark-draw 680ms 210ms var(--ease-out-quint) forwards;
+}
+.brand-mark--animated .brand-mark__ledger { animation-delay: 480ms; }
+.brand-mark--animated .brand-mark__orbit {
+  animation: brand-mark-orbit 3.6s 900ms ease-in-out infinite;
+}
+@keyframes brand-mark-arrive {
+  from { opacity: 0; transform: translateY(8px) scale(0.92); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes brand-mark-draw { to { stroke-dashoffset: 0; } }
+@keyframes brand-mark-sheen { to { transform: translateX(120%); } }
+@keyframes brand-mark-orbit {
+  0%, 100% { opacity: 0; transform: scale(0.96); }
+  45% { opacity: 0.72; transform: scale(1.08); }
+  70% { opacity: 0; transform: scale(1.14); }
+}
+
 /* Stagger children so a grid of cards arrives like a hand of cards, not a slab. */
 .mf-stagger > * { animation: mf-rise 180ms ease-out both; }
 .mf-stagger > *:nth-child(1) { animation-delay: 0ms; }

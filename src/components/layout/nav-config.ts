@@ -4,19 +4,20 @@ export interface NavItem {
   href: string;
   label: string;
   icon:
-    | 'dashboard'
-    | 'plus'
-    | 'inbox'
-    | 'files'
-    | 'upload'
-    | 'calendar'
-    | 'wallet'
-    | 'banknote'
-    | 'calculator'
-    | 'users'
-    | 'building'
-    | 'chart'
-    | 'shield'
+    | 'summary'
+    | 'register'
+    | 'cashbook'
+    | 'maturities'
+    | 'payout'
+    | 'followUp'
+    | 'maturityCalendar'
+    | 'cashRunway'
+    | 'customers'
+    | 'agents'
+    | 'branches'
+    | 'import'
+    | 'reports'
+    | 'audit'
     | 'settings';
   permission: Permission;
   /** Only shown to roles whose scope spans every branch. */
@@ -29,7 +30,7 @@ export const TOP_LEVEL_NAV: NavItem[] = [
   {
     href: '/dashboard',
     label: 'Summary',
-    icon: 'dashboard',
+    icon: 'summary',
     permission: 'case.view',
     description: 'Totals across the register',
   },
@@ -42,28 +43,28 @@ export const NAV: { section: string; items: NavItem[] }[] = [
       {
         href: '/maturities',
         label: 'Register',
-        icon: 'files',
+        icon: 'register',
         permission: 'case.view',
         description: 'The branch Excel sheet',
       },
       {
         href: '/cashbook',
         label: 'Daily cashbook',
-        icon: 'calculator',
+        icon: 'cashbook',
         permission: 'cashbook.view',
         description: 'Balance receipts, withdrawals and the physical drawer',
       },
       {
         href: '/maturity-operations',
         label: 'Maturities',
-        icon: 'inbox',
+        icon: 'maturities',
         permission: 'case.approve',
         description: 'Operations review, automatic progression and payout dates',
       },
       {
         href: '/payouts',
         label: 'Payout desk',
-        icon: 'wallet',
+        icon: 'payout',
         permission: 'payout.record',
         badge: 'dueToday',
         description: 'Record what actually goes across the counter',
@@ -71,7 +72,7 @@ export const NAV: { section: string; items: NavItem[] }[] = [
       {
         href: '/follow-up',
         label: 'Follow-up',
-        icon: 'shield',
+        icon: 'followUp',
         permission: 'case.view',
         description: 'Missed days, today’s counter, large cases, broken promises',
       },
@@ -83,14 +84,14 @@ export const NAV: { section: string; items: NavItem[] }[] = [
       {
         href: '/maturity-calendar',
         label: 'Maturity calendar',
-        icon: 'calendar',
+        icon: 'maturityCalendar',
         permission: 'case.view',
         description: 'Current and next month upcoming maturities',
       },
       {
         href: '/cash-planner',
         label: 'Cash runway',
-        icon: 'banknote',
+        icon: 'cashRunway',
         permission: 'cash.plan',
         description: 'Cash and NEFT to hold, 14 working days',
       },
@@ -102,21 +103,21 @@ export const NAV: { section: string; items: NavItem[] }[] = [
       {
         href: '/customers',
         label: 'Customers',
-        icon: 'users',
+        icon: 'customers',
         permission: 'case.view',
         description: 'Who is owed what, and when it lands',
       },
       {
         href: '/agents',
         label: 'Agents',
-        icon: 'users',
+        icon: 'agents',
         permission: 'agent.view',
         description: 'Per-agent totals',
       },
       {
         href: '/branches',
         label: 'Branches',
-        icon: 'building',
+        icon: 'branches',
         permission: 'branch.view',
         headOfficeOnly: true,
         description: 'Per-branch rollup',
@@ -129,21 +130,21 @@ export const NAV: { section: string; items: NavItem[] }[] = [
       {
         href: '/import',
         label: 'Import register',
-        icon: 'upload',
+        icon: 'import',
         permission: 'data.import',
         description: 'Upload one branch or auto-sort a compiled workbook',
       },
       {
         href: '/reports',
         label: 'Reports',
-        icon: 'chart',
+        icon: 'reports',
         permission: 'report.export',
         description: 'Excel and CSV downloads',
       },
       {
         href: '/audit',
         label: 'Audit log',
-        icon: 'shield',
+        icon: 'audit',
         permission: 'audit.view',
         description: 'Every action, immutable',
       },

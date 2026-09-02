@@ -1,12 +1,13 @@
 'use client';
 
-import { Building2, KeyRound, LogOut, Menu, UserCircle2, X } from 'lucide-react';
+import { KeyRound, LogOut, Menu, UserCircle2, X } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 
 import { logoutAction } from '@/actions/auth';
 import { UserAvatar } from '@/components/domain/user-avatar';
+import { BrandMark } from '@/components/layout/brand-mark';
 import type { SessionUser } from '@/lib/auth/session';
 import { ROLE_LABEL, ROLE_SHORT, activeRole } from '@/lib/rbac';
 import { cn } from '@/lib/utils';
@@ -46,9 +47,7 @@ export function Topbar({
         </button>
 
         <Link href="/dashboard" className="flex shrink-0 items-center gap-2.5" aria-label="Open Summary">
-          <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-gradient-to-br from-[var(--color-brand-400)] to-[var(--color-brand-600)] shadow-[0_4px_12px_-5px_rgba(37,99,235,0.75)]">
-            <Building2 className="h-4 w-4 text-white" />
-          </span>
+          <BrandMark className="h-8 w-8" />
           <span className="hidden sm:block">
             <span className="block max-w-[10rem] truncate text-[0.875rem] font-bold leading-tight tracking-[-0.01em]">
               {session.orgShortName || 'MaturityFlow'}

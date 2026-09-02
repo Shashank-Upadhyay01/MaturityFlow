@@ -1,22 +1,23 @@
 'use client';
 
 import {
-  Banknote,
+  BookOpenCheck,
   Building2,
-  Calculator,
-  CalendarDays,
+  CalendarClock,
+  ChartNoAxesCombined,
   ChevronDown,
-  FileStack,
-  Inbox,
+  ClipboardCheck,
+  ContactRound,
+  FileSpreadsheet,
+  FileUp,
+  HandCoins,
+  Handshake,
   LayoutDashboard,
+  ListTodo,
   type LucideIcon,
-  PieChart,
-  Plus,
-  Settings,
-  Shield,
-  Upload,
-  Users,
-  Wallet,
+  ScrollText,
+  SlidersHorizontal,
+  Vault,
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -28,20 +29,21 @@ import { cn } from '@/lib/utils';
 import { NAV, TOP_LEVEL_NAV, type NavItem } from './nav-config';
 
 const ICONS: Record<NavItem['icon'], LucideIcon> = {
-  dashboard: LayoutDashboard,
-  plus: Plus,
-  inbox: Inbox,
-  files: FileStack,
-  upload: Upload,
-  wallet: Wallet,
-  banknote: Banknote,
-  calculator: Calculator,
-  calendar: CalendarDays,
-  users: Users,
-  building: Building2,
-  chart: PieChart,
-  shield: Shield,
-  settings: Settings,
+  summary: LayoutDashboard,
+  register: FileSpreadsheet,
+  cashbook: BookOpenCheck,
+  maturities: ClipboardCheck,
+  payout: HandCoins,
+  followUp: ListTodo,
+  maturityCalendar: CalendarClock,
+  cashRunway: Vault,
+  customers: ContactRound,
+  agents: Handshake,
+  branches: Building2,
+  import: FileUp,
+  reports: ChartNoAxesCombined,
+  audit: ScrollText,
+  settings: SlidersHorizontal,
 };
 
 export interface NavBadges {
@@ -87,7 +89,15 @@ function Destination({
           : 'border-transparent text-[var(--muted-fg)] hover:border-[var(--glass-border-quiet)] hover:bg-[var(--glass-bg-subtle)] hover:text-[var(--page-fg)]',
       )}
     >
-      <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', active && 'text-[var(--color-brand-500)]')} />
+      <span
+        data-nav-icon={item.icon}
+        className={cn(
+          'flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-[var(--glass-border-quiet)] bg-[var(--glass-bg-subtle)] text-[var(--muted-fg)]',
+          active && 'border-[color-mix(in_oklab,var(--color-brand-500)_24%,var(--glass-border))] bg-[color-mix(in_oklab,var(--color-brand-500)_10%,var(--surface-solid))] text-[var(--color-brand-500)]',
+        )}
+      >
+        <Icon className="h-3.5 w-3.5" strokeWidth={1.9} />
+      </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
           <span className="truncate text-[0.8125rem] font-semibold">{item.label}</span>
@@ -195,7 +205,7 @@ export function TopNavigation({
                 : 'text-[var(--muted-fg)] hover:bg-[var(--glass-bg-subtle)] hover:text-[var(--page-fg)]',
             )}
           >
-            <Icon className="h-3.5 w-3.5" />
+            <Icon data-nav-icon={item.icon} className="h-3.5 w-3.5" strokeWidth={1.9} />
             {item.label}
           </Link>
         );
