@@ -17,7 +17,6 @@ import {
   MessageCircle,
   Printer,
   RotateCcw,
-  Save,
   Send,
   Share2,
   Trash2,
@@ -191,6 +190,14 @@ function liveMoney(value: string): bigint {
   return tryParseRupeesToPaise(value) ?? 0n;
 }
 
+function countInput(value: number): string {
+  return value > 0 ? String(value) : '';
+}
+
+function zeroMoneyInput(paise: string): string {
+  return BigInt(paise) > 0n ? sheetMoneyInput(paise) : '';
+}
+
 function initialFigures(view: View): FigureForm {
   return {
     oldPortalTotal: sheetMoneyInput(view.figures.oldPortalTotalPaise),
@@ -198,16 +205,21 @@ function initialFigures(view: View): FigureForm {
     newBusiness: sheetMoneyInput(view.figures.newBusinessPaise),
     membershipCollection: sheetMoneyInput(view.figures.membershipCollectionPaise),
     oldLoan: sheetMoneyInput(view.figures.oldLoanPaise),
-    note500Count: String(view.figures.note500Count),
-    note200Count: String(view.figures.note200Count),
-    note100Count: String(view.figures.note100Count),
-    note50Count: String(view.figures.note50Count),
-    note20Count: String(view.figures.note20Count),
-    note10Count: String(view.figures.note10Count),
-    coins: sheetMoneyInput(view.figures.coinsPaise),
+    note500Count: countInput(view.figures.note500Count),
+    note200Count: countInput(view.figures.note200Count),
+    note100Count: countInput(view.figures.note100Count),
+    note50Count: countInput(view.figures.note50Count),
+    note20Count: countInput(view.figures.note20Count),
+    note10Count: countInput(view.figures.note10Count),
+    coins: zeroMoneyInput(view.figures.coinsPaise),
     notes: view.day?.notes ?? '',
   };
 }
+
+const DENOMINATION_FIELD_ORDER = [
+  ...CASHBOOK_DENOMINATIONS.map((item) => item.field),
+  'coins',
+] as const;
 
 /**
  * Which column a saved entry belongs in.
@@ -283,7 +295,93 @@ function cellPosition(key: string): { column: number; row: number } | null {
   return separator > 0 && column >= 0 && Number.isInteger(row) ? { column, row } : null;
 }
 
-function ShareMenu({ view, canExport }: { view: View; canExport: boolean }) {
+/** Keep the active cell on screen: first the sheet scroller, then the page. */
+function keepCellInView(target: HTMLElement) {
+  target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  const rect = target.getBoundingClientRect();
+  const topPad = 96;
+  const bottomPad = 80;
+  if (rect.bottom > window.innerHeight - bottomPad) {
+    window.scrollBy({ top: rect.bottom - (window.innerHeight - bottomPad), behavior: 'auto' });
+  } else if (rect.top < topPad) {
+    window.scrollBy({ top: rect.top - topPad, behavior: 'auto' });
+  }
+}
+
+interface PanelShareRow {
+  label: string;
+  valuePaise?: string;
+  text?: string;
+  strong?: boolean;
+  tone?: 'add' | 'subtract' | 'report';
+}
+
+/**
+ * Share one panel on its own.
+ *
+ * The whole-cashbook share sends a summary card, which is the wrong thing when a manager on
+ * WhatsApp asks only "what is the note mix?". The rows are built by the caller from exactly
+ * what the panel is showing - including counts typed but not yet saved - so the picture and
+ * the screen can never disagree.
+ */
+function PanelShareButton({ view, title, rows }: { view: View; title: string; rows: PanelShareRow[] }) {
+  const [busy, setBusy] = useState(false);
+
+  async function share() {
+    setBusy(true);
+    try {
+      const response = await fetch('/api/export/cashbook/panel', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branchId: view.branch.id, date: view.date, title, rows }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error ?? 'Could not create the image.');
+      }
+      const blob = await response.blob();
+      const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const file = new File([blob], `${view.branch.code}-${slug}-${view.date}.png`, { type: 'image/png' });
+      if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+        await navigator.share({ title: `${title} \u00b7 ${view.branch.code} ${view.date}`, files: [file] });
+      } else {
+        // Desktop Chrome cannot share a file, so fall back to a download the cashier can attach.
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = file.name;
+        link.click();
+        URL.revokeObjectURL(url);
+        toast.success(`${title} image downloaded`);
+      }
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        toast.error(error instanceof Error ? error.message : 'Could not share the panel.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="h-7 w-7"
+      draggable={false}
+      onClick={share}
+      disabled={busy}
+      aria-label={`Share ${title.toLowerCase()}`}
+      title={`Share ${title.toLowerCase()}`}
+    >
+      <Share2 className="h-3.5 w-3.5" />
+    </Button>
+  );
+}
+
+function ShareMenu({ view, canExport, onBeforeShare }: { view: View; canExport: boolean; onBeforeShare?: () => void | Promise<void> }) {
   const [open, setOpen] = useState(false);
   const [sharing, setSharing] = useState(false);
   const query = `branchId=${encodeURIComponent(view.branch.id)}&date=${encodeURIComponent(view.date)}`;
@@ -305,6 +403,7 @@ function ShareMenu({ view, canExport }: { view: View; canExport: boolean }) {
   async function shareImage() {
     setSharing(true);
     try {
+      await onBeforeShare?.();
       const response = await fetch(imageUrl, { credentials: 'same-origin' });
       if (!response.ok) throw new Error('Could not create the summary image.');
       const blob = await response.blob();
@@ -344,8 +443,8 @@ function ShareMenu({ view, canExport }: { view: View; canExport: boolean }) {
               <button type="button" onClick={() => setOpen(false)} aria-label="Close share menu"><X className="h-4 w-4" /></button>
             </div>
             <div className="grid grid-cols-2 gap-1 text-[0.75rem]">
-              <button type="button" onClick={shareImage} disabled={sharing} className="rounded-lg p-3 text-left hover:bg-[var(--glass-bg-subtle)]"><FileImage className="mb-1 h-4 w-4" />{sharing ? 'Preparing…' : 'Image'}</button>
-              <a href={printUrl} target="_blank" rel="noreferrer" className="rounded-lg p-3 hover:bg-[var(--glass-bg-subtle)]"><Printer className="mb-1 h-4 w-4" />PDF / Print</a>
+              <button type="button" onClick={() => void shareImage()} disabled={sharing} className="rounded-lg p-3 text-left hover:bg-[var(--glass-bg-subtle)]"><FileImage className="mb-1 h-4 w-4" />{sharing ? 'Preparing…' : 'Image'}</button>
+              <a href={printUrl} target="_blank" rel="noreferrer" onClick={(event) => { event.preventDefault(); void (async () => { await onBeforeShare?.(); window.open(printUrl, '_blank', 'noopener'); })(); }} className="rounded-lg p-3 hover:bg-[var(--glass-bg-subtle)]"><Printer className="mb-1 h-4 w-4" />PDF / Print</a>
               {canExport && <a href={`/api/export/cashbook?${query}&format=xlsx`} className="rounded-lg p-3 hover:bg-[var(--glass-bg-subtle)]"><FileSpreadsheet className="mb-1 h-4 w-4" />Excel</a>}
               {canExport && <a href={`/api/export/cashbook?${query}&format=csv`} className="rounded-lg p-3 hover:bg-[var(--glass-bg-subtle)]"><Download className="mb-1 h-4 w-4" />CSV</a>}
               <button type="button" onClick={copySummary} className="rounded-lg p-3 text-left hover:bg-[var(--glass-bg-subtle)]"><Link2 className="mb-1 h-4 w-4" />Copy summary</button>
@@ -395,6 +494,14 @@ export function CashbookWorkbench({
   const keyboardMoveRef = useRef(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gridDirtyRef = useRef(false);
+  const pendingFocusRef = useRef<string | null>(null);
+  const figuresVersionRef = useRef(view.day?.version ?? 0);
+  const figuresSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const figuresSkipSaveRef = useRef(true);
+  const figuresRef = useRef(figures);
+  const undoStackRef = useRef<{ key: string; before: string }[]>([]);
+  const draggingSelectRef = useRef(false);
+  const skippingUndoRef = useRef(false);
   const [namedDrafts, setNamedDrafts] = useState<NamedDrafts>({
     GIVEN_CASH: { partyName: '', amount: '' },
     DUE_AMOUNT: { partyName: '', amount: '' },
@@ -404,6 +511,7 @@ export function CashbookWorkbench({
 
   useEffect(() => () => {
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    if (figuresSaveTimerRef.current) clearTimeout(figuresSaveTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -428,21 +536,35 @@ export function CashbookWorkbench({
   }, []);
 
   useLayoutEffect(() => {
-    const key = activeCellRef.current ?? sessionStorage.getItem(focusStorageKey);
+    const key = pendingFocusRef.current ?? activeCellRef.current ?? sessionStorage.getItem(focusStorageKey);
     if (!key) return;
     activeCellRef.current = key;
-    const frame = requestAnimationFrame(() => {
-      const target = document.querySelector<HTMLElement>(`[data-cash-cell="${key}"]`);
-      if (target && document.activeElement !== target) target.focus({ preventScroll: true });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [focusStorageKey, view.currentCommitments, view.entries]);
+    const target = document.querySelector<HTMLElement>(`[data-cash-cell="${key}"]`);
+    if (!target) return;
+    pendingFocusRef.current = null;
+    if (document.activeElement !== target) target.focus({ preventScroll: true });
+    keepCellInView(target);
+  }, [focusStorageKey, revealedRows, view.currentCommitments, view.entries]);
 
   const status = view.day?.status ?? 'OPEN';
   const locked = status !== 'OPEN';
   const canMutate = canEdit && !locked;
-  const version = view.day?.version ?? 0;
   const statusMeta = STATUS_META[status];
+
+  useEffect(() => {
+    const stopDrag = () => { draggingSelectRef.current = false; };
+    window.addEventListener('pointerup', stopDrag);
+    return () => window.removeEventListener('pointerup', stopDrag);
+  }, []);
+
+  useEffect(() => {
+    figuresRef.current = figures;
+  }, [figures]);
+
+  useEffect(() => {
+    const incoming = view.day?.version ?? 0;
+    if (incoming > figuresVersionRef.current) figuresVersionRef.current = incoming;
+  }, [view.day?.version]);
 
   // One parse of the form, shared by the reconciliation and the note-mix panel, so the
   // bars can never disagree with the totals printed beside them.
@@ -566,12 +688,17 @@ export function CashbookWorkbench({
     }, 800);
   }
 
-  async function saveCell(column: MovementColumn, rowIndex: number): Promise<void> {
+  async function saveCell(column: MovementColumn, rowIndex: number, explicit?: string): Promise<void> {
     if (!canMutate) return;
     const key = cellKey(column.key, rowIndex);
-    const value = (cellDrafts[key] ?? '').trim();
+    const value = (explicit ?? cellDrafts[key] ?? '').trim();
     const rowId = cellIds[key];
     const row = view.entries.find((entry) => entry.id === rowId) ?? columnEntries[column.key][rowIndex];
+    const previous = row ? sheetMoneyInput(row.amountPaise) : '';
+    if (!skippingUndoRef.current && previous !== value) {
+      undoStackRef.current.push({ key, before: previous });
+      if (undoStackRef.current.length > 80) undoStackRef.current.shift();
+    }
     if (!value && !row) return;
     if (!value && row) {
       setSavingCell(key);
@@ -707,6 +834,7 @@ export function CashbookWorkbench({
       ? { anchor: current?.anchor ?? cellKey(SHEET_COLUMNS[columnIndex].key, rowIndex), focus: targetKey }
       : { anchor: targetKey, focus: targetKey });
     activeCellRef.current = targetKey;
+    pendingFocusRef.current = targetKey;
     keyboardMoveRef.current = true;
     sessionStorage.setItem(focusStorageKey, targetKey);
     // Reveal the row before reaching for it: a cell that has not rendered cannot take focus.
@@ -716,15 +844,12 @@ export function CashbookWorkbench({
     ));
     const focusTarget = () => {
       const target = document.querySelector<HTMLElement>(`[data-cash-cell="${targetKey}"]`);
-      // Focus without the browser's own scroll, then bring the cell into view ourselves.
-      // `block: 'nearest'` is what makes it feel like a spreadsheet: the sheet only moves when
-      // the cursor would otherwise leave it, and it moves by exactly one row or column.
-      target?.focus({ preventScroll: true });
-      target?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      return Boolean(target);
+      if (!target) return false;
+      pendingFocusRef.current = null;
+      target.focus({ preventScroll: true });
+      keepCellInView(target);
+      return true;
     };
-    // Move synchronously. Leaving a one-frame gap after blurring lets the browser
-    // hand focus to <body>, where a fast second arrow press scrolls the page.
     if (!focusTarget()) requestAnimationFrame(focusTarget);
     queueMicrotask(() => { keyboardMoveRef.current = false; });
   }
@@ -762,22 +887,114 @@ export function CashbookWorkbench({
     columnIndex: number,
     rowIndex: number,
   ) {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+      event.preventDefault();
+      void undoLastCell();
+      return;
+    }
     if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(event.key)) return;
     event.preventDefault();
     moveCell(columnIndex, rowIndex, event.key, event.shiftKey && event.key !== 'Enter');
   }
 
-  function saveFigures(event: FormEvent) {
-    event.preventDefault();
-    const rupeeFields = [figures.oldPortalTotal, figures.fixedDeposit, figures.newBusiness, figures.membershipCollection, figures.oldLoan, figures.coins];
+  function handleCellPointerDown(event: ReactPointerEvent<HTMLInputElement>, key: string) {
+    if (event.button !== 0) return;
+    draggingSelectRef.current = true;
+    if (event.shiftKey) {
+      setSelection((current) => ({ anchor: current?.anchor ?? key, focus: key }));
+    } else {
+      setSelection({ anchor: key, focus: key });
+    }
+  }
+
+  function handleCellPointerEnter(key: string) {
+    if (!draggingSelectRef.current) return;
+    setSelection((current) => current ? { ...current, focus: key } : { anchor: key, focus: key });
+  }
+
+  async function undoLastCell() {
+    const last = undoStackRef.current.pop();
+    if (!last) return;
+    const position = cellPosition(last.key);
+    if (!position) return;
+    skippingUndoRef.current = true;
+    setCellDrafts((old) => ({ ...old, [last.key]: last.before }));
+    const column = SHEET_COLUMNS[position.column];
+    try {
+      await (isCommitmentColumn(column)
+        ? saveCommitmentCell(column, position.row)
+        : saveCell(column, position.row, last.before));
+    } finally {
+      skippingUndoRef.current = false;
+    }
+  }
+
+  async function persistFigures() {
+    if (!canMutate) return;
+    if (figuresSaveTimerRef.current) {
+      clearTimeout(figuresSaveTimerRef.current);
+      figuresSaveTimerRef.current = null;
+    }
+    const current = figuresRef.current;
+    const rupeeFields = [current.oldPortalTotal, current.fixedDeposit, current.newBusiness, current.membershipCollection, current.oldLoan, current.coins];
     if (rupeeFields.some((value) => {
+      if (!value.trim()) return false;
       const parsed = tryParseRupeesToPaise(value);
       return parsed === null || parsed % 100n !== 0n;
-    })) return toast.error('Cash-control values must be whole rupees without decimals.');
-    run(
-      () => saveCashbookDayAction({ branchId: view.branch.id, date: view.date, expectedVersion: version, ...figures }),
-      'Cash count and report figures saved',
-    );
+    })) {
+      toast.error('Cash-control values must be whole rupees without decimals.');
+      return;
+    }
+    const result = await saveCashbookDayAction({
+      branchId: view.branch.id,
+      date: view.date,
+      expectedVersion: figuresVersionRef.current,
+      ...current,
+    });
+    if (!result.ok) {
+      toast.error(result.error ?? 'Could not save the cash count.');
+      return;
+    }
+    if (result.data?.version != null) figuresVersionRef.current = result.data.version;
+  }
+
+  function scheduleFiguresSave() {
+    if (!canMutate) return;
+    if (figuresSaveTimerRef.current) clearTimeout(figuresSaveTimerRef.current);
+    figuresSaveTimerRef.current = setTimeout(() => {
+      figuresSaveTimerRef.current = null;
+      void persistFigures();
+    }, 500);
+  }
+
+  useEffect(() => {
+    if (figuresSkipSaveRef.current) {
+      figuresSkipSaveRef.current = false;
+      return;
+    }
+    scheduleFiguresSave();
+    return () => {
+      if (figuresSaveTimerRef.current) clearTimeout(figuresSaveTimerRef.current);
+    };
+    // Persist after the clerk pauses typing; the helper always reads the latest refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [figures, canMutate]);
+
+  function saveFigures(event: FormEvent) {
+    event.preventDefault();
+    void persistFigures();
+  }
+
+  function handleDenomKeyDown(event: KeyboardEvent<HTMLInputElement>, index: number) {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Enter') return;
+    event.preventDefault();
+    const next = event.key === 'ArrowUp' ? index - 1 : index + 1;
+    if (next < 0 || next >= DENOMINATION_FIELD_ORDER.length) return;
+    const target = document.getElementById(DENOMINATION_FIELD_ORDER[next]);
+    if (target instanceof HTMLInputElement) {
+      target.focus();
+      target.select();
+    }
   }
 
   function quickAddNamed(kind: CashbookCommitmentKind) {
@@ -956,6 +1173,35 @@ export function CashbookWorkbench({
         ? 'border-[var(--row-partial-edge)] bg-[var(--row-partial)] text-[var(--row-partial-fg)]'
         : 'border-[var(--input-border)] bg-[var(--glass-bg-subtle)] text-[var(--muted-fg)]';
 
+  // Rows for the per-panel share images, read off the same live values the panels render.
+  const denominationRows = CASHBOOK_DENOMINATIONS.map((denomination) => {
+    const count = nonNegativeCount(figures[denomination.field as CashbookDenominationField]);
+    return {
+      count,
+      row: {
+        label: `Rs ${denomination.rupees.toString()} x ${count}`,
+        valuePaise: (BigInt(count) * denomination.paise).toString(),
+      },
+    };
+  });
+
+  const coinsShareRow = { label: 'Coins', valuePaise: liveMoney(figures.coins).toString() };
+  const cashInHandShareRow = { label: 'Cash in hand', valuePaise: totals.countedCashPaise.toString(), strong: true };
+
+  // Cash control lists notes in denomination order, the way the form is typed.
+  const cashControlShareRows: PanelShareRow[] = [
+    ...denominationRows.map((item) => item.row),
+    coinsShareRow,
+    cashInHandShareRow,
+  ];
+
+  // The note mix panel ranks by how many of each note is held, so its image does too.
+  const noteMixShareRows: PanelShareRow[] = [
+    ...[...denominationRows].sort((a, b) => b.count - a.count).map((item) => item.row),
+    coinsShareRow,
+    cashInHandShareRow,
+  ];
+
   const summaryRows: {
     label: string;
     value: bigint;
@@ -993,7 +1239,7 @@ export function CashbookWorkbench({
           {([['borrowed', 'GIVEN_CASH'], ['due', 'DUE_AMOUNT'], ['pending', 'PENDING_WITHDRAWAL']] as const).map(([id, kind]) => toolbarItem(id, COMMITMENT_UI_META[kind].label, <button type="button" onClick={() => { setActiveNamedKind(kind); setNamedOpen((value) => kind === activeNamedKind ? !value : true); }} className={cn('flex h-9 w-full flex-col justify-center rounded-[9px] border bg-[var(--input-bg)] px-2 text-left hover:bg-[var(--glass-bg-strong)]', namedOpen && activeNamedKind === kind && 'bg-[var(--color-brand-50)] text-[var(--color-brand-700)]')} title={`Manage ${COMMITMENT_UI_META[kind].label}`}><span className="truncate text-[0.68rem] font-semibold leading-none">{COMMITMENT_UI_META[kind].shortLabel}</span><Money paise={view.commitmentTotals[kind].outstandingPaise} compact decimals={false} className="mt-1 block text-[0.82rem] font-extrabold leading-none" /></button>))}
           {toolbarItem('status', 'status', <div className="flex h-9 w-full items-center justify-center rounded-[9px] border bg-[var(--input-bg)]"><Badge tone={statusMeta.tone}>{status === 'CLOSED' ? <LockKeyhole className="h-3 w-3" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}{statusMeta.label}</Badge></div>)}
           {toolbarItem('close', 'close controls', <div className="flex h-9 w-full items-center">{status === 'OPEN' && canEdit && <Button type="button" className="h-9 w-full" variant={totals.state === 'BALANCED' ? 'success' : 'primary'} size="sm" loading={pending} onClick={requestClose}><ClipboardCheck className="h-3.5 w-3.5" />Close</Button>}{status === 'CLOSE_REQUESTED' && canClose && <><Button type="button" variant="outline" size="icon" loading={pending} onClick={() => reviewClose(false)} aria-label="Return cashbook"><RotateCcw className="h-3.5 w-3.5" /></Button><Button type="button" variant="success" size="sm" loading={pending} onClick={() => reviewClose(true)}>Confirm</Button></>}{status === 'CLOSED' && canClose && <Button type="button" className="h-9 w-full" variant="outline" size="sm" loading={pending} onClick={reopen}><RotateCcw className="h-3.5 w-3.5" />Reopen</Button>}</div>)}
-          {toolbarItem('utilities', 'layout and share controls', <div className="flex h-9 w-full items-center justify-end gap-0.5"><Button type="button" variant={arranging ? 'primary' : 'ghost'} size="icon" className="h-9 w-9" onClick={() => setArranging((value) => !value)} aria-label="Arrange layout" title="Move and resize layout"><LayoutGrid className="h-4 w-4" /></Button>{arranging && <Button type="button" variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setPanelOrder(DEFAULT_PANEL_ORDER); setPanelSpans(DEFAULT_PANEL_SPANS); setToolbarOrder(DEFAULT_TOOLBAR_ORDER); setToolbarWidths(DEFAULT_TOOLBAR_WIDTHS); localStorage.removeItem('mf-cashbook-panel-order'); localStorage.removeItem('mf-cashbook-panel-spans'); localStorage.removeItem('mf-cashbook-toolbar-order'); localStorage.removeItem('mf-cashbook-toolbar-widths'); }} aria-label="Reset layout" title="Reset layout"><RotateCcw className="h-4 w-4" /></Button>}<ShareMenu view={view} canExport={canExport} /></div>)}
+          {toolbarItem('utilities', 'layout and share controls', <div className="flex h-9 w-full items-center justify-end gap-0.5"><Button type="button" variant={arranging ? 'primary' : 'ghost'} size="icon" className="h-9 w-9" onClick={() => setArranging((value) => !value)} aria-label="Arrange layout" title="Move and resize layout"><LayoutGrid className="h-4 w-4" /></Button>{arranging && <Button type="button" variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setPanelOrder(DEFAULT_PANEL_ORDER); setPanelSpans(DEFAULT_PANEL_SPANS); setToolbarOrder(DEFAULT_TOOLBAR_ORDER); setToolbarWidths(DEFAULT_TOOLBAR_WIDTHS); localStorage.removeItem('mf-cashbook-panel-order'); localStorage.removeItem('mf-cashbook-panel-spans'); localStorage.removeItem('mf-cashbook-toolbar-order'); localStorage.removeItem('mf-cashbook-toolbar-widths'); }} aria-label="Reset layout" title="Reset layout"><RotateCcw className="h-4 w-4" /></Button>}<ShareMenu view={view} canExport={canExport} onBeforeShare={persistFigures} /></div>)}
 
           {namedOpen && <div className="absolute right-2 top-[calc(100%+0.5rem)] z-50 w-[min(22rem,calc(100vw-1.5rem))]"><div className="glass border p-3 shadow-2xl" style={{ background: 'var(--surface-solid)' }}><div className="mb-2 flex items-center justify-between"><div><p className="text-[0.84rem] font-semibold">{COMMITMENT_UI_META[activeNamedKind].label}</p><p className="text-[0.68rem] text-[var(--faint-fg)]">Named report item · does not change expected cash</p></div><button type="button" onClick={() => setNamedOpen(false)} aria-label="Close named items"><X className="h-4 w-4" /></button></div><div className="grid grid-cols-[minmax(0,1fr)_7rem_auto] gap-1.5"><Input placeholder="Person name" value={namedDrafts[activeNamedKind].partyName} disabled={!canMutate || pending} onChange={(event) => setNamedDrafts((old) => ({ ...old, [activeNamedKind]: { ...old[activeNamedKind], partyName: event.target.value } }))} className="h-9 py-1 text-[0.76rem]" /><Input inputMode="numeric" placeholder="Amount" value={namedDrafts[activeNamedKind].amount} disabled={!canMutate || pending} onChange={(event) => setNamedDrafts((old) => ({ ...old, [activeNamedKind]: { ...old[activeNamedKind], amount: event.target.value } }))} className="h-9 py-1 text-right text-[0.76rem]" /><Button type="button" size="sm" variant="primary" loading={pending} disabled={!canMutate} onClick={() => quickAddNamed(activeNamedKind)}>Add</Button></div><div className="mt-2 max-h-56 space-y-1.5 overflow-y-auto">{namedItems.length === 0 ? <p className="rounded-[9px] bg-[var(--glass-bg-subtle)] px-3 py-3 text-center text-[0.72rem] text-[var(--faint-fg)]">Nothing outstanding.</p> : namedItems.map((item) => <div key={item.id} className="flex items-center gap-2 rounded-[9px] border bg-[var(--glass-bg-subtle)] px-2.5 py-2"><div className="min-w-0 flex-1"><p className="truncate text-[0.74rem] font-semibold">{item.partyName}</p><p className="truncate text-[0.64rem] text-[var(--faint-fg)]">{item.carried ? `Carried from ${formatISODate(item.sourceDate)}` : 'Added today'}</p></div><Money paise={item.amountPaise} decimals={false} className="shrink-0 text-[0.76rem] font-bold" />{canEdit && <button type="button" onClick={() => run(() => setCashbookCommitmentSettledAction(item.id, true), 'Item settled')} className="rounded-md bg-[var(--color-money-600)] p-1.5 text-white" aria-label="Settle item"><Check className="h-3.5 w-3.5" /></button>}{!item.carried && canMutate && <button type="button" onClick={() => run(() => voidCashbookCommitmentAction(item.id, 'Removed from named items menu'), 'Item removed')} className="rounded-md p-1.5 text-[var(--color-danger-600)]" aria-label="Remove item"><Trash2 className="h-3.5 w-3.5" /></button>}</div>)}</div></div></div>}
         </div>
@@ -1002,29 +1248,29 @@ export function CashbookWorkbench({
       <div data-cashbook-grid className="grid min-w-0 grid-flow-row-dense items-stretch gap-3 xl:grid-cols-[repeat(16,minmax(0,1fr))]">
         <section
           data-cashbook-panel="ledger"
-          className={cn('cashbook-panel relative min-w-0 xl:row-span-2', draggedPanel === 'ledger' && 'opacity-60')}
+          className={cn('cashbook-panel relative min-w-0 xl:row-span-2 xl:h-[min(70vh,42rem)] xl:max-h-[min(70vh,42rem)]', draggedPanel === 'ledger' && 'opacity-60')}
           style={{ order: panelOrder.indexOf('ledger'), '--cashbook-span': panelSpans.ledger } as CSSProperties}
           onDragOver={(event) => arranging && event.preventDefault()}
           onDrop={() => movePanel('ledger')}
         >
-        <Glass className="flex h-full min-w-0 flex-col overflow-hidden">
+        <Glass className="flex h-full max-h-[min(70vh,42rem)] min-w-0 flex-col overflow-hidden">
           <div className="flex shrink-0 items-center border-b px-4 py-3">
             <div className="flex items-start gap-1.5">
               {panelDragHandle('ledger', 'movements sheet')}
               <div>
               <h2 className="text-[0.95rem] font-semibold tracking-[-0.01em]">Today’s movements</h2>
-              <p className="text-[0.72rem] text-[var(--muted-fg)]">Enter saves and moves down · arrows move between cells · Backspace or Delete clears a cell.</p>
+              <p className="text-[0.72rem] text-[var(--muted-fg)]">Enter saves and moves down · arrows move between cells · Ctrl+Z undoes · drag to select.</p>
               </div>
             </div>
           </div>
 
           <div className="min-h-0 flex-1 overflow-auto">
-            <div className="grid min-h-full min-w-[935px] grid-cols-11 bg-[var(--surface-solid)] text-[var(--page-fg)] xl:min-w-0">
+            <div className="grid min-w-[935px] grid-cols-11 bg-[var(--surface-solid)] text-[var(--page-fg)] xl:min-w-0">
               {SHEET_COLUMNS.map((column, columnIndex) => {
                 const commitmentColumn = isCommitmentColumn(column);
                 const entries = commitmentColumn ? columnCommitments[column.key] : columnEntries[column.key];
                 return (
-                  <section key={column.key} className="flex min-h-full min-w-0 flex-col overflow-hidden border-r border-[var(--input-border)] last:border-r-0">
+                  <section key={column.key} className="flex min-w-0 flex-col overflow-hidden border-r border-[var(--input-border)] last:border-r-0">
                     <div className="sticky top-0 z-10 flex h-12 min-w-0 shrink-0 items-center justify-center overflow-hidden border-b border-[var(--input-border)] px-1 text-center text-[0.67rem] font-bold leading-[1.08] tracking-[0.005em] text-[var(--page-fg)]" style={{ background: column.head, boxShadow: `inset 0 3px 0 ${column.accent}` }}>
                       <span className="min-w-0 break-words">{column.label}</span>
                     </div>
@@ -1047,8 +1293,10 @@ export function CashbookWorkbench({
                           onChange={(event) => setCellDrafts((old) => ({ ...old, [key]: event.target.value }))}
                           onBlur={(event) => { handleCellBlur(event.relatedTarget); void (commitmentColumn ? saveCommitmentCell(column, rowIndex) : saveCell(column, rowIndex)); }}
                           onKeyDown={(event) => handleCellKeyDown(event, columnIndex, rowIndex)}
+                          onPointerDown={(event) => handleCellPointerDown(event, key)}
+                          onPointerEnter={() => handleCellPointerEnter(key)}
                           className={cn(
-                            'min-h-8 w-full flex-1 border-0 border-b border-[var(--input-border)] bg-[var(--surface-solid)] px-2 text-right text-[0.78rem] font-semibold tabular-nums text-[var(--page-fg)] outline-none transition-colors',
+                            'h-8 w-full shrink-0 scroll-mb-10 scroll-mt-14 border-0 border-b border-[var(--input-border)] bg-[var(--surface-solid)] px-2 text-right text-[0.78rem] font-semibold tabular-nums text-[var(--page-fg)] outline-none transition-colors',
                             'focus:relative focus:z-10 focus:bg-[var(--color-brand-50)] focus:text-[var(--color-brand-700)] focus:ring-2 focus:ring-inset focus:ring-[var(--color-brand-500)]',
                             selectedCells.has(key) && 'bg-[var(--color-brand-50)] text-[var(--color-brand-700)] ring-1 ring-inset ring-[var(--color-brand-400)]',
                             savingCell === key && 'bg-[var(--color-brand-50)]',
@@ -1084,7 +1332,7 @@ export function CashbookWorkbench({
         >
           <GlassCard
             title={<span className="flex items-center gap-1.5">{panelDragHandle('cashFlow', 'note mix')}<Layers className="h-4 w-4 text-[var(--color-brand-500)]" />Note mix</span>}
-            action={<Badge tone="money"><span className="h-1.5 w-1.5 rounded-full bg-current" />Live</Badge>}
+            action={<><PanelShareButton view={view} title="Note mix" rows={noteMixShareRows} /><Badge tone="money"><span className="h-1.5 w-1.5 rounded-full bg-current" />Live</Badge></>}
             bodyClassName="h-[19rem] p-0 sm:p-0"
           >
             <CashbookNoteMix figures={liveFigures} countedCashPaise={totals.countedCashPaise} />
@@ -1101,27 +1349,28 @@ export function CashbookWorkbench({
         >
           <GlassCard
             title={<span className="flex items-center gap-1.5">{panelDragHandle('cashControl', 'cash control')}<Banknote className="h-4 w-4 text-[var(--color-money-500)]" />Cash control</span>}
+            action={<PanelShareButton view={view} title="Cash control" rows={cashControlShareRows} />}
             bodyClassName="p-3 sm:p-3"
           >
             <form onSubmit={saveFigures}>
               <div>
                 <section>
-                  <div className="mb-2 flex items-center justify-between"><h3 className="text-[0.75rem] font-semibold">Denominations</h3><span className="text-[0.625rem] text-[var(--faint-fg)]">Qty × note</span></div>
+                  <div className="mb-2 flex items-center justify-between"><h3 className="text-[0.75rem] font-semibold">Denominations</h3><span className="text-[0.625rem] text-[var(--faint-fg)]">Arrow keys move · autosaves</span></div>
                   <div className="overflow-hidden rounded-[13px] border bg-[var(--input-bg)]">
-                    {CASHBOOK_DENOMINATIONS.map((denomination) => {
+                    {CASHBOOK_DENOMINATIONS.map((denomination, index) => {
                       const field = denomination.field as CashbookDenominationField;
                       const value = BigInt(nonNegativeCount(figures[field])) * denomination.paise;
                       return (
                         <div key={field} className="grid grid-cols-[3.2rem_1fr_5.6rem] items-center border-b last:border-b-0">
                           <label htmlFor={field} className="px-2 text-[0.76rem] font-bold">₹{denomination.rupees.toString()}</label>
-                          <input id={field} inputMode="numeric" value={figures[field]} disabled={!canMutate || pending} onChange={(event) => setFigures((old) => ({ ...old, [field]: event.target.value }))} className="h-8 min-w-0 w-full border-x bg-[var(--surface-solid)] px-2 text-right text-[0.76rem] font-medium tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--color-brand-500)]" />
+                          <input id={field} inputMode="numeric" value={figures[field]} placeholder=" " disabled={!canMutate || pending} onChange={(event) => setFigures((old) => ({ ...old, [field]: event.target.value.replace(/[^0-9]/g, '') }))} onFocus={(event) => event.currentTarget.select()} onKeyDown={(event) => handleDenomKeyDown(event, index)} className="h-8 min-w-0 w-full border-x bg-[var(--surface-solid)] px-2 text-right text-[0.76rem] font-medium tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--color-brand-500)]" />
                           <Money paise={value} decimals={false} className="px-2 text-right text-[0.74rem] font-semibold" />
                         </div>
                       );
                     })}
                     <div className="grid grid-cols-[3.2rem_1fr_5.6rem] items-center border-b">
                       <label htmlFor="coins" className="px-2 text-[0.72rem] font-bold">Coins</label>
-                      <input id="coins" inputMode="numeric" pattern="[0-9]*" value={figures.coins} disabled={!canMutate || pending} onChange={(event) => setFigures((old) => ({ ...old, coins: event.target.value }))} className="h-8 min-w-0 w-full border-x bg-[var(--surface-solid)] px-2 text-right text-[0.72rem] tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--color-brand-500)]" />
+                      <input id="coins" inputMode="numeric" pattern="[0-9]*" value={figures.coins} placeholder=" " disabled={!canMutate || pending} onChange={(event) => setFigures((old) => ({ ...old, coins: event.target.value }))} onFocus={(event) => event.currentTarget.select()} onKeyDown={(event) => handleDenomKeyDown(event, CASHBOOK_DENOMINATIONS.length)} className="h-8 min-w-0 w-full border-x bg-[var(--surface-solid)] px-2 text-right text-[0.72rem] tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--color-brand-500)]" />
                       <Money paise={liveMoney(figures.coins)} decimals={false} className="px-2 text-right text-[0.68rem] font-medium" />
                     </div>
                     <div className="flex items-end justify-between bg-[var(--glass-bg-strong)] px-3 py-2"><span className="text-[0.625rem] font-bold uppercase tracking-wide text-[var(--muted-fg)]">Cash in hand</span><Money paise={totals.countedCashPaise} decimals={false} className="text-[1rem] font-extrabold" /></div>
@@ -1141,7 +1390,11 @@ export function CashbookWorkbench({
           onDragOver={(event) => arranging && event.preventDefault()}
           onDrop={() => movePanel('calculation')}
         >
-          <GlassCard title={<span className="flex items-center gap-1.5">{panelDragHandle('calculation', 'cash calculation')}Cash calculation</span>} bodyClassName="p-0 sm:p-0">
+          <GlassCard
+            title={<span className="flex items-center gap-1.5">{panelDragHandle('calculation', 'cash calculation')}Cash calculation</span>}
+            action={<PanelShareButton view={view} title="Cash calculation" rows={summaryRows.map((row) => ({ label: row.label, valuePaise: row.value.toString(), strong: row.strong, tone: row.tone }))} />}
+            bodyClassName="p-0 sm:p-0"
+          >
             <form onSubmit={saveFigures}>
               <p className="sr-only">Live cash equation</p>
               <div className="cashbook-calc-grid grid">
@@ -1154,9 +1407,8 @@ export function CashbookWorkbench({
                   </div>
                 ))}
               </div>
-              <div className="grid gap-3 border-t p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+              <div className="border-t p-3">
                 <label className="text-[0.68rem] font-medium text-[var(--muted-fg)]">Day note<Textarea value={figures.notes} onChange={(event) => setFigures((old) => ({ ...old, notes: event.target.value }))} disabled={!canMutate || pending} placeholder="Optional operational note" className="mt-1 min-h-12 text-[0.72rem]" /></label>
-                <Button type="submit" variant="success" size="sm" loading={pending} disabled={!canMutate}><Save className="h-3.5 w-3.5" />Save cash control</Button>
               </div>
             </form>
           </GlassCard>

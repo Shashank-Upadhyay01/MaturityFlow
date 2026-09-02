@@ -27,7 +27,7 @@ const check = (name, ok, detail = '') => {
   console.log(`${ok ? '  ✓' : '  ✗'} ${name}${detail ? ` — ${detail}` : ''}`);
 };
 
-async function login(page, identifier, password = 'Maturity@2026') {
+async function login(page, identifier, password = process.env.MF_SEED_PASSWORD) {
   await page.goto(`${base}/login`, { waitUntil: 'networkidle' });
   await page.fill('#identifier', identifier);
   await page.fill('#password', password);

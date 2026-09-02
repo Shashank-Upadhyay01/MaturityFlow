@@ -5,7 +5,7 @@ const page = await browser.newPage({ viewport: { width: 1366, height: 768 } });
 const baseUrl = process.env.BASE_URL ?? 'http://localhost:3000';
 await page.goto(`${baseUrl}/login`, { waitUntil: 'networkidle' });
 await page.fill('input[name="identifier"], input[name="email"], input[type="email"], input[type="text"]', 'admin@bank.test');
-await page.fill('input[type="password"]', 'Maturity@2026');
+await page.fill('input[type="password"]', process.env.MF_SEED_PASSWORD);
 await page.click('button[type="submit"]');
 await page.waitForURL((url) => !url.pathname.includes('/login'));
 

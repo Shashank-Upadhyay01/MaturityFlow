@@ -61,7 +61,7 @@ async function login(context) {
   const page = await context.newPage();
   await page.goto(`${base}/login`, { waitUntil: 'networkidle' });
   await page.fill('#identifier', 'admin@bank.test');
-  await page.fill('#password', 'Maturity@2026');
+  await page.fill('#password', process.env.MF_SEED_PASSWORD);
   await page.click('button[type="submit"]');
   await page.waitForURL((url) => !url.pathname.endsWith('/login'), { timeout: 30_000 });
   return page;

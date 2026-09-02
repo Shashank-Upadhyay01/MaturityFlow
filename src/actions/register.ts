@@ -23,6 +23,7 @@ import {
   markInstalmentTaken,
   replaceInstalmentPayout,
   type Tender,
+  settleRegisterRow,
 } from '@/services/payout-service';
 import {
   MAX_BLANK_ROWS_PER_CALL,
@@ -72,6 +73,25 @@ async function scopeByInstalment(instalmentId: string) {
     .from(payoutInstalments)
     .innerJoin(maturityCases, eq(maturityCases.id, payoutInstalments.caseId))
     .where(eq(payoutInstalments.id, instalmentId))
+    .limit(1);
+  return row;
+}
+
+/**
+ * Scope a register action that acts on a whole case rather than one instalment.
+ *
+ * `settleRegisterRowAction` clears several days at once, so there is no single instalment to
+ * hang the branch/agent check on.
+ */
+async function scopeByCase(caseId: string) {
+  const [row] = await db
+    .select({
+      caseId: maturityCases.id,
+      branchId: maturityCases.branchId,
+      agentId: maturityCases.agentId,
+    })
+    .from(maturityCases)
+    .where(eq(maturityCases.id, caseId))
     .limit(1);
   return row;
 }
@@ -340,6 +360,44 @@ export async function setTodayPaidSplitAction(
     await replaceInstalmentPayout(
       session,
       { instalmentId, cashPaise, onlinePaise, reference, reason },
+      await requestMeta(),
+    );
+    revalidate();
+    return ok();
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+/**
+ * Take one figure at the counter and let it settle whatever days it covers.
+ *
+ * The cashier types a single amount; the service works out which instalments it clears, oldest
+ * first. `reason` is only needed when the money reaches past today into days that are not due
+ * yet — the service decides that, not this action, so the browser and the server cannot disagree
+ * about when authorisation is required.
+ */
+export async function settleRegisterRowAction(
+  caseId: string,
+  cashRupees: string,
+  onlineRupees: string,
+  reference: string | null = null,
+  reason: string | null = null,
+): Promise<ActionResult> {
+  try {
+    const { session, actor } = await requireActor();
+    const c = await scopeByCase(caseId);
+    if (!c) return fail('Row not found', 'NOT_FOUND');
+    assertCanTypeRegister(actor);
+    assertCan(actor, 'payout.record', c);
+    const cashPaise = tryParseRupeesToPaise(cashRupees);
+    const onlinePaise = tryParseRupeesToPaise(onlineRupees);
+    if (cashPaise == null || onlinePaise == null) {
+      return fail('Enter whole rupee amounts.', 'VALIDATION');
+    }
+    await settleRegisterRow(
+      session,
+      { caseId, cashPaise, onlinePaise, reference, reason },
       await requestMeta(),
     );
     revalidate();

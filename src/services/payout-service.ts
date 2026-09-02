@@ -13,7 +13,7 @@ import { writeAudit } from '@/lib/audit';
 import type { SessionUser } from '@/lib/auth/session';
 import { newId } from '@/lib/id';
 import { formatPaise } from '@/lib/money';
-import { validatePayout } from '@/lib/payment-rules';
+import { planSettlement, validatePayout } from '@/lib/payment-rules';
 import { todayISO } from '@/lib/working-days';
 
 export class PayoutError extends Error {
@@ -255,11 +255,11 @@ export async function markInstalmentTaken(
   if (inst.status === 'SUPERSEDED' || inst.status === 'CANCELLED') {
     throw new PayoutError('This instalment is no longer part of the live schedule.', 'SUPERSEDED');
   }
-  if (inst.dueOn !== todayISO()) {
-    throw new PayoutError(
-      "The Register can only mark today's scheduled instalment as taken.",
-      'NOT_DUE_TODAY',
-    );
+  // Yesterday (and any earlier unpaid day) is still collectable from the Register. The
+  // Not-paid tab exists so a clerk can mark those days taken when the customer comes in
+  // later. A future day is not an observation yet.
+  if (inst.dueOn > todayISO()) {
+    throw new PayoutError('That day has not arrived yet.', 'NOT_YET_DUE');
   }
 
   const remaining = inst.amountPaise - inst.paidCashPaise - inst.paidOnlinePaise;
@@ -795,5 +795,293 @@ export async function recordRegisterPayout(
     });
 
     return { remainingPaise: newRemaining, caseCompleted: newRemaining <= 0n };
+  });
+}
+
+/**
+ * Settle a register row — one figure at the counter, across every day it actually pays.
+ *
+ * The "Paid today" box used to post against a single instalment: today's. A customer who missed
+ * yesterday and came in owing two days could not be served from it, because the server refused
+ * anything above that one day's planned amount — and a case with nothing scheduled today had no
+ * instalment to post against at all. The cashier's options were to under-record or to go hunting
+ * on the case page.
+ *
+ * `planSettlement` decides which days the money clears: oldest first, cash before online, never
+ * reaching past today unless a reason authorises it. This writes that decision down as one
+ * `payout_transactions` row per day, all carrying today's value date — so the customer sees one
+ * receipt while the day-by-day schedule still means exactly what it says.
+ *
+ * The box REPLACES today's figure rather than adding to it, which is what the cell has always
+ * meant and what a spreadsheet user expects. So today's existing receipts for this case are
+ * reversed first and the new figure is allocated against the rolled-back state. Reversal is a
+ * new row's worth of history, never an erasure: INV-6 holds.
+ *
+ * Lock order matches `recordPayout` — CASE first, then its instalments — so the two paths queue
+ * behind one another instead of deadlocking.
+ */
+export async function settleRegisterRow(
+  actor: SessionUser,
+  input: {
+    caseId: string;
+    cashPaise: bigint;
+    onlinePaise: bigint;
+    reference?: string | null;
+    reason?: string | null;
+    valueDate?: string;
+  },
+  meta: { ip?: string | null; userAgent?: string | null } = {},
+) {
+  if (input.cashPaise < 0n || input.onlinePaise < 0n) {
+    throw new PayoutError('Paid amounts cannot be negative.', 'NEGATIVE');
+  }
+
+  return db.transaction(async (tx) => {
+    const [c] = await tx
+      .select()
+      .from(maturityCases)
+      .where(eq(maturityCases.id, input.caseId))
+      .for('update')
+      .limit(1);
+    if (!c) throw new PayoutError('Case not found', 'NOT_FOUND');
+
+    const valueDate = input.valueDate ?? todayISO();
+
+    // The live schedule only. A superseded row is history and must never take money.
+    const live = await tx
+      .select()
+      .from(payoutInstalments)
+      .where(
+        and(
+          eq(payoutInstalments.caseId, c.id),
+          sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`,
+        ),
+      )
+      .for('update')
+      .orderBy(payoutInstalments.dueOn, payoutInstalments.seq);
+    if (live.length === 0) {
+      throw new PayoutError('This case has no live schedule to pay against.', 'NO_SCHEDULE');
+    }
+
+    /**
+     * Everything already taken from this customer today, whichever day each receipt settled.
+     *
+     * Read inside the lock: replacing a figure is only safe if a second cashier cannot slip a
+     * payment in between the read and the write.
+     */
+    const todayTxns = await tx
+      .select()
+      .from(payoutTransactions)
+      .where(
+        and(
+          eq(payoutTransactions.caseId, c.id),
+          eq(payoutTransactions.valueDate, valueDate),
+          isNull(payoutTransactions.reversedAt),
+        ),
+      )
+      .for('update');
+
+    if (todayTxns.length > 0 && !input.reason?.trim()) {
+      throw new PayoutError('Enter a reason for changing a recorded payment.', 'REASON_REQUIRED');
+    }
+
+    const rolledBack = new Map<string, { cash: bigint; online: bigint }>();
+    for (const t of todayTxns) {
+      if (!t.instalmentId) continue;
+      const prev = rolledBack.get(t.instalmentId) ?? { cash: 0n, online: 0n };
+      rolledBack.set(t.instalmentId, {
+        cash: prev.cash + t.cashPaise,
+        online: prev.online + t.onlinePaise,
+      });
+    }
+    const undoCash = todayTxns.reduce((sum, t) => sum + t.cashPaise, 0n);
+    const undoOnline = todayTxns.reduce((sum, t) => sum + t.onlinePaise, 0n);
+
+    /** The state as it stood before anyone paid anything today. */
+    const baseline = live.map((i) => {
+      const undo = rolledBack.get(i.id) ?? { cash: 0n, online: 0n };
+      return {
+        row: i,
+        paidCashPaise: i.paidCashPaise - undo.cash,
+        paidOnlinePaise: i.paidOnlinePaise - undo.online,
+        changed: undo.cash > 0n || undo.online > 0n,
+      };
+    });
+    const baseCaseCash = c.paidCashPaise - undoCash;
+    const baseCaseOnline = c.paidOnlinePaise - undoOnline;
+
+    if (
+      baseCaseCash < 0n ||
+      baseCaseOnline < 0n ||
+      baseline.some((b) => b.paidCashPaise < 0n || b.paidOnlinePaise < 0n)
+    ) {
+      throw new PayoutError(
+        'The payout ledger is inconsistent; nothing was recorded.',
+        'LEDGER_MISMATCH',
+      );
+    }
+
+    const plan = planSettlement(
+      {
+        cashPaise: input.cashPaise,
+        onlinePaise: input.onlinePaise,
+        reference: input.reference,
+        reason: input.reason,
+      },
+      {
+        instalments: baseline.map((b) => ({
+          id: b.row.id,
+          seq: b.row.seq,
+          dueOn: b.row.dueOn,
+          amountPaise: b.row.amountPaise,
+          paidCashPaise: b.paidCashPaise,
+          paidOnlinePaise: b.paidOnlinePaise,
+        })),
+        today: valueDate,
+        caseTotalPaise: c.maturityAmountPaise,
+        casePaidTotalPaise: baseCaseCash + baseCaseOnline,
+        caseIsPayable: PAYABLE_STATUSES.has(c.status) || c.status === 'COMPLETED',
+        // Today's cash was just rolled back, so the cap is measured against the new figure alone.
+        cashAlreadyPaidTodayPaise: 0n,
+        cashCapPerDayPaise: c.cashPolicy === 'CASH_CAP' ? (c.cashCapPerDayPaise ?? 0n) : null,
+      },
+    );
+    if (!plan.ok) throw new PayoutError(plan.message, plan.code);
+
+    const now = new Date();
+
+    if (todayTxns.length > 0) {
+      await tx
+        .update(payoutTransactions)
+        .set({
+          reversedAt: now,
+          reversedById: actor.id,
+          reversalReason: input.reason?.trim() || 'Register correction',
+        })
+        .where(inArray(payoutTransactions.id, todayTxns.map((t) => t.id)));
+    }
+
+    const allocation = new Map(plan.lines.map((l) => [l.instalmentId, l]));
+    const txnIds: string[] = [];
+
+    for (const b of baseline) {
+      const line = allocation.get(b.row.id);
+      if (!line && !b.changed) continue; // untouched by today, before or after
+
+      const newCash = b.paidCashPaise + (line?.cashPaise ?? 0n);
+      const newOnline = b.paidOnlinePaise + (line?.onlinePaise ?? 0n);
+      const paid = newCash + newOnline;
+
+      await tx
+        .update(payoutInstalments)
+        .set({
+          paidCashPaise: newCash,
+          paidOnlinePaise: newOnline,
+          status: paid >= b.row.amountPaise ? 'PAID' : paid > 0n ? 'PARTIAL' : 'PENDING',
+          updatedAt: now,
+        })
+        .where(eq(payoutInstalments.id, b.row.id));
+
+      if (!line) continue;
+      const txnId = newId('txn');
+      txnIds.push(txnId);
+      await tx.insert(payoutTransactions).values({
+        id: txnId,
+        caseId: c.id,
+        instalmentId: b.row.id,
+        branchId: c.branchId,
+        cashPaise: line.cashPaise,
+        onlinePaise: line.onlinePaise,
+        totalPaise: line.totalPaise,
+        reference: input.reference?.trim() || null,
+        remarks:
+          plan.lines.length > 1
+            ? `One counter payment of ${formatPaise(plan.totalPaise)} settling ${plan.lines.length} days`
+            : null,
+        valueDate,
+        recordedById: actor.id,
+      });
+    }
+
+    const newCaseCash = baseCaseCash + input.cashPaise;
+    const newCaseOnline = baseCaseOnline + input.onlinePaise;
+    const casePaid = newCaseCash + newCaseOnline;
+    const complete = casePaid >= c.maturityAmountPaise;
+
+    await tx
+      .update(maturityCases)
+      .set({
+        paidCashPaise: newCaseCash,
+        paidOnlinePaise: newCaseOnline,
+        status: complete ? 'COMPLETED' : c.status === 'APPROVED' ? 'IN_PROGRESS' : c.status,
+        completedAt: complete ? (c.completedAt ?? now) : null,
+        updatedAt: now,
+      })
+      .where(eq(maturityCases.id, c.id));
+
+    const dayList = plan.lines
+      .map((l) => `day ${l.seq} (${l.dueOn}) ${formatPaise(l.totalPaise)}`)
+      .join(', ');
+
+    await tx.insert(caseEvents).values({
+      id: newId('evt'),
+      caseId: c.id,
+      type: 'PAYMENT_RECORDED',
+      actorId: actor.id,
+      note:
+        `${formatPaise(plan.totalPaise)} taken at the counter — ${dayList}` +
+        (plan.arrearsClearedPaise > 0n
+          ? ` · ${formatPaise(plan.arrearsClearedPaise)} cleared missed days`
+          : '') +
+        (plan.paidAheadPaise > 0n
+          ? ` · ${formatPaise(plan.paidAheadPaise)} paid ahead — ${input.reason?.trim()}`
+          : ''),
+    });
+
+    if (complete) {
+      await tx.insert(caseEvents).values({
+        id: newId('evt'),
+        caseId: c.id,
+        type: 'COMPLETED',
+        actorId: actor.id,
+        toStatus: 'COMPLETED',
+        note: `Fully paid — ${formatPaise(c.maturityAmountPaise)}`,
+      });
+    }
+
+    await writeAudit(tx, actor, {
+      action: 'payout.recorded',
+      entity: 'MaturityCase',
+      entityId: c.id,
+      branchId: c.branchId,
+      summary:
+        `${c.caseNumber}: ${formatPaise(plan.totalPaise)} taken at the counter across ` +
+        `${plan.lines.length} day(s) — ${dayList}` +
+        (todayTxns.length > 0 ? ` (replaced ${formatPaise(undoCash + undoOnline)})` : '') +
+        (plan.paidAheadPaise > 0n ? ` (paid ahead: ${input.reason?.trim()})` : ''),
+      before: {
+        casePaidPaise: c.paidCashPaise + c.paidOnlinePaise,
+        reversedTodayPaise: undoCash + undoOnline,
+      },
+      after: {
+        casePaidPaise: casePaid,
+        caseRemainingPaise: c.maturityAmountPaise - casePaid,
+        arrearsClearedPaise: plan.arrearsClearedPaise,
+        paidAheadPaise: plan.paidAheadPaise,
+        transactionIds: txnIds,
+        complete,
+      },
+      ...meta,
+    });
+
+    return {
+      ok: true as const,
+      totalPaise: plan.totalPaise,
+      daysSettled: plan.lines.length,
+      arrearsClearedPaise: plan.arrearsClearedPaise,
+      paidAheadPaise: plan.paidAheadPaise,
+      remainingPaise: c.maturityAmountPaise - casePaid,
+      caseCompleted: complete,
+    };
   });
 }

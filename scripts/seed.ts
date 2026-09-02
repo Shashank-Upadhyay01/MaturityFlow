@@ -79,7 +79,13 @@ async function main() {
     })),
   );
 
-  const pw = await hashPassword('Maturity@2026');
+  // Never hard-code this. A seed password committed to the repository is a published
+  // password, and this repository is public. Set MF_SEED_PASSWORD in .env before seeding.
+  const seedPassword = process.env.MF_SEED_PASSWORD;
+  if (!seedPassword) {
+    throw new Error('Set MF_SEED_PASSWORD in .env before seeding — the seed password is not stored in the repo.');
+  }
+  const pw = await hashPassword(seedPassword);
   const staff = [
     { email: 'cmd@bank.test', username: 'cmd', name: 'Ravi Prakash Tiwari', role: 'CMD' as const, branchId: null, code: 'EMP0001' },
     { email: 'ceo@bank.test', username: 'ceo', name: 'Hareram Yadav', role: 'CEO' as const, branchId: null, code: 'EMP0002' },
@@ -137,7 +143,7 @@ async function main() {
   ]);
 
   console.log('  7 staff + 1 placeholder agent (Excel import will add real agents)');
-  console.log('\n✓ Seed complete. Password: Maturity@2026\n');
+  console.log('\n✓ Seed complete. Password: the MF_SEED_PASSWORD you set.\n');
   console.table(staff.map((s) => ({ Role: s.role, Name: s.name, Email: s.email })));
   console.log('  Next: Admin → Import register, or download the Excel template.\n');
 }

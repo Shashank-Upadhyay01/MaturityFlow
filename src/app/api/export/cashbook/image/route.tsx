@@ -2,6 +2,7 @@ import { ImageResponse } from 'next/og';
 import { NextResponse } from 'next/server';
 
 import { requireActor } from '@/lib/auth/session';
+import { CASHBOOK_DENOMINATIONS } from '@/lib/daily-cashbook';
 import { formatPaise } from '@/lib/money';
 import { assertCan } from '@/lib/rbac';
 import { formatISODate, parseISODate, todayISO } from '@/lib/working-days';
@@ -94,11 +95,28 @@ export async function GET(request: Request) {
           <div style={{ fontSize: 48, fontWeight: 900 }}>{imageMoney(view.totals.cashDifferencePaise)}</div>
         </div>
 
+        <div style={{ display: 'flex', flexDirection: 'column', marginTop: 22, border: '2px solid #e2e8f0', borderRadius: 24, background: 'rgba(255,255,255,0.86)', padding: '18px 28px', gap: 8 }}>
+          <div style={{ color: '#4f46e5', fontSize: 18, fontWeight: 800, letterSpacing: '0.08em' }}>NOTE DENOMINATION</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+            {CASHBOOK_DENOMINATIONS.map((d) => (
+              <div key={d.field} style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+                <div style={{ color: '#64748b', fontSize: 16, fontWeight: 700 }}>{d.label}</div>
+                <div style={{ fontSize: 26, fontWeight: 850 }}>{view.figures[d.field]}</div>
+                <div style={{ color: '#475569', fontSize: 15 }}>{imageMoney(BigInt(view.figures[d.field]) * d.paise)}</div>
+              </div>
+            ))}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+              <div style={{ color: '#64748b', fontSize: 16, fontWeight: 700 }}>Coins</div>
+              <div style={{ fontSize: 26, fontWeight: 850 }}>{imageMoney(view.figures.coinsPaise)}</div>
+            </div>
+          </div>
+        </div>
+
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 'auto', color: '#64748b', fontSize: 18 }}>
           <div>{deductionLine}</div>
           <div>{closeLine}</div>
         </div>
       </div>,
-      { width: 1200, height: 675, headers: NO_STORE },
+      { width: 1200, height: 860, headers: NO_STORE },
   );
 }

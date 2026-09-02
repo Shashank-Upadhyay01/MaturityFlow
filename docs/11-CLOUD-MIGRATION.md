@@ -83,7 +83,7 @@ A Supabase project already exists and its schema is in sync with the app:
 | **Region** | `ap-south-1` (Mumbai) |
 | **Postgres** | 17 |
 | **Schema** | all 17 tables present (migration `0004` applied to it on 2026-08-23) |
-| **Accounts** | 10 seeded demo logins, every role, valid bcrypt hashes — password `Maturity@2026` |
+| **Accounts** | 10 seeded demo logins, every role, valid bcrypt hashes — password set by `MF_SEED_PASSWORD` at seed time, not recorded here |
 | **Data** | demo only (4 branches, holidays, settings; 0 real cases) — the real 107-case laptop register was **not** copied (it is customer PII; copy it deliberately, later, if you want it in the cloud) |
 
 **The one thing to fetch yourself:** the connection string, because it contains the database
@@ -153,7 +153,7 @@ When you want it (it is **the only code change** the cloud move needs, isolated 
 
 3. Deploy. Vercel builds the same repo you build locally.
 4. Check `https://<your-app>/api/health` returns `{"status":"ok","database":"connected"}`, then sign
-   in with any demo account (password `Maturity@2026`).
+   in with any seeded account.
 
 ### 2.4 — Cut over
 
@@ -198,7 +198,7 @@ storage code change; choose Vercel (above) for the least operational burden long
       synced (migration `0004` applied), 10 demo logins verified
 - [ ] **You:** copy the Transaction-pooler `DATABASE_URL` from the Supabase dashboard
 - [ ] **You:** import the repo into Vercel and set the env vars (table in 2.3)
-- [ ] `/api/health` OK on the cloud URL; sign-in works (`Maturity@2026`)
+- [ ] `/api/health` OK on the cloud URL; sign-in works
 - [ ] Users cut over; laptop demoted to dev box; `start-lan.bat` stopped
 - [ ] *(later)* `src/lib/storage.ts` swapped to Supabase Storage / S3 blob before uploading real docs
 - [ ] *(optional)* copy the real 107-case laptop register into the cloud DB, if wanted (it's PII)

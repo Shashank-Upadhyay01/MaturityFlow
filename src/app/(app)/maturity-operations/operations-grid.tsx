@@ -11,7 +11,7 @@ import {
   markNotTakenAction,
   markTakenAction,
   saveRegisterFieldsAction,
-  setTodayPaidSplitAction,
+  settleRegisterRowAction,
 } from '@/actions/register';
 import { DEFAULT_OPERATIONS_MATURITY_ON } from '@/lib/maturity-operations';
 import { cn } from '@/lib/utils';
@@ -140,14 +140,22 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
     if (!result.ok) toast.error(result.error); else router.refresh();
   }
 
+  /**
+   * One counter payment, exactly as on the register: the amount typed here is what the customer
+   * handed over today, and the server spreads it over the oldest unpaid days first before it
+   * touches today's. The old call could only ever fill `todayInstalmentId`, so a customer
+   * settling a missed day together with today was rejected on this screen while the register
+   * accepted it. Both screens now go through `settleRegisterRowAction`, which replaces (not adds
+   * to) today's recorded figure — the same semantics the cell already implied.
+   */
   async function savePaid(row: OperationsRow, cash: bigint, online: bigint) {
-    if (!row.todayInstalmentId) { toast.error('This row has no scheduled payment for today.'); return; }
     const reference = online > 0n ? window.prompt('Enter UTR / transfer reference for the online amount:') : null;
     if (online > 0n && !reference?.trim()) return;
     const replacing = BigInt(row.paidTodayPaise) > 0n;
+    // Pay-ahead and corrections both need a reason; the server asks again if it disagrees.
     const reason = replacing ? window.prompt('Reason for correcting the recorded payment:', 'Spreadsheet correction') : 'Spreadsheet entry';
     if (replacing && !reason?.trim()) return;
-    const result = await setTodayPaidSplitAction(row.todayInstalmentId, cash.toString(), online.toString(), reference?.trim() || null, reason?.trim() || null);
+    const result = await settleRegisterRowAction(row.id, cash.toString(), online.toString(), reference?.trim() || null, reason?.trim() || null);
     if (!result.ok) toast.error(result.error); else router.refresh();
   }
 

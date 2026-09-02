@@ -14,7 +14,6 @@ import {
   FileSpreadsheet,
   Plus,
   Printer,
-  RotateCcw,
   Search,
   Trash2,
   Upload,
@@ -22,7 +21,7 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
@@ -42,7 +41,7 @@ import {
   requestCloseDayAction,
   saveDayCashAction,
   saveRegisterFieldsAction,
-  setTodayPaidSplitAction,
+  settleRegisterRowAction,
 } from '@/actions/register';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/field';
@@ -475,25 +474,9 @@ function DayMark({
     );
   }
 
-  if (state === 'missed') {
-    return (
-      <button
-        type="button"
-        disabled={disabled || busy}
-        onClick={() => onNotTaken(instalmentId, true)}
-        title={`${DAY_STATE_LABEL.missed} — click to undo`}
-        className={cn(
-          'inline-flex h-6 w-full items-center justify-center gap-0.5 whitespace-nowrap rounded-[6px] px-1 text-[0.62rem] font-medium disabled:cursor-not-allowed disabled:opacity-70',
-          DAY_PILL.missed,
-        )}
-      >
-        <RotateCcw className="h-3 w-3" />
-        Not paid
-      </button>
-    );
-  }
-
-  // 'due' and 'partial' — still answerable.
+  // 'due', 'partial' and 'missed' are all still collectable. A missed yesterday used to
+  // collapse to a "Not paid" pill with no ✓, so the clerk could see the arrears and could
+  // not record that the customer had come in to collect them.
   return (
     <div className="relative flex items-center gap-0.5">
       <button
@@ -1406,22 +1389,63 @@ export function RegisterSheet(props: {
     else { rememberGridFocus(); router.refresh(); }
   }
 
+  /**
+   * The counter's one box: what this customer was handed today, in total.
+   *
+   * The figure is not bound to today's instalment any more. A customer who missed Monday and
+   * comes in on Tuesday owing two days is paid once, and `settleRegisterRow` decides which days
+   * that clears — oldest first. So the cell stays open when nothing is scheduled for today but
+   * earlier days are still red, which is exactly the case it used to refuse.
+   *
+   * A reason is asked for in two situations, and the server insists on it independently: when a
+   * figure already recorded today is being changed, and when the amount reaches past today into
+   * days that are not due yet.
+   */
   async function savePaidSplit(row: RegisterRow, cashRupees: bigint, onlineRupees: bigint) {
-    if (!row.todayInstalmentId) {
-      toast.error('This row has no scheduled payment for today.');
+    const total = cashRupees + onlineRupees;
+    /*
+      What this figure is allowed to reach, measured as the server will measure it.
+
+      The box REPLACES today's total rather than adding to it, so the server first rolls back
+      everything already taken today and then allocates the new figure. Capacity is therefore the
+      arrears and today's day as they stand, PLUS whatever today has already paid — that money is
+      about to be handed back to the pool before the new figure is placed. Leaving the last term
+      out is what would make a cashier correcting ₹26,000 down to ₹20,000 get asked to authorise
+      paying ahead.
+    */
+    const dueTodayOutstanding = (() => {
+      const due = BigInt(row.todayDuePaise) - BigInt(row.todayPaidTakenPaise);
+      return due > 0n ? due : 0n;
+    })();
+    const capacity =
+      dueTodayOutstanding + BigInt(row.overduePaise) + BigInt(row.paidTodayActualPaise);
+
+    if (capacity === 0n && total > 0n && !row.todayInstalmentId) {
+      toast.error('Nothing is due on this row today or earlier.');
       return;
     }
+
     const reference = onlineRupees > 0n
       ? window.prompt('Enter UTR / transfer reference for the online amount:')
       : null;
     if (onlineRupees > 0n && !reference?.trim()) return;
+
     const replacing = BigInt(row.paidTodayActualPaise) > 0n;
-    const reason = replacing
-      ? window.prompt('Reason for correcting the recorded payment:', 'Spreadsheet correction')
-      : 'Spreadsheet entry';
-    if (replacing && !reason?.trim()) return;
-    const result = await setTodayPaidSplitAction(
-      row.todayInstalmentId,
+    const payingAhead = total * 100n > capacity;
+    let reason: string | null = 'Register entry';
+    if (payingAhead) {
+      reason = window.prompt(
+        `Only ₹${inr(capacity)} is due today and earlier on this row. Paying more settles days ` +
+          'that have not come round yet. Reason for authorising it:',
+      );
+      if (!reason?.trim()) return;
+    } else if (replacing) {
+      reason = window.prompt('Reason for correcting the recorded payment:', 'Register correction');
+      if (!reason?.trim()) return;
+    }
+
+    const result = await settleRegisterRowAction(
+      row.id,
       cashRupees.toString(),
       onlineRupees.toString(),
       reference?.trim() || null,
@@ -1634,6 +1658,22 @@ export function RegisterSheet(props: {
 
   /** What the table renders: the view, or just the ticked rows while a selection print runs. */
   const tableRows = printScope === 'selection' ? selectedRows : visible;
+
+  /**
+   * The days this customer was due and did not take, oldest first.
+   *
+   * Not paid used to list the CASE — the same row Due today already shows, with today's figures
+   * on it, which told a clerk that somebody was behind without ever saying which day or how much.
+   * The backlog is a list of days, so this returns days: each with its own date, its own
+   * outstanding amount, and its own ✓ / ✗, while the case keeps one row in the sheet.
+   */
+  function missedDaysOf(r: RegisterRow): (PayoutDayView & { outstandingPaise: bigint })[] {
+    return (r.payoutDays ?? [])
+      .filter((day) => day.dueOn < props.today && day.status !== 'PAID')
+      .map((day) => ({ ...day, outstandingPaise: BigInt(day.amountPaise) - BigInt(day.paidPaise) }))
+      .filter((day) => day.outstandingPaise > 0n)
+      .sort((a, b) => (a.dueOn < b.dueOn ? -1 : a.dueOn > b.dueOn ? 1 : 0));
+  }
 
   const locked = closed;
 
@@ -2790,6 +2830,9 @@ export function RegisterSheet(props: {
                 </tr>
               )}
               {tableRows.map((r) => {
+                const arrears = missedDaysOf(r);
+                const missedDays = tab === 'missed' ? arrears : [];
+                const arrearsPay = arrears[0] ?? null;
                 const daysN = Math.max(1, Number(d(r.id, 'windowDays', String(r.windowDays))) || 1);
                 const paidDraft = d(r.id, 'paid', rupeesStr(BigInt(r.paidPaise)));
                 const amtDraft = d(r.id, 'amount', rupeesStr(BigInt(r.maturityPaise)));
@@ -2842,7 +2885,7 @@ export function RegisterSheet(props: {
                       ? 'bg-[var(--color-brand-50)]/70 shadow-[inset_3px_0_0_0_var(--color-brand-500)] hover:bg-[var(--color-brand-100)]/70'
                       : ''));
 
-                return (
+                const row = (
                   <tr
                     key={r.id}
                     data-register-row={r.id}
@@ -3114,7 +3157,7 @@ export function RegisterSheet(props: {
                         {c.id === 'paidToday' && (
                           <CellInput
                             rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}
-                            group className={cn(num, 'font-semibold')} disabled={!props.canPay || locked || !scheduled || !isViewingToday}
+                            group className={cn(num, 'font-semibold')} disabled={!props.canPay || locked || (!scheduled && r.overdueCount === 0) || !isViewingToday}
                             value={d(r.id, 'paidTodayActual', rupeesStr(BigInt(r.paidTodayActualPaise)))}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidTodayActual: v.replace(/[^0-9]/g, '') } }))}
                             onCommit={(v) => {
@@ -3156,11 +3199,11 @@ export function RegisterSheet(props: {
                     ))}
                     <td className={cn(td, 'print:hidden')} colSpan={2}>
                       <DayMark
-                        state={dayState}
-                        instalmentId={isViewingToday ? r.todayInstalmentId : null}
-                        onlineDuePaise={recOnline}
+                        state={arrearsPay && !r.todayInstalmentId ? 'due' : dayState}
+                        instalmentId={isViewingToday ? (r.todayInstalmentId ?? arrearsPay?.id ?? null) : null}
+                        onlineDuePaise={arrearsPay && !r.todayInstalmentId ? BigInt(arrearsPay.onlinePaise) : recOnline}
                         disabled={locked || !props.canPay || !isViewingToday}
-                        busy={Boolean(r.todayInstalmentId && marking[r.todayInstalmentId])}
+                        busy={Boolean((r.todayInstalmentId ?? arrearsPay?.id) && marking[r.todayInstalmentId ?? arrearsPay?.id ?? ''])}
                         onTaken={(id, t, reference) => void onTaken(id, t, reference)}
                         onNotTaken={(id, clear) => void onNotTaken(id, clear)}
                       />
@@ -3179,6 +3222,47 @@ export function RegisterSheet(props: {
                       </td>
                     )}
                   </tr>
+                );
+                /*
+                  On Not paid, the days themselves — the point of the tab. One line per missed
+                  date carrying that day's outstanding amount and its own ✓ / ✗, so marking a
+                  Monday that was never taken does not touch Tuesday. The case row above keeps
+                  showing today, which is what the cashier settles against.
+                */
+                return missedDays.length === 0 ? row : (
+                  <Fragment key={`m-${r.id}`}>
+                    {row}
+                    <tr className="border-b border-[var(--hairline)] bg-[var(--glass-bg-subtle)]">
+                      <td className={cn(td, 'print:hidden')} />
+                      <td colSpan={shownCols.length + 2 + (hasExtras ? 1 : 0)} className="px-2 py-1.5">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                          <span className="text-[0.65rem] font-medium text-[var(--faint-fg)]">
+                            Not taken on {missedDays.length === 1 ? 'this day' : `these ${missedDays.length} days`}:
+                          </span>
+                          {missedDays.map((day) => (
+                            <span
+                              key={day.id}
+                              className="inline-flex items-center gap-2 rounded-[7px] border border-[var(--row-missed-edge)] bg-[var(--glass-bg)] py-0.5 pl-2 pr-0.5"
+                            >
+                              <span className="text-[0.68rem] font-medium tabular-nums">{formatDMY(day.dueOn)}</span>
+                              <span className="text-[0.68rem] font-semibold tabular-nums text-[var(--row-missed-edge)]">
+                                ₹{inr(day.outstandingPaise)}
+                              </span>
+                              <DayMark
+                                state={day.status === 'PAID' ? 'taken' : day.status === 'PARTIAL' ? 'partial' : 'due'}
+                                instalmentId={day.id}
+                                onlineDuePaise={BigInt(day.onlinePaise)}
+                                disabled={locked || !props.canPay || !isViewingToday}
+                                busy={Boolean(marking[day.id])}
+                                onTaken={(id, t, reference) => void onTaken(id, t, reference)}
+                                onNotTaken={(id, clear) => void onNotTaken(id, clear)}
+                              />
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  </Fragment>
                 );
               })}
 

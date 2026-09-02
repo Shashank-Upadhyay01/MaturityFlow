@@ -108,7 +108,9 @@ Generate `SESSION_SECRET` with:
 > PostgreSQL 16+ — local, Docker, or a managed [Neon](https://neon.tech) /
 > [Supabase](https://supabase.com) — and nothing else changes.
 
-Demo logins — password `Maturity@2026`:
+Seeded logins. **The password is not published here.** A fresh clone seeds whatever
+`MF_SEED_PASSWORD` is set to (see `scripts/seed.ts`); the live deployment's passwords are held
+by the administrator and are not the seed value.
 
 | Role | Email |
 |---|---|

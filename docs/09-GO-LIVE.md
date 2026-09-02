@@ -42,7 +42,8 @@ The same pure function runs in the browser (live preview) and on the server
 | AGENT | one per paying branch | Own customers only |
 | AUDITOR | Auditor | Read-only, including audit log |
 
-Password for all seed logins: `Maturity@2026`.
+Seed logins all share whatever `MF_SEED_PASSWORD` was set to when the database was seeded. It is
+deliberately not written down here — a password in the repository is a published password.
 
 ## 4. Screens vs the original list
 

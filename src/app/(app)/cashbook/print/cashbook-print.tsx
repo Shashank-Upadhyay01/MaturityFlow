@@ -89,8 +89,34 @@ export function CashbookPrint({
         </section>
 
         <section>
-          <h2 style={{ fontSize: 11, marginBottom: 4 }}>Denomination count</h2>
-          <table><thead><tr>{CASHBOOK_DENOMINATIONS.map((d) => <th key={d.field}>{d.label}</th>)}<th>Coins</th><th>Cash in hand</th></tr></thead><tbody><tr>{CASHBOOK_DENOMINATIONS.map((d) => <td key={d.field} className="num">{view.figures[d.field]} × {d.label}</td>)}<td className="num">{money(view.figures.coinsPaise)}</td><td className="num total">{money(t.countedCashPaise)}</td></tr></tbody></table>
+          <h2 style={{ fontSize: 11, marginBottom: 4 }}>Note denomination</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Note</th>
+                <th className="num">Count</th>
+                <th className="num">Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {CASHBOOK_DENOMINATIONS.map((d) => (
+                <tr key={d.field}>
+                  <td>{d.label}</td>
+                  <td className="num">{view.figures[d.field]}</td>
+                  <td className="num">{money((BigInt(view.figures[d.field]) * d.paise).toString())}</td>
+                </tr>
+              ))}
+              <tr>
+                <td>Coins</td>
+                <td className="num">—</td>
+                <td className="num">{money(view.figures.coinsPaise)}</td>
+              </tr>
+              <tr className="total">
+                <td colSpan={2}>Cash in hand</td>
+                <td className="num">{money(t.countedCashPaise)}</td>
+              </tr>
+            </tbody>
+          </table>
         </section>
 
         <section>

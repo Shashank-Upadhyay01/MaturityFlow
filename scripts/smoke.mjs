@@ -17,7 +17,7 @@ function check(name, ok, detail = '') {
   return ok;
 }
 
-async function login(page, email, password = 'Maturity@2026') {
+async function login(page, email, password = process.env.MF_SEED_PASSWORD) {
   await page.goto(`${BASE}/login`, { waitUntil: 'networkidle' });
   await page.fill('#identifier', email);
   await page.fill('#password', password);

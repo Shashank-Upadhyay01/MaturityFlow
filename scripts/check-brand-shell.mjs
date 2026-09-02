@@ -48,7 +48,7 @@ page.on('console', (message) => {
 });
 await page.goto(`${base}/login`, { waitUntil: 'networkidle' });
 await page.getByLabel('Email or username').fill('admin@bank.test');
-await page.getByLabel('Password', { exact: true }).fill('Maturity@2026');
+await page.getByLabel('Password', { exact: true }).fill(process.env.MF_SEED_PASSWORD);
 await page.getByRole('button', { name: 'Sign in' }).click();
 await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 30_000 });
 await page.goto(`${base}/dashboard`, { waitUntil: 'networkidle' });

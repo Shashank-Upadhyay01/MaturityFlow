@@ -56,7 +56,7 @@ export default async function CashbookPage({
 
   return (
     <CashbookWorkbench
-      key={`${branchId}:${date}:${view.day?.version ?? 0}`}
+      key={`${branchId}:${date}`}
       view={serialize(view)}
       branches={branches.map(({ id, code, name }) => ({ id, code, name }))}
       today={today}

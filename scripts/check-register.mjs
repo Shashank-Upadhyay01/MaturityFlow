@@ -27,7 +27,7 @@ const check = (name, pass, detail = '') => results.push({ name, pass, detail });
 
 await page.goto(`${base}/login`, { waitUntil: 'networkidle' });
 await page.fill('input[name="identifier"], input[name="email"], input[type="email"], input[type="text"]', email);
-await page.fill('input[type="password"]', 'Maturity@2026');
+await page.fill('input[type="password"]', process.env.MF_SEED_PASSWORD);
 await page.click('button[type="submit"]');
 await page.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 30000 }).catch(() => {});
 await page.goto(`${base}/maturities`, { waitUntil: 'networkidle' });

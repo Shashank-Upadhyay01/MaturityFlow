@@ -35,7 +35,7 @@ import {
   recordPayout,
   replaceInstalmentPayout,
 } from '@/services/payout-service';
-import { todayISO } from '@/lib/working-days';
+import { addDays, todayISO } from '@/lib/working-days';
 
 function session(id: string, name: string, role: SessionUser['role'], branchId: string): SessionUser {
   return {
@@ -264,13 +264,28 @@ describe('Register Taken / Not taken', () => {
     expect(txn.instalmentId).toBe(inst.id);
   });
 
+  it('records Taken against a missed instalment from yesterday', async () => {
+    const caseId = await makeApprovedCase('100000');
+    const inst = await firstInstalment(caseId);
+    await db
+      .update(payoutInstalments)
+      .set({ dueOn: addDays(todayISO(), -1), status: 'MISSED' })
+      .where(eq(payoutInstalments.id, inst.id));
+
+    await markInstalmentTaken(cashierA, inst.id, 'SPLIT');
+
+    const after = await firstInstalment(caseId);
+    expect(after.status).toBe('PAID');
+    expect(after.paidCashPaise + after.paidOnlinePaise).toBe(after.amountPaise);
+  });
+
   it('refuses to mark a future instalment Taken from today\'s Register', async () => {
     const caseId = await makeApprovedCase('100000');
     const inst = await firstInstalment(caseId);
     expect(inst.dueOn > todayISO()).toBe(true);
 
     await expect(markInstalmentTaken(cashierA, inst.id, 'SPLIT')).rejects.toMatchObject({
-      code: 'NOT_DUE_TODAY',
+      code: 'NOT_YET_DUE',
     });
   });
 
