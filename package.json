@@ -2,7 +2,7 @@
   "name": "maturityflow",
   "version": "1.0.0",
   "private": true,
-  "description": "MaturityFlow \u2014 bank maturity payout scheduling & disbursement control system",
+  "description": "KGGNL Core \u2014 secure banking operations, cash control and reporting",
   "engines": {
     "node": ">=20.11"
   },

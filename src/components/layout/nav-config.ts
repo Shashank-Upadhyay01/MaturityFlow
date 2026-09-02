@@ -1,4 +1,5 @@
 import type { Permission } from '@/lib/rbac';
+import { PRODUCT_NAME } from '@/lib/brand';
 
 export interface NavItem {
   href: string;
@@ -181,5 +182,5 @@ export function pageTitleFor(pathname: string): string {
     .filter((i) => pathname === i.href || pathname.startsWith(`${i.href}/`))
     .sort((a, b) => b.href.length - a.href.length)[0];
 
-  return hit?.label ?? 'MaturityFlow';
+  return hit?.label ?? PRODUCT_NAME;
 }

@@ -1,8 +1,10 @@
 <div align="center">
 
-# MaturityFlow
+# KGGNL Core
 
-**Turns a maturity date into an exact, day-by-day payout schedule — and measures every rupee against it.**
+**One secure workspace for maturity operations, daily cash, payouts, planning and audit.**
+
+The repository and some internal technical identifiers retain the original `MaturityFlow` name.
 
 `Next.js 15` · `TypeScript` · `PostgreSQL 16` · `Drizzle ORM` · `Tailwind v4` · `Framer Motion`
 

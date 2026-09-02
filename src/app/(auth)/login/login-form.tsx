@@ -6,6 +6,7 @@ import { useActionState, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import { loginAction } from '@/actions/auth';
+import { PRODUCT_NAME } from '@/lib/brand';
 import { AppFooter } from '@/components/layout/app-footer';
 import { BrandMark } from '@/components/layout/brand-mark';
 import { ThemeToggle } from '@/components/layout/theme-toggle';
@@ -32,7 +33,7 @@ export function LoginForm({
   }, [state, router]);
 
   const fieldErrors = state && !state.ok ? (state.fieldErrors ?? {}) : {};
-  const productName = orgShortName || 'MaturityFlow';
+  const organisationName = orgName || orgShortName;
 
   return (
     <main className="relative flex min-h-dvh flex-col overflow-hidden">
@@ -51,11 +52,12 @@ export function LoginForm({
           <p className="mt-5 text-[0.6875rem] font-bold uppercase tracking-[0.18em] text-[var(--color-brand-500)]">
             Secure operations workspace
           </p>
-          <h1 className="mt-2 max-w-full truncate text-[1.75rem] font-semibold tracking-[-0.04em]" title={orgName || productName}>
-            {productName}
+          <h1 className="mt-2 max-w-full truncate text-[1.75rem] font-semibold tracking-[-0.04em]" title={PRODUCT_NAME}>
+            {PRODUCT_NAME}
           </h1>
           <p className="mt-2 max-w-[25rem] text-[0.875rem] leading-6 text-[var(--muted-fg)]">
-            One trusted workspace for branch operations, customers, payouts and reporting.
+            One trusted workspace for branch operations, customers, payouts and reporting
+            {organisationName ? ` at ${organisationName}` : ''}.
           </p>
         </div>
 

@@ -4,6 +4,7 @@ import { Printer } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 
 import { formatPaise } from '@/lib/money';
+import { PRODUCT_NAME } from '@/lib/brand';
 import {
   SETTLEMENT_LABEL,
   groupByCustomer,
@@ -287,7 +288,7 @@ export function AgentStatement({
         )}
 
         <p style={{ marginTop: 12, fontSize: 9, color: '#444' }}>
-          Amounts are as recorded in MaturityFlow on {preparedOn}. &quot;Received&quot; is money
+          Amounts are as recorded in {PRODUCT_NAME} on {preparedOn}. &quot;Received&quot; is money
           actually paid out against the maturity, not what was scheduled.
         </p>
       </div>

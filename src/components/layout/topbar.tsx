@@ -9,6 +9,7 @@ import { logoutAction } from '@/actions/auth';
 import { UserAvatar } from '@/components/domain/user-avatar';
 import { BrandMark } from '@/components/layout/brand-mark';
 import type { SessionUser } from '@/lib/auth/session';
+import { PRODUCT_NAME } from '@/lib/brand';
 import { ROLE_LABEL, ROLE_SHORT, activeRole } from '@/lib/rbac';
 import { cn } from '@/lib/utils';
 import { pageTitleFor } from './nav-config';
@@ -50,7 +51,7 @@ export function Topbar({
           <BrandMark className="h-8 w-8" />
           <span className="hidden sm:block">
             <span className="block max-w-[10rem] truncate text-[0.875rem] font-bold leading-tight tracking-[-0.01em]">
-              {session.orgShortName || 'MaturityFlow'}
+              {PRODUCT_NAME}
             </span>
             <span className="block max-w-[10rem] truncate text-[0.625rem] leading-tight text-[var(--faint-fg)]">
               {session.branchName ?? 'Head Office'}

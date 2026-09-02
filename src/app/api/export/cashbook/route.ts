@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/db';
 import { writeAudit } from '@/lib/audit';
 import { requireActor } from '@/lib/auth/session';
+import { PRODUCT_NAME } from '@/lib/brand';
 import {
   CASHBOOK_CATEGORY_META,
   CASHBOOK_COMMITMENT_META,
@@ -163,7 +164,7 @@ export async function GET(request: Request) {
 
     const ExcelJS = (await import('exceljs')).default;
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'MaturityFlow';
+    workbook.creator = PRODUCT_NAME;
     workbook.created = new Date();
     const sheets = [
       ['Summary', summary],

@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/db';
 import { writeAudit } from '@/lib/audit';
 import { requireActor } from '@/lib/auth/session';
+import { PRODUCT_NAME } from '@/lib/brand';
 import { formatPaise } from '@/lib/money';
 import { assertCan } from '@/lib/rbac';
 import { formatDMY, todayISO } from '@/lib/working-days';
@@ -75,7 +76,7 @@ export async function GET(request: Request) {
 
     const ExcelJS = (await import('exceljs')).default;
     const wb = new ExcelJS.Workbook();
-    wb.creator = 'MaturityFlow';
+    wb.creator = PRODUCT_NAME;
     wb.created = new Date();
     const ws = wb.addWorksheet('Maturities', {
       views: [{ state: 'frozen', ySplit: 1 }],

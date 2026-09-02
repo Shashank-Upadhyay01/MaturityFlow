@@ -22,6 +22,8 @@ async function verifyLogin(theme, viewport, suffix) {
 
   await page.goto(`${base}/login`, { waitUntil: 'networkidle' });
   await page.getByLabel('Email or username').waitFor();
+  await page.getByRole('heading', { name: 'KGGNL Core' }).waitFor();
+  assert.match(await page.title(), /KGGNL Core/);
   const password = page.getByLabel('Password', { exact: true });
   assert.equal(await password.getAttribute('type'), 'password');
   await page.getByRole('button', { name: 'Show password' }).click();
@@ -51,6 +53,7 @@ await page.getByRole('button', { name: 'Sign in' }).click();
 await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 30_000 });
 await page.goto(`${base}/dashboard`, { waitUntil: 'networkidle' });
 await page.getByText('Created and developed by Shashank Upadhyay').waitFor();
+await page.getByText('KGGNL Core', { exact: true }).waitFor();
 await page.getByRole('button', { name: 'Directory' }).click();
 await page.locator('[data-nav-icon="customers"]').waitFor();
 await page.locator('[data-nav-icon="agents"]').waitFor();

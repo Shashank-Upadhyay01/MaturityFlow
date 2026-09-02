@@ -1,16 +1,16 @@
 import type { Metadata, Viewport } from 'next';
 import { Toaster } from 'sonner';
 import { AmbientField, ThemeScript } from '@/components/layout/ambient';
+import { PRODUCT_DESCRIPTION, PRODUCT_NAME } from '@/lib/brand';
 import './globals.css';
 
 export const metadata: Metadata = {
   title: {
-    default: 'MaturityFlow — Maturity Payout Control',
-    template: '%s · MaturityFlow',
+    default: PRODUCT_NAME,
+    template: `%s · ${PRODUCT_NAME}`,
   },
-  description:
-    'Turns a maturity approval into an exact, day-by-day payout schedule — and measures every rupee against it.',
-  applicationName: 'MaturityFlow',
+  description: PRODUCT_DESCRIPTION,
+  applicationName: PRODUCT_NAME,
   robots: { index: false, follow: false },
   icons: { icon: '/icon.svg' },
 };

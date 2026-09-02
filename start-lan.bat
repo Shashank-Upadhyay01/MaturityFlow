@@ -1,8 +1,8 @@
 @echo off
-title MaturityFlow (LAN)
+title KGGNL Core (LAN)
 cd /d "%~dp0"
 
-echo === Building MaturityFlow (production) ===
+echo === Building KGGNL Core (production) ===
 call npm run build
 if errorlevel 1 (
   echo.

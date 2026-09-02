@@ -1,8 +1,8 @@
 @echo off
-title MaturityFlow (local dev)
+title KGGNL Core (local dev)
 cd /d "%~dp0"
 
-echo === MaturityFlow - local development ===
+echo === KGGNL Core - local development ===
 echo Database: native PostgreSQL 18 on localhost:5432 (starts automatically).
 echo The browser opens at http://localhost:3000 in a few seconds.
 echo Leave this window open. Press Ctrl+C to stop.

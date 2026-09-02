@@ -48,6 +48,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/field';
 import { Glass } from '@/components/ui/glass';
 import { Callout } from '@/components/ui/misc';
+import { PRODUCT_NAME } from '@/lib/brand';
 import { excelCellRaw } from '@/lib/excel-register';
 import {
   BULK_TODAY_LABEL,
@@ -1579,7 +1580,7 @@ export function RegisterSheet(props: {
     try {
       const ExcelJS = (await import('exceljs')).default;
       const wb = new ExcelJS.Workbook();
-      wb.creator = 'MaturityFlow';
+      wb.creator = PRODUCT_NAME;
       const ws = wb.addWorksheet('Register', { views: [{ state: 'frozen', ySplit: 1 }] });
       const header = visCols.map((c) => c.excel);
       ws.addRow(header);

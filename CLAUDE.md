@@ -1,4 +1,4 @@
-# MaturityFlow — working notes for future sessions
+# KGGNL Core — working notes for future sessions
 
 Context for Claude Code / Cursor / any IDE agent picking this repository up later.
 **Read `docs/00-DESIGN-OVERVIEW.md` and `docs/03-PAYOUT-ENGINE.md` before changing anything that
@@ -6,8 +6,10 @@ touches money.**
 
 ## What this is
 
-A bank maturity-payout control system, built as a **Next.js web application** (App Router,
-server actions, Postgres via Drizzle). An agent submits a maturity form; an Operations Head
+A banking operations platform, built as a **Next.js web application** (App Router, server actions,
+Postgres via Drizzle). The public product name is **KGGNL Core**; the repository, deployment and
+some internal technical identifiers retain the original `MaturityFlow` name. Its maturity workflow
+starts when an agent submits a form; an Operations Head
 approves it; **at approval** the server generates an exact, day-by-day payout schedule; cashiers
 record what actually goes out against that plan.
 

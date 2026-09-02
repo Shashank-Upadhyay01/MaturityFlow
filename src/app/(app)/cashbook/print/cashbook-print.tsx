@@ -9,6 +9,7 @@ import {
   CASHBOOK_DENOMINATIONS,
 } from '@/lib/daily-cashbook';
 import { formatPaise } from '@/lib/money';
+import { PRODUCT_NAME } from '@/lib/brand';
 import type { Serialized } from '@/lib/serialize';
 import { formatISODate } from '@/lib/working-days';
 import type { CashbookDayView } from '@/services/queries';
@@ -106,7 +107,7 @@ export function CashbookPrint({
           <table><tbody><tr><td>Given cash outstanding</td><td className="num">{money(view.commitmentTotals.GIVEN_CASH.outstandingPaise)}</td><td>Due amount outstanding</td><td className="num">{money(view.commitmentTotals.DUE_AMOUNT.outstandingPaise)}</td><td>Pending withdrawals outstanding</td><td className="num">{money(view.commitmentTotals.PENDING_WITHDRAWAL.outstandingPaise)}</td></tr></tbody></table>
         </section>
         {view.day?.notes && <p style={{ marginTop: 10 }}><strong>Day note:</strong> {view.day.notes}</p>}
-        <footer style={{ marginTop: 14, display: 'flex', justifyContent: 'space-between', color: '#444', fontSize: 9 }}><span>Generated from MaturityFlow. Money is stored in exact paise.</span><span>{view.day?.status === 'CLOSED' ? 'Approved close snapshot' : 'Live working copy — not yet finally closed'}</span></footer>
+        <footer style={{ marginTop: 14, display: 'flex', justifyContent: 'space-between', color: '#444', fontSize: 9 }}><span>Generated from {PRODUCT_NAME}. Money is stored in exact paise.</span><span>{view.day?.status === 'CLOSED' ? 'Approved close snapshot' : 'Live working copy — not yet finally closed'}</span></footer>
       </div>
     </>
   );

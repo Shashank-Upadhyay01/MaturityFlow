@@ -4,6 +4,7 @@ import { Printer } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { formatPaise } from '@/lib/money';
+import { PRODUCT_NAME } from '@/lib/brand';
 import { SETTLEMENT_LABEL, settlementOf } from '@/lib/agent-book';
 import { buildPlanRow, type PlanInstalment } from '@/lib/plan-view';
 import { formatDMY, makeCalendar, weekdayShort, type SaturdayRule } from '@/lib/working-days';
@@ -273,7 +274,7 @@ export function CustomerStatement({
         )}
 
         <p style={{ marginTop: 12, fontSize: 9, color: '#444' }}>
-          Amounts are as recorded in MaturityFlow on {preparedOn}. &quot;Given&quot; is money
+          Amounts are as recorded in {PRODUCT_NAME} on {preparedOn}. &quot;Given&quot; is money
           actually paid out. Days marked projected are set firm when the maturity is approved.
         </p>
       </div>
