@@ -13,6 +13,7 @@ import { MIN_WINDOW_DAYS } from '@/lib/payout-policy';
 import { assertCan } from '@/lib/rbac';
 import { writeAudit } from '@/lib/audit';
 import { persistInstalmentEdit } from '@/services/schedule-service';
+import { setInstalmentDueOn } from '@/services/admin-dates';
 import {
   cancelCase,
   createCase,
@@ -457,6 +458,21 @@ export async function setInstalmentAmountAction(
 
     revalidateCase(caseId);
     return ok({ changed: out.changed });
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+/** Admin-only: move a schedule day, including one that has already been paid. */
+export async function setInstalmentDueOnAction(
+  instalmentId: string,
+  dueOn: string,
+): Promise<ActionResult> {
+  try {
+    const { session } = await requireActor();
+    const out = await setInstalmentDueOn(session, instalmentId, dueOn);
+    revalidateCase(out.caseId);
+    return ok();
   } catch (e) {
     return toActionError(e);
   }

@@ -173,6 +173,8 @@ export async function updateRegisterRow(
     formSubmittedOn?: string;
     paymentOn?: string | null;
     opsReviewedOn?: string | null;
+    firstPayoutOn?: string | null;
+    deadlineOn?: string | null;
     maturityRupees?: string;
     paidRupees?: string;
     windowDays?: number;
@@ -229,6 +231,10 @@ export async function updateRegisterRow(
       setCase.opsReviewedOn = reviewedOn;
       setCase.opsReviewedAt = reviewedOn ? new Date() : null;
       setCase.opsReviewedById = reviewedOn ? actor.id : null;
+    }
+    if (canOverrideDates(actor.role)) {
+      if (patch.firstPayoutOn !== undefined) setCase.firstPayoutOn = parseDate(patch.firstPayoutOn);
+      if (patch.deadlineOn !== undefined) setCase.deadlineOn = parseDate(patch.deadlineOn);
     }
     if (patch.windowDays != null) {
       if (

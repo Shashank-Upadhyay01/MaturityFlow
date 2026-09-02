@@ -14,18 +14,24 @@ export function WorkflowDatesEditor({
   formOn,
   reviewOn,
   paymentOn,
+  firstPayoutOn,
+  deadlineOn,
 }: {
   caseId: string;
   maturityOn: string;
   formOn: string;
   reviewOn: string;
   paymentOn: string;
+  firstPayoutOn: string;
+  deadlineOn: string;
 }) {
   const router = useRouter();
   const [maturity, setMaturity] = useState(maturityOn);
   const [form, setForm] = useState(formOn);
   const [review, setReview] = useState(reviewOn);
   const [payment, setPayment] = useState(paymentOn);
+  const [firstPayout, setFirstPayout] = useState(firstPayoutOn);
+  const [deadline, setDeadline] = useState(deadlineOn);
   const [busy, setBusy] = useState(false);
 
   async function save() {
@@ -35,6 +41,8 @@ export function WorkflowDatesEditor({
       formSubmittedOn: form,
       opsReviewedOn: review || null,
       paymentOn: payment || null,
+      firstPayoutOn: firstPayout || null,
+      deadlineOn: deadline || null,
     });
     setBusy(false);
     if (!result.ok) toast.error(result.error);
@@ -74,6 +82,20 @@ export function WorkflowDatesEditor({
           hint="Day 4 · first withdrawal"
           value={payment}
           onChange={setPayment}
+        />
+        <DateField
+          icon={<CalendarCheck2 className="h-3.5 w-3.5" />}
+          label="First payout date"
+          hint="Schedule start on the ledger"
+          value={firstPayout}
+          onChange={setFirstPayout}
+        />
+        <DateField
+          icon={<CalendarCheck2 className="h-3.5 w-3.5" />}
+          label="Promised by"
+          hint="Last scheduled payout day"
+          value={deadline}
+          onChange={setDeadline}
         />
       </div>
       <Button type="button" size="sm" variant="primary" loading={busy} onClick={() => void save()}>

@@ -26,6 +26,7 @@ import { daysBetween, formatISODate, formatISODateShort, toISODateString, todayI
 import { getCalendarSnapshot } from '@/services/calendar-service';
 import { getCaseDetail } from '@/services/queries';
 import { CaseActions } from './case-actions';
+import { AdminDateCell } from '@/components/domain/admin-date-cell';
 import { CaseDocuments } from './case-documents';
 import { PaymentRows } from './payment-rows';
 import { PrintCaseButton } from './print-case-button';
@@ -180,6 +181,8 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
               formOn={toISODateString(c.formSubmittedOn) ?? c.formSubmittedOn}
               reviewOn={toISODateString(c.opsReviewedOn) ?? ''}
               paymentOn={toISODateString(c.paymentOn) ?? toISODateString(c.firstPayoutOn) ?? toISODateString(c.approvedOn) ?? ''}
+              firstPayoutOn={toISODateString(c.firstPayoutOn) ?? ''}
+              deadlineOn={toISODateString(c.deadlineOn) ?? ''}
             />
           ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -324,14 +327,30 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                       )}
                     </TD>
                     <TD>
-                      <span className="font-medium">{formatISODateShort(i.dueOn)}</span>{' '}
-                      <span className="text-[0.75rem] text-[var(--faint-fg)]">
-                        {weekdayShort(i.dueOn)}
-                      </span>
-                      {isToday && (
-                        <Badge tone="brand" className="ml-2">
-                          today
-                        </Badge>
+                      {canEditDates ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <AdminDateCell
+                            kind="instalment"
+                            id={i.id}
+                            value={toISODateString(i.dueOn) ?? i.dueOn}
+                            ariaLabel={`Due date for day ${i.seq}`}
+                          />
+                          {isToday && (
+                            <Badge tone="brand">today</Badge>
+                          )}
+                        </div>
+                      ) : (
+                        <>
+                          <span className="font-medium">{formatISODateShort(i.dueOn)}</span>{' '}
+                          <span className="text-[0.75rem] text-[var(--faint-fg)]">
+                            {weekdayShort(i.dueOn)}
+                          </span>
+                          {isToday && (
+                            <Badge tone="brand" className="ml-2">
+                              today
+                            </Badge>
+                          )}
+                        </>
                       )}
                     </TD>
                     <TD align="right" className="font-semibold">
@@ -396,6 +415,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           bodyClassName="p-0 sm:p-0"
         >
           <PaymentRows
+            canEditDates={canEditDates}
             canReverse={roleCan(session.role, 'payout.reverse')}
             payments={detail.transactions.map(({ t, recordedBy }) => ({
               id: t.id,

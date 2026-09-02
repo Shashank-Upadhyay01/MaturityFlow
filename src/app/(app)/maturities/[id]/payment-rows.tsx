@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 
 import { reversePayoutAction } from '@/actions/payouts';
+import { AdminDateCell } from '@/components/domain/admin-date-cell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Field, Textarea } from '@/components/ui/field';
@@ -29,9 +30,11 @@ export interface PaymentRow {
 export function PaymentRows({
   payments,
   canReverse,
+  canEditDates = false,
 }: {
   payments: PaymentRow[];
   canReverse: boolean;
+  canEditDates?: boolean;
 }) {
   const router = useRouter();
   const [target, setTarget] = useState<string | null>(null);
@@ -78,13 +81,29 @@ export function PaymentRows({
           {payments.map((t) => (
             <TR key={t.id} className={t.reversedAt ? 'opacity-55' : ''}>
               <TD>
-                <span className={t.reversedAt ? 'line-through' : ''}>
-                  {formatISODateShort(t.valueDate)}
-                </span>
-                {t.reversedAt && (
-                  <Badge tone="danger" className="ml-2">
-                    reversed
-                  </Badge>
+                {canEditDates ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <AdminDateCell
+                      kind="payout"
+                      id={t.id}
+                      value={t.valueDate}
+                      ariaLabel="Payout value date"
+                    />
+                    {t.reversedAt && (
+                      <Badge tone="danger">reversed</Badge>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <span className={t.reversedAt ? 'line-through' : ''}>
+                      {formatISODateShort(t.valueDate)}
+                    </span>
+                    {t.reversedAt && (
+                      <Badge tone="danger" className="ml-2">
+                        reversed
+                      </Badge>
+                    )}
+                  </>
                 )}
               </TD>
               <TD align="right" className={t.reversedAt ? 'line-through' : ''}>

@@ -9,6 +9,7 @@ import { maturityCases, payoutInstalments, payoutTransactions } from '@/db/schem
 import { requestMeta, requireActor } from '@/lib/auth/session';
 import { parseRupeesToPaise } from '@/lib/money';
 import { assertCan, roleCan } from '@/lib/rbac';
+import { setPayoutValueDate } from '@/services/admin-dates';
 import { recordPayout, recordRegisterPayout, reversePayout } from '@/services/payout-service';
 import { fail, ok, toActionError, type ActionResult } from './_result';
 
@@ -131,6 +132,21 @@ export async function reversePayoutAction(txnId: string, reason: string): Promis
     assertCan(actor, 'payout.reverse', { branchId: txn.branchId });
     await reversePayout(session, txnId, reason.trim(), await requestMeta());
     revalidateAll(txn.caseId);
+    return ok();
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+/** Admin-only: correct the value date on a recorded payout. */
+export async function setPayoutValueDateAction(
+  transactionId: string,
+  valueDate: string,
+): Promise<ActionResult> {
+  try {
+    const { session } = await requireActor();
+    const out = await setPayoutValueDate(session, transactionId, valueDate);
+    revalidateAll(out.caseId);
     return ok();
   } catch (e) {
     return toActionError(e);

@@ -43,6 +43,7 @@ import {
   saveRegisterFieldsAction,
   settleRegisterRowAction,
 } from '@/actions/register';
+import { AdminDateCell } from '@/components/domain/admin-date-cell';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/field';
 import { Glass } from '@/components/ui/glass';
@@ -3247,7 +3248,17 @@ export function RegisterSheet(props: {
                               key={day.id}
                               className="inline-flex items-center gap-2 rounded-[7px] border border-[var(--row-missed-edge)] bg-[var(--glass-bg)] py-0.5 pl-2 pr-0.5"
                             >
-                              <span className="text-[0.68rem] font-medium tabular-nums">{formatDMY(day.dueOn)}</span>
+                              {canOverrideDates(props.role) ? (
+                                <AdminDateCell
+                                  kind="instalment"
+                                  id={day.id}
+                                  value={day.dueOn}
+                                  ariaLabel={`Missed payment date for ${r.customerName}`}
+                                  className="h-7 text-[0.68rem]"
+                                />
+                              ) : (
+                                <span className="text-[0.68rem] font-medium tabular-nums">{formatDMY(day.dueOn)}</span>
+                              )}
                               <span className="text-[0.68rem] font-semibold tabular-nums text-[var(--row-missed-edge)]">
                                 ₹{inr(day.outstandingPaise)}
                               </span>
