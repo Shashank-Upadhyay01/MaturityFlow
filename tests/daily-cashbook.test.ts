@@ -47,7 +47,11 @@ describe('daily cashbook reconciliation', () => {
     expect(totals.portalBreakdownPaise).toBe(rupees(642_690));
     expect(totals.portalVariancePaise).toBe(0n);
     expect(totals.state).toBe('BALANCED');
-    expect(totals.receivingPaise).toBe(rupees(870_823));
+    // Receiving is the OTHER_RECEIPT cash column alone. It used to echo the new loan, savings
+    // and renewal columns too (₹8,70,823), which put the same rupees in two columns of a sheet
+    // that is added up by eye. Every reconciliation figure above is unchanged by that: the
+    // 19-Aug sheet still balances to the paisa, because expected cash never read this subtotal.
+    expect(totals.receivingPaise).toBe(rupees(227_270));
     expect(totals.byAccountPaise).toBe(rupees(180_087));
     expect(totals.byCategory.RENEWAL).toBe(rupees(637_100));
     expect(totals.givenCashPaise).toBe(rupees(8_500));
@@ -99,13 +103,14 @@ describe('daily cashbook reconciliation', () => {
     expect(totals.warnings).toEqual(['NEGATIVE_EXPECTED_CASH']);
   });
 
-  it('enters a renewal once and projects it into the correct receipt channel', () => {
+  it('enters a renewal once, and does not echo a cash renewal into Receiving', () => {
     const cash = calculateDailyCashbook(
       [{ category: 'RENEWAL', channel: 'CASH', amountPaise: rupees(500) }],
       { ...EMPTY_CASHBOOK_DAY_FIGURES, oldPortalTotalPaise: rupees(500) },
     );
     expect(cash.byCategory.RENEWAL).toBe(rupees(500));
-    expect(cash.receivingPaise).toBe(rupees(500));
+    // Its own column, and only its own column.
+    expect(cash.receivingPaise).toBe(0n);
     expect(cash.byAccountPaise).toBe(0n);
 
     const account = calculateDailyCashbook(
