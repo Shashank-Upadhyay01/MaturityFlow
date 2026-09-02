@@ -245,19 +245,30 @@ export function calculateDailyCashbook(
     byCategory[entry.category] += entry.amountPaise;
   }
 
+  /*
+    Receiving and By account are the two ends of ONE category — a receipt that came over the
+    counter and a receipt that came into the bank account. They used to sum every receipt
+    category on their channel, which meant a new loan or a renewal was counted under Receiving as
+    well as under its own column, and the sheet appeared to double count.
+
+    Only Receiving is narrowed. `expectedPhysicalCash` never read `receivingPaise`, so that is a
+    display correction and the 19-Aug working sheet still reconciles to the paisa. `byAccountPaise`
+    is a DEDUCTION and stays wide: narrowing it would silently change expected cash for an
+    account-channel renewal, which is a different decision from the one asked for.
+  */
+  const receivingPaise = entries.reduce(
+    (sum, entry) =>
+      !entry.voided && entry.channel === 'CASH' && entry.category === 'OTHER_RECEIPT'
+        ? sum + entry.amountPaise
+        : sum,
+    0n,
+  );
   const receiptCategories: ReadonlySet<CashbookEntryCategory> = new Set([
     'OTHER_RECEIPT',
     'NEW_LOAN',
     'SAVINGS_DEPOSIT',
     'RENEWAL',
   ]);
-  const receivingPaise = entries.reduce(
-    (sum, entry) =>
-      !entry.voided && entry.channel === 'CASH' && receiptCategories.has(entry.category)
-        ? sum + entry.amountPaise
-        : sum,
-    0n,
-  );
   const byAccountPaise = entries.reduce(
     (sum, entry) =>
       !entry.voided && entry.channel === 'ACCOUNT' && receiptCategories.has(entry.category)
