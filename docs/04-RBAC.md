@@ -53,13 +53,15 @@ Every role carries a data scope, applied at the query layer:
 | `user.manage` | – | – | ✓ | – | – | – | – |
 | `holiday.manage` | – | – | ✓ | – | – | – | – |
 | `settings.manage` | – | – | ✓ | – | – | – | – |
+| `updates.manage` | – | – | ✓ | – | – | – | – |
+| `bug.manage` | – | – | ✓ | – | – | – | – |
 | `report.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `report.export` | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ |
 | `data.import` | ✓ | ✓ | ✓ | ✓ | ✓ | – | – |
 | `audit.view` | ✓ | ✓ | ✓ | – | – | – | ✓ |
 | `deposit.insights` | ✓ | ✓ | ✓ | – | – | – | – |
 
-Totals: CMD 29 · CEO 29 · ADMIN 33 · BRANCH_MANAGER 21 · CASHIER 16 · AGENT 8 · AUDITOR 9 of 33
+Totals: CMD 29 · CEO 29 · ADMIN 35 · BRANCH_MANAGER 21 · CASHIER 16 · AGENT 8 · AUDITOR 9 of 35
 
 *Generated from `src/lib/rbac.ts`. Regenerate rather than hand-edit — this table had drifted from
 the code before it was last rebuilt.*

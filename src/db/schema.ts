@@ -107,6 +107,21 @@ export const caseEventTypeEnum = pgEnum('case_event_type', [
 
 export const notificationLevelEnum = pgEnum('notification_level', ['INFO', 'WARNING', 'CRITICAL']);
 
+export const appUpdateKindEnum = pgEnum('app_update_kind', ['NEW', 'IMPROVED', 'FIXED']);
+
+export const bugReportSeverityEnum = pgEnum('bug_report_severity', [
+  'ANNOYING',
+  'STOPPED_WORK',
+  'MONEY',
+]);
+
+export const bugReportStatusEnum = pgEnum('bug_report_status', [
+  'OPEN',
+  'LOOKING',
+  'FIXED',
+  'CLOSED',
+]);
+
 export const cashbookDayStatusEnum = pgEnum('cashbook_day_status', [
   'OPEN',
   'CLOSE_REQUESTED',
@@ -849,6 +864,52 @@ export const notifications = pgTable(
   (t) => [index('notif_user_read_idx').on(t.userId, t.readAt)],
 );
 
+/** Plain-language product notes. Everyone may read; only Admin may write. */
+export const appUpdates = pgTable(
+  'app_updates',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    body: text('body').notNull(),
+    kind: appUpdateKindEnum('kind').notNull().default('NEW'),
+    publishedAt: timestamp('published_at', { withTimezone: true }).notNull().defaultNow(),
+    createdById: text('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('app_updates_published_idx').on(t.publishedAt)],
+);
+
+/** Problems reported in everyday language. The reporter and Admin may read a row. */
+export const bugReports = pgTable(
+  'bug_reports',
+  {
+    id: text('id').primaryKey(),
+    reporterId: text('reporter_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    screen: text('screen').notNull(),
+    tryingTo: text('trying_to').notNull(),
+    whatHappened: text('what_happened').notNull(),
+    extra: text('extra'),
+    severity: bugReportSeverityEnum('severity').notNull(),
+    pagePath: text('page_path'),
+    reporterRole: roleEnum('reporter_role').notNull(),
+    branchId: text('branch_id').references(() => branches.id, { onDelete: 'set null' }),
+    userAgent: text('user_agent'),
+    status: bugReportStatusEnum('status').notNull().default('OPEN'),
+    adminNote: text('admin_note'),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    resolvedById: text('resolved_by_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('bug_reports_status_idx').on(t.status, t.createdAt),
+    index('bug_reports_reporter_idx').on(t.reporterId, t.createdAt),
+  ],
+);
+
 /** Monotonic per-branch, per-year counter behind the human-facing case number. */
 export const caseCounters = pgTable('case_counters', {
   key: text('key').primaryKey(), // `${branchCode}|${year}`
@@ -969,6 +1030,11 @@ export type CashbookDay = typeof cashbookDays.$inferSelect;
 export type CashbookEntry = typeof cashbookEntries.$inferSelect;
 export type CashbookCommitment = typeof cashbookCommitments.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
+export type AppUpdate = typeof appUpdates.$inferSelect;
+export type BugReport = typeof bugReports.$inferSelect;
+export type AppUpdateKind = (typeof appUpdateKindEnum.enumValues)[number];
+export type BugReportSeverity = (typeof bugReportSeverityEnum.enumValues)[number];
+export type BugReportStatus = (typeof bugReportStatusEnum.enumValues)[number];
 
 export type Role = (typeof roleEnum.enumValues)[number];
 

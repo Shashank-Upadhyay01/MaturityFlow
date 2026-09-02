@@ -20,7 +20,8 @@ export interface NavItem {
     | 'reports'
     | 'audit'
     | 'settings'
-    | 'depositInterest';
+    | 'depositInterest'
+    | 'whatsNew';
   permission: Permission;
   /** Only shown to roles whose scope spans every branch. */
   headOfficeOnly?: boolean;
@@ -163,6 +164,13 @@ export const NAV: { section: string; items: NavItem[] }[] = [
         icon: 'settings',
         permission: 'case.view',
         description: 'Profile, users, holidays, organisation',
+      },
+      {
+        href: '/whats-new',
+        label: "What's new",
+        icon: 'whatsNew',
+        permission: 'case.view',
+        description: 'What changed, and a simple way to say if something went wrong',
       },
     ],
   },

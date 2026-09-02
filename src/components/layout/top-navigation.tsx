@@ -18,6 +18,7 @@ import {
   Percent,
   ScrollText,
   SlidersHorizontal,
+  Sparkles,
   Vault,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -46,6 +47,7 @@ const ICONS: Record<NavItem['icon'], LucideIcon> = {
   audit: ScrollText,
   settings: SlidersHorizontal,
   depositInterest: Percent,
+  whatsNew: Sparkles,
 };
 
 export interface NavBadges {

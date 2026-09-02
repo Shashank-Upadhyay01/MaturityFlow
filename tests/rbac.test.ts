@@ -32,7 +32,14 @@ const auditor: Actor = { id: 'u6', role: 'AUDITOR', branchId: null, agentId: nul
 describe('permission grants', () => {
   it('CMD and CEO hold every operational permission, but not structure edits', () => {
     for (const p of ALL_PERMISSIONS) {
-      if (p === 'branch.manage' || p === 'user.manage' || p === 'holiday.manage' || p === 'settings.manage') {
+      if (
+        p === 'branch.manage' ||
+        p === 'user.manage' ||
+        p === 'holiday.manage' ||
+        p === 'settings.manage' ||
+        p === 'updates.manage' ||
+        p === 'bug.manage'
+      ) {
         expect(roleCan('CMD', p)).toBe(false);
         expect(roleCan('CEO', p)).toBe(false);
         continue;
@@ -45,6 +52,16 @@ describe('permission grants', () => {
   it('only Admin may add branches, users, holidays or org settings', () => {
     for (const p of ['branch.manage', 'user.manage', 'holiday.manage', 'settings.manage'] as const) {
       expect(roleCan('ADMIN', p)).toBe(true);
+      for (const r of ['CMD', 'CEO', 'BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const) {
+        expect(roleCan(r, p)).toBe(false);
+      }
+    }
+  });
+
+  it('only Admin may write What’s new notes or manage problem reports', () => {
+    for (const p of ['updates.manage', 'bug.manage'] as const) {
+      expect(roleCan('ADMIN', p)).toBe(true);
+      expect(roleCan('OPS_HEAD', p)).toBe(true);
       for (const r of ['CMD', 'CEO', 'BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const) {
         expect(roleCan(r, p)).toBe(false);
       }
@@ -181,6 +198,7 @@ describe('the auditor is structurally read-only', () => {
     'cash.setOpening', 'cashbook.edit', 'cashbook.close', 'agent.manage', 'customer.manage',
     'branch.manage', 'user.manage',
     'holiday.manage', 'settings.manage', 'case.editApproved', 'data.import',
+    'updates.manage', 'bug.manage',
   ];
 
   it('holds no write permission at all', () => {
@@ -293,7 +311,7 @@ describe('permissionsOf', () => {
     expect(list).not.toContain('user.manage');
     expect(list).toContain('case.approve');
     expect(list).toContain('payout.record');
-    expect(list.length).toBe(ALL_PERMISSIONS.length - 4);
+    expect(list.length).toBe(ALL_PERMISSIONS.length - 6);
   });
 });
 

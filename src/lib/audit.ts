@@ -75,7 +75,12 @@ export type AuditAction =
   | 'schedule.adjusted'
   | 'register.day_close_requested'
   | 'register.day_closed'
-  | 'register.day_reopened';
+  | 'register.day_reopened'
+  | 'update.published'
+  | 'update.edited'
+  | 'update.removed'
+  | 'bug.reported'
+  | 'bug.updated';
 
 export interface AuditInput {
   action: AuditAction;
@@ -180,4 +185,9 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'report.exported': 'Report exported',
   'data.imported': 'Register imported',
   'schedule.adjusted': 'Schedule amounts adjusted',
+  'update.published': 'Update published',
+  'update.edited': 'Update edited',
+  'update.removed': 'Update removed',
+  'bug.reported': 'Problem reported',
+  'bug.updated': 'Problem report updated',
 };

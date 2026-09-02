@@ -4,6 +4,7 @@ import {
   Landmark,
   Shield,
   SlidersHorizontal,
+  Sparkles,
   UserCircle2,
   Users2,
 } from 'lucide-react';
@@ -70,6 +71,13 @@ export default async function SettingsPage() {
       body: 'Every action, immutable. Filter from here when you are tracing a person or a payout.',
       icon: Shield,
       allowed: roleCan(session.role, 'audit.view'),
+    },
+    {
+      href: '/whats-new',
+      title: "What's new",
+      body: 'What changed in the app, in everyday words. Tell us if something went wrong.',
+      icon: Sparkles,
+      allowed: true,
     },
   ].filter((t) => t.allowed);
 

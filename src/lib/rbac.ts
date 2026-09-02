@@ -40,7 +40,9 @@ export type Permission =
   | 'report.export'
   | 'data.import'
   | 'audit.view'
-  | 'deposit.insights';
+  | 'deposit.insights'
+  | 'updates.manage'
+  | 'bug.manage';
 
 export type Scope = 'ALL' | 'BRANCH' | 'OWN';
 
@@ -133,12 +135,13 @@ const ALL: Permission[] = [
   'cashbook.view', 'cashbook.edit', 'cashbook.close', 'agent.view', 'agent.manage',
   'customer.manage', 'branch.view', 'branch.manage', 'user.manage',
   'holiday.manage', 'settings.manage', 'report.view', 'report.export', 'data.import', 'audit.view',
-  'deposit.insights',
+  'deposit.insights', 'updates.manage', 'bug.manage',
 ];
 
 /** Branches, users, holidays, org settings — Admin only. CMD/CEO still run the money. */
 const STRUCTURE: ReadonlySet<Permission> = new Set<Permission>([
   'branch.manage', 'user.manage', 'holiday.manage', 'settings.manage',
+  'updates.manage', 'bug.manage',
 ]);
 
 const HQ_OPERATIONS: Permission[] = ALL.filter((p) => !STRUCTURE.has(p));
@@ -210,7 +213,7 @@ const WRITE_PERMISSIONS: ReadonlySet<Permission> = new Set<Permission>([
   'case.return', 'case.hold', 'case.cancel', 'schedule.override', 'schedule.reschedule',
   'payout.record', 'payout.reverse', 'cash.setOpening', 'agent.manage', 'customer.manage',
   'cashbook.edit', 'cashbook.close', 'branch.manage', 'user.manage', 'holiday.manage',
-  'settings.manage', 'data.import',
+  'settings.manage', 'data.import', 'updates.manage', 'bug.manage',
 ]);
 
 const READ_ONLY_ROLES: ReadonlySet<Role> = new Set<Role>(['AUDITOR']);
