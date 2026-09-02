@@ -15,6 +15,7 @@ import {
   LayoutDashboard,
   ListTodo,
   type LucideIcon,
+  Percent,
   ScrollText,
   SlidersHorizontal,
   Vault,
@@ -44,6 +45,7 @@ const ICONS: Record<NavItem['icon'], LucideIcon> = {
   reports: ChartNoAxesCombined,
   audit: ScrollText,
   settings: SlidersHorizontal,
+  depositInterest: Percent,
 };
 
 export interface NavBadges {

@@ -343,3 +343,24 @@ describe('the approvals screen is gone', () => {
     expect(badges).not.toContain('approvals');
   });
 });
+
+describe('deposit interest insights are headquarters-only', () => {
+  it('is held by Admin, CMD, CEO and a legacy Ops Head (as Admin)', () => {
+    for (const r of ['ADMIN', 'CMD', 'CEO'] as const) {
+      expect(roleCan(r, 'deposit.insights')).toBe(true);
+    }
+    expect(roleCan('OPS_HEAD', 'deposit.insights')).toBe(true);
+  });
+
+  it('is hidden from branch staff, agents and the auditor', () => {
+    for (const r of ['BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const) {
+      expect(roleCan(r, 'deposit.insights')).toBe(false);
+    }
+  });
+
+  it('has a nav entry gated on that permission', () => {
+    const item = NAV.flatMap((s) => s.items).find((i) => i.href === '/deposit-interest');
+    expect(item?.permission).toBe('deposit.insights');
+    expect(item?.label).toBe('Deposit interest');
+  });
+});

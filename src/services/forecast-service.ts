@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { createHash } from 'node:crypto';
-import { and, asc, eq, gte, lt, notInArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, lt, notInArray, sql, type SQL } from 'drizzle-orm';
 
 import { db } from '@/db';
 import { agents, branches, maturityForecasts } from '@/db/schema';
@@ -164,6 +164,37 @@ export async function listMaturityForecasts(actor: Actor, month: string) {
     .innerJoin(branches, eq(branches.id, maturityForecasts.branchId))
     .where(and(...conds))
     .orderBy(asc(maturityForecasts.maturityOn), asc(maturityForecasts.customerName));
+}
+
+function forecastScope(actor: Actor): SQL[] {
+  const conds: SQL[] = [];
+  const scope = ROLE_SCOPE[activeRole(actor.role)];
+  if (scope === 'BRANCH') conds.push(eq(maturityForecasts.branchId, actor.branchId ?? '__none__'));
+  if (scope === 'OWN') {
+    conds.push(sql`false`);
+  }
+  return conds;
+}
+
+/**
+ * Deposits already sitting on the upcoming-maturity forecast. HQ uses them as a starting
+ * book on the deposit-interest page; they are not payout cases.
+ */
+export async function listForecastDeposits(actor: Actor) {
+  const conds: SQL[] = [
+    sql`${maturityForecasts.totalDepositPaise} > 0`,
+    ...forecastScope(actor),
+  ];
+  return db
+    .select({
+      id: maturityForecasts.id,
+      name: maturityForecasts.customerName,
+      depositedPaise: maturityForecasts.totalDepositPaise,
+      maturityOn: maturityForecasts.maturityOn,
+    })
+    .from(maturityForecasts)
+    .where(and(...conds))
+    .orderBy(desc(maturityForecasts.totalDepositPaise), asc(maturityForecasts.customerName));
 }
 
 export interface ForecastPaymentProjection {

@@ -19,7 +19,8 @@ export interface NavItem {
     | 'import'
     | 'reports'
     | 'audit'
-    | 'settings';
+    | 'settings'
+    | 'depositInterest';
   permission: Permission;
   /** Only shown to roles whose scope spans every branch. */
   headOfficeOnly?: boolean;
@@ -95,6 +96,13 @@ export const NAV: { section: string; items: NavItem[] }[] = [
         icon: 'cashRunway',
         permission: 'cash.plan',
         description: 'Cash and NEFT to hold, 14 working days',
+      },
+      {
+        href: '/deposit-interest',
+        label: 'Deposit interest',
+        icon: 'depositInterest',
+        permission: 'deposit.insights',
+        description: 'Deposits at 8.50%, with a live rate and Excel in and out',
       },
     ],
   },

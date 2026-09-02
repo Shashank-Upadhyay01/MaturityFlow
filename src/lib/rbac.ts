@@ -39,7 +39,8 @@ export type Permission =
   | 'report.view'
   | 'report.export'
   | 'data.import'
-  | 'audit.view';
+  | 'audit.view'
+  | 'deposit.insights';
 
 export type Scope = 'ALL' | 'BRANCH' | 'OWN';
 
@@ -132,6 +133,7 @@ const ALL: Permission[] = [
   'cashbook.view', 'cashbook.edit', 'cashbook.close', 'agent.view', 'agent.manage',
   'customer.manage', 'branch.view', 'branch.manage', 'user.manage',
   'holiday.manage', 'settings.manage', 'report.view', 'report.export', 'data.import', 'audit.view',
+  'deposit.insights',
 ];
 
 /** Branches, users, holidays, org settings — Admin only. CMD/CEO still run the money. */
