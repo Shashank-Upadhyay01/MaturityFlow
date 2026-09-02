@@ -81,26 +81,41 @@ export function PageHeader({
   actions,
   eyebrow,
   className,
+  compact = false,
 }: {
   title: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
   eyebrow?: ReactNode;
   className?: string;
+  compact?: boolean;
 }) {
   return (
-    <div className={cn('mf-rise flex shrink-0 flex-col gap-3 border-l-[3px] border-[var(--color-brand-600)] pl-4 sm:flex-row sm:items-end sm:justify-between', className)}>
+    <div className={cn(
+      'mf-rise flex shrink-0 flex-col border-l-[3px] border-[var(--color-brand-600)] sm:flex-row sm:items-end sm:justify-between',
+      compact ? 'gap-2 pl-3' : 'gap-3 pl-4',
+      className,
+    )}>
       <div className="min-w-0">
         {eyebrow && (
-          <p className="mb-1 text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--faint-fg)]">
+          <p className={cn(
+            'font-semibold uppercase tracking-[0.14em] text-[var(--faint-fg)]',
+            compact ? 'mb-0.5 text-[0.625rem]' : 'mb-1 text-[0.6875rem]',
+          )}>
             {eyebrow}
           </p>
         )}
-        <h1 className="text-[1.5rem] font-semibold leading-tight tracking-[-0.02em] sm:text-[1.75rem]">
+        <h1 className={cn(
+          'font-semibold leading-tight tracking-[-0.02em]',
+          compact ? 'text-[1.125rem]' : 'text-[1.5rem] sm:text-[1.75rem]',
+        )}>
           {title}
         </h1>
         {description && (
-          <p className="mt-1.5 max-w-2xl text-[0.9375rem] leading-relaxed text-[var(--muted-fg)]">
+          <p className={cn(
+            'text-[var(--muted-fg)]',
+            compact ? 'mt-0.5 max-w-3xl text-[0.8125rem] leading-snug' : 'mt-1.5 max-w-2xl text-[0.9375rem] leading-relaxed',
+          )}>
             {description}
           </p>
         )}

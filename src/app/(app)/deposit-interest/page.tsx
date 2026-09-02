@@ -25,11 +25,12 @@ export default async function DepositInterestPage() {
   const seed = await listForecastDeposits(toActor(session));
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-5">
+    <div className="mx-auto w-full max-w-6xl space-y-3">
       <PageHeader
+        compact
         eyebrow="Headquarters"
         title="Deposit interest"
-        description="Customer deposits at a chosen rate — 8.50% until you change it. Type the book here or upload the Excel template. Interest is live; maturity date is the customer's date, not a payout day. This does not rewrite any payout schedule."
+        description="Type or upload deposits. Interest is live; maturity date is the customer's date. This does not rewrite any payout schedule."
       />
       <DepositInterestBoard seed={serialize(seed)} today={todayISO()} />
     </div>

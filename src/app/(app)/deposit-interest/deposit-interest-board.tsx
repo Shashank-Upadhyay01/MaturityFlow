@@ -302,54 +302,46 @@ export function DepositInterestBoard({ seed, today }: { seed: SeedDeposit[]; tod
   const skewed = insights.lineCount >= 3 && insights.averageDepositPaise > insights.medianDepositPaise * 2n;
 
   return (
-    <div className="space-y-5">
-      <Glass className="p-4 sm:p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-[var(--faint-fg)]">
-              Interest rate
-            </p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <div className="relative">
-                <input
-                  aria-label="Interest rate percent"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  value={rateDraft}
-                  onChange={(event) => setRateDraft(event.target.value)}
-                  onBlur={() => {
-                    const parsed = parsePercentToBps(rateDraft);
-                    if (parsed != null) setRateDraft(formatBpsAsPercent(parsed));
-                  }}
-                  className={cn(
-                    'mf-input tnum w-[7.5rem] pr-8 text-right text-[1.5rem] font-semibold tracking-[-0.02em]',
-                    !rateValid && rateDraft.trim() !== '' && 'aria-[invalid]:border-[var(--color-danger-500)]',
-                  )}
-                  aria-invalid={rateDraft.trim() !== '' && !rateValid}
-                />
-                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[0.9375rem] font-semibold text-[var(--faint-fg)]">
-                  %
-                </span>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setRateDraft(formatBpsAsPercent(DEFAULT_INTEREST_BPS))}
-                disabled={rateBps === DEFAULT_INTEREST_BPS && rateDraft === formatBpsAsPercent(DEFAULT_INTEREST_BPS)}
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                8.50%
-              </Button>
-            </div>
-            <p className="mt-2 max-w-xl text-[0.8125rem] leading-relaxed text-[var(--muted-fg)]">
-              Simple interest on the deposited amount, the same 8.50% the August maturity sheet
-              already includes. Every row and every insight updates as you type.
-            </p>
+    <div className="space-y-3">
+      <Glass className="px-3 py-2 sm:px-4">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <p className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-[var(--faint-fg)]">
+            Rate
+          </p>
+          <div className="relative">
+            <input
+              aria-label="Interest rate percent"
+              inputMode="decimal"
+              autoComplete="off"
+              value={rateDraft}
+              onChange={(event) => setRateDraft(event.target.value)}
+              onBlur={() => {
+                const parsed = parsePercentToBps(rateDraft);
+                if (parsed != null) setRateDraft(formatBpsAsPercent(parsed));
+              }}
+              className={cn(
+                'mf-input tnum h-8 w-[5.75rem] py-1 pr-7 text-right text-[0.9375rem] font-semibold tracking-[-0.02em]',
+                !rateValid && rateDraft.trim() !== '' && 'aria-[invalid]:border-[var(--color-danger-500)]',
+              )}
+              aria-invalid={rateDraft.trim() !== '' && !rateValid}
+            />
+            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[0.75rem] font-semibold text-[var(--faint-fg)]">
+              %
+            </span>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="glass" onClick={() => void downloadWorkbook()}>
-              <Download className="h-4 w-4" />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setRateDraft(formatBpsAsPercent(DEFAULT_INTEREST_BPS))}
+            disabled={rateBps === DEFAULT_INTEREST_BPS && rateDraft === formatBpsAsPercent(DEFAULT_INTEREST_BPS)}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            8.50%
+          </Button>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Button type="button" variant="glass" size="sm" onClick={() => void downloadWorkbook()}>
+              <Download className="h-3.5 w-3.5" />
               Download template
             </Button>
             <label className="inline-flex">
@@ -370,13 +362,14 @@ export function DepositInterestBoard({ seed, today }: { seed: SeedDeposit[]; tod
                 <Button
                   type="button"
                   variant="primary"
+                  size="sm"
                   loading={importBusy}
                   onClick={(event) => {
                     const input = event.currentTarget.parentElement?.parentElement?.querySelector('input[type=file]');
                     if (input instanceof HTMLInputElement) input.click();
                   }}
                 >
-                  <Upload className="h-4 w-4" />
+                  <Upload className="h-3.5 w-3.5" />
                   Upload Excel
                 </Button>
               </span>
@@ -384,7 +377,7 @@ export function DepositInterestBoard({ seed, today }: { seed: SeedDeposit[]; tod
           </div>
         </div>
         {importNote && (
-          <p className="mt-3 text-[0.8125rem] text-[var(--muted-fg)]" data-import-note>
+          <p className="mt-1.5 text-[0.75rem] text-[var(--muted-fg)]" data-import-note>
             {importNote}
           </p>
         )}
