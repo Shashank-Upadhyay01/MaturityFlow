@@ -26,6 +26,7 @@ export function TakePaymentDialog({
   today,
   draftPaidRupees,
   allowPayAhead,
+  allowCorrectPaid,
   busy,
   onClose,
   onConfirm,
@@ -34,6 +35,7 @@ export function TakePaymentDialog({
   today: string;
   draftPaidRupees: string;
   allowPayAhead: boolean;
+  allowCorrectPaid?: boolean;
   busy: boolean;
   onClose: () => void;
   onConfirm: (input: {
@@ -42,6 +44,7 @@ export function TakePaymentDialog({
     onlineRupees: string | null;
     reference: string | null;
     reason: string | null;
+    corrections: { instalmentId: string; paidRupees: string }[];
   }) => Promise<void>;
 }) {
   const days = useMemo(
@@ -65,6 +68,11 @@ export function TakePaymentDialog({
   const [online, setOnline] = useState('');
   const [reference, setReference] = useState('');
   const [reason, setReason] = useState('');
+  const [paidDraft, setPaidDraft] = useState<Record<string, string>>(() => {
+    const next: Record<string, string> = {};
+    for (const day of days) next[day.id] = (BigInt(day.paidPaise) / 100n).toString();
+    return next;
+  });
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -82,6 +90,14 @@ export function TakePaymentDialog({
   const customPaise = custom.trim() === '' ? null : tryParseRupeesToPaise(custom);
   const onlinePaise = online.trim() === '' ? 0n : (tryParseRupeesToPaise(online) ?? -1n);
   const payingAhead = selected.some((day) => day.dueOn > today);
+  const corrections = allowCorrectPaid
+    ? days
+        .filter((day) => {
+          const draft = paidDraft[day.id] ?? (BigInt(day.paidPaise) / 100n).toString();
+          return draft !== (BigInt(day.paidPaise) / 100n).toString();
+        })
+        .map((day) => ({ instalmentId: day.id, paidRupees: paidDraft[day.id] ?? '0' }))
+    : [];
   const willPay =
     custom.trim() === '' && online.trim() === ''
       ? selectedLeft
@@ -89,16 +105,18 @@ export function TakePaymentDialog({
         ? customPaise + onlinePaise
         : 0n;
 
+  const taking = selected.filter((day) => leftover(day) > 0n);
   const canSubmit =
-    selected.length > 0 &&
-    willPay > 0n &&
-    onlinePaise >= 0n &&
-    (onlinePaise === 0n || reference.trim().length > 0) &&
-    (!payingAhead || (allowPayAhead && reason.trim().length > 0));
+    (corrections.length > 0 && reason.trim().length > 0) ||
+    (taking.length > 0 &&
+      willPay > 0n &&
+      onlinePaise >= 0n &&
+      (onlinePaise === 0n || reference.trim().length > 0) &&
+      (!payingAhead || (allowPayAhead && reason.trim().length > 0)));
 
   function toggle(day: PayoutDayView) {
     const left = leftover(day);
-    if (left <= 0n) return;
+    if (left <= 0n && !allowCorrectPaid) return;
     if (day.dueOn > today && !allowPayAhead) return;
     setTicked((cur) => ({ ...cur, [day.id]: !cur[day.id] }));
   }
@@ -126,9 +144,9 @@ export function TakePaymentDialog({
           {row.customerName}
         </h2>
         <p className="mt-1 text-[0.78rem] text-[var(--muted-fg)]">
-          Tick the days to pay. Leave the amount blank to pay each ticked day in full, or type
-          what was actually given. A larger custom amount re-spreads the rest across later unpaid
-          days.
+          Tick unpaid days to pay them. {allowCorrectPaid
+            ? 'To change an old paid day, type the new Paid figure and a reason, then save.'
+            : 'Leave the amount blank to pay each ticked day in full, or type what was actually given.'}
         </p>
 
         <div className="mt-3 max-h-[16rem] overflow-auto rounded-[12px] border border-[var(--hairline)]">
@@ -153,7 +171,7 @@ export function TakePaymentDialog({
               {days.map((day) => {
                 const left = leftover(day);
                 const future = day.dueOn > today;
-                const locked = left <= 0n || (future && !allowPayAhead);
+                const locked = (left <= 0n && !allowCorrectPaid) || (future && !allowPayAhead);
                 const isToday = day.dueOn === today;
                 return (
                   <tr
@@ -184,7 +202,22 @@ export function TakePaymentDialog({
                       {isToday ? ' · today' : future ? ' · later' : ' · missed'}
                     </td>
                     <td className="px-2 py-1.5 text-right tabular-nums">{inr(BigInt(day.amountPaise))}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{inr(BigInt(day.paidPaise))}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">
+                      {allowCorrectPaid ? (
+                        <input
+                          className="mf-input h-7 w-24 py-0 text-right tabular-nums"
+                          inputMode="numeric"
+                          aria-label={`Paid on ${formatDMY(day.dueOn)}`}
+                          value={paidDraft[day.id] ?? '0'}
+                          onChange={(event) => {
+                            const value = event.target.value.replace(/[^0-9]/g, '');
+                            setPaidDraft((cur) => ({ ...cur, [day.id]: value }));
+                          }}
+                        />
+                      ) : (
+                        inr(BigInt(day.paidPaise))
+                      )}
+                    </td>
                     <td className="px-2 py-1.5 text-right font-medium tabular-nums">{inr(left)}</td>
                   </tr>
                 );
@@ -233,9 +266,11 @@ export function TakePaymentDialog({
             />
           </label>
         )}
-        {payingAhead && (
+        {(payingAhead || corrections.length > 0) && (
           <label className="mt-2 block text-[0.72rem] text-[var(--muted-fg)]">
-            Reason for paying a day that is not due yet
+            {corrections.length > 0
+              ? 'Reason for changing a recorded payment'
+              : 'Reason for paying a day that is not due yet'}
             <input
               className="mf-input mt-1 h-9 w-full"
               value={reason}
@@ -264,11 +299,12 @@ export function TakePaymentDialog({
             loading={busy}
             onClick={() =>
               void onConfirm({
-                instalmentIds: selected.map((day) => day.id),
+                instalmentIds: taking.map((day) => day.id),
                 cashRupees: custom.trim() === '' && online.trim() === '' ? null : custom.trim() || '0',
                 onlineRupees: custom.trim() === '' && online.trim() === '' ? null : online.trim() || '0',
                 reference: reference.trim() || null,
                 reason: reason.trim() || null,
+                corrections,
               })
             }
           >

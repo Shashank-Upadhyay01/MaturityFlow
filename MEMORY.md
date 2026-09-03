@@ -88,6 +88,9 @@ locked out of a closed day.
 **Cashiers / branch managers** record **today’s** payment (and missed days that are still
 unpaid). They cannot silently rewrite an earlier **already paid** amount.
 
+**Admin / CMD / CEO:** open Taken on the customer, type a new **Paid** figure on the old day,
+enter a reason, save. That is how old-day payments are edited.
+
 **Admin, CMD, CEO** (and Operational Head = Admin) may change **any** value if something went
 wrong: paid amount, amount still to pay, dates, custom figures. The schedule **rebalances live**.
 They should not need a developer to fix a mistyped payout.

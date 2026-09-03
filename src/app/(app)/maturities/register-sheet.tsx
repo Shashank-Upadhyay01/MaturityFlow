@@ -35,6 +35,7 @@ import {
   bulkSetTodayAction,
   confirmCloseDayAction,
   confirmRegisterTakenAction,
+  correctRegisterDayPaidAction,
   markNotTakenAction,
   removeRegisterRowsAction,
   reopenDayAction,
@@ -1358,24 +1359,42 @@ export function RegisterSheet(props: {
     onlineRupees: string | null;
     reference: string | null;
     reason: string | null;
+    corrections: { instalmentId: string; paidRupees: string }[];
   }) {
     if (!payRow || paying) return;
     setPaying(true);
-    const result = await confirmRegisterTakenAction(
-      payRow.id,
-      input.instalmentIds,
-      input.cashRupees,
-      input.onlineRupees,
-      input.reference,
-      input.reason,
-    );
-    setPaying(false);
-    if (!result.ok) toast.error(result.error);
-    else {
-      toast.success('Payment recorded');
-      setPayRow(null);
-      router.refresh();
+    for (const correction of input.corrections) {
+      const result = await correctRegisterDayPaidAction(
+        correction.instalmentId,
+        correction.paidRupees,
+        input.reason || 'Register correction',
+        input.reference,
+      );
+      if (!result.ok) {
+        setPaying(false);
+        toast.error(result.error);
+        return;
+      }
     }
+    if (input.instalmentIds.length > 0) {
+      const result = await confirmRegisterTakenAction(
+        payRow.id,
+        input.instalmentIds,
+        input.cashRupees,
+        input.onlineRupees,
+        input.reference,
+        input.reason,
+      );
+      if (!result.ok) {
+        setPaying(false);
+        toast.error(result.error);
+        return;
+      }
+    }
+    setPaying(false);
+    toast.success(input.corrections.length ? 'Payment updated' : 'Payment recorded');
+    setPayRow(null);
+    router.refresh();
   }
 
   async function onNotTaken(instalmentId: string, clear: boolean) {
@@ -3359,6 +3378,7 @@ export function RegisterSheet(props: {
           today={props.today}
           draftPaidRupees={d(payRow.id, 'paidTodayActual', rupeesStr(BigInt(payRow.paidTodayActualPaise)))}
           allowPayAhead={Boolean(props.canCorrectPay)}
+          allowCorrectPaid={Boolean(props.canCorrectPay)}
           busy={paying}
           onClose={() => {
             if (!paying) setPayRow(null);

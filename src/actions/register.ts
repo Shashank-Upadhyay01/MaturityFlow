@@ -8,7 +8,7 @@ import { maturityCases, payoutInstalments } from '@/db/schema';
 import { requestMeta, requireActor } from '@/lib/auth/session';
 import { DEFAULT_OPERATIONS_MATURITY_ON } from '@/lib/maturity-operations';
 import { tryParseRupeesToPaise } from '@/lib/money';
-import { assertCan, assertCanTypeRegister, roleCan, type Actor, type ResourceRef } from '@/lib/rbac';
+import { assertCan, assertCanTypeRegister, canOverrideDates, roleCan, type Actor, type ResourceRef } from '@/lib/rbac';
 import type { BulkTodayMode } from '@/lib/register-view';
 import { cancelCase } from '@/services/case-service';
 import {
@@ -19,6 +19,7 @@ import {
   type CaseRef,
 } from '@/services/register-bulk';
 import {
+  correctInstalmentPaid,
   markInstalmentMissed,
   markInstalmentTaken,
   replaceInstalmentPayout,
@@ -384,6 +385,36 @@ export async function setTodayPaidSplitAction(
  * Empty cash/online means pay each ticked day in full. A figure pays that amount onto the
  * ticked days, oldest first. Future days need Admin/CMD/CEO and a reason.
  */
+/** HQ: change the recorded paid amount on any day, including old paid days. */
+export async function correctRegisterDayPaidAction(
+  instalmentId: string,
+  paidRupees: string,
+  reason: string,
+  reference: string | null = null,
+): Promise<ActionResult> {
+  try {
+    const { session, actor } = await requireActor();
+    if (!canOverrideDates(actor.role)) {
+      return fail('Only Admin, CMD or CEO can change an already-paid day.', 'FORBIDDEN');
+    }
+    const c = await scopeByInstalment(instalmentId);
+    if (!c) return fail('Row not found', 'NOT_FOUND');
+    assertCanTypeRegister(actor);
+    assertCan(actor, 'payout.reverse', c);
+    const paidPaise = tryParseRupeesToPaise(paidRupees);
+    if (paidPaise == null) return fail('Enter a whole rupee amount.', 'VALIDATION');
+    await correctInstalmentPaid(
+      session,
+      { instalmentId, cashPaise: paidPaise, onlinePaise: 0n, reason, reference },
+      await requestMeta(),
+    );
+    revalidate();
+    return ok();
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
 export async function confirmRegisterTakenAction(
   caseId: string,
   instalmentIds: string[],
