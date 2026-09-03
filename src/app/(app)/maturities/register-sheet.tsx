@@ -69,6 +69,7 @@ import {
   groupIndian,
   hasMissedPayment,
   leftoverOnPayoutDay,
+  paidOnDate,
   unpaidPayoutDays,
   isDueToday,
   isOnTodaysList,
@@ -139,6 +140,7 @@ export interface RegisterRow {
   paidTodayActualPaise: string;
   paidCashTodayPaise: string;
   paidOnlineTodayPaise: string;
+  paidByDate?: Record<string, { cash: string; online: string }>;
   /** Its status, straight from the database: PENDING · PARTIAL · PAID · MISSED. */
   todayStatus: string | null;
   /** The legs the engine planned for today. */
@@ -878,8 +880,8 @@ export function RegisterSheet(props: {
     () => columnsThatFit(visCols, gridWidth, reservedRem),
     [visCols, gridWidth, reservedRem],
   );
-  const shownCols = fit.shown;
-  const hasExtras = fit.dropped.length > 0;
+  const shownCols = printScope ? visCols : fit.shown;
+  const hasExtras = !printScope && fit.dropped.length > 0;
 
 
   const closed = props.dayStatus === 'CLOSED';
@@ -1369,6 +1371,7 @@ export function RegisterSheet(props: {
     onlineRupees: string | null;
     reference: string | null;
     reason: string | null;
+    valueDate: string;
     replaceVisit: boolean;
     corrections: {
       instalmentId: string;
@@ -1388,6 +1391,7 @@ export function RegisterSheet(props: {
         input.reason || 'Register correction',
         input.reference,
         correction.onlineRupees,
+        input.valueDate,
       );
       if (!result.ok) {
         setPaying(false);
@@ -1403,6 +1407,7 @@ export function RegisterSheet(props: {
         input.onlineRupees,
         input.reference,
         input.reason,
+        input.valueDate,
       );
       if (!result.ok) {
         setPaying(false);
@@ -1499,11 +1504,11 @@ export function RegisterSheet(props: {
       case 'online':
         return inr(payoutOnDate(r, viewDay) ? plannedOnDate(r, selectedPayoutDate).online : BigInt(r.todayOnlinePaise));
       case 'paidToday':
-        return inr(BigInt(r.paidTodayActualPaise));
+        return inr(paidOnDate(r, viewDay, props.today).total);
       case 'paidCashToday':
-        return inr(BigInt(r.paidCashTodayPaise));
+        return inr(paidOnDate(r, viewDay, props.today).cash);
       case 'paidOnlineToday':
-        return inr(BigInt(r.paidOnlineTodayPaise));
+        return inr(paidOnDate(r, viewDay, props.today).online);
     }
   }
 
@@ -1670,6 +1675,22 @@ export function RegisterSheet(props: {
 
   return (
     <div className="space-y-3 print:space-y-2">
+      {printScope && (
+        <style>{`
+          @page { size: A4 landscape; margin: 8mm; }
+          @media print {
+            input[data-register-cell] {
+              border: none !important;
+              background: transparent !important;
+              box-shadow: none !important;
+              color: #000 !important;
+              -webkit-text-fill-color: #000 !important;
+              print-color-adjust: exact;
+              -webkit-print-color-adjust: exact;
+            }
+          }
+        `}</style>
+      )}
       {/*
         One command bar, where there used to be three bands under a mostly-empty app bar.
         Identity moved up into the top bar (topbar.tsx prints the page name now), so what is
@@ -2483,7 +2504,7 @@ export function RegisterSheet(props: {
               ? `: ${range.from ? formatDMY(range.from) : 'any'} → ${range.to ? formatDMY(range.to) : 'any'}`
               : ': all dates'}
             {agentId ? ` · ${props.agents.find((a) => a.id === agentId)?.name}` : ''} · printed{' '}
-            {formatDMY(props.today)}
+            {formatDMY(viewDay)}
           </p>
           <p className="text-[0.8rem] font-semibold">
             {tableRows.length} rows · today ₹
@@ -2873,6 +2894,7 @@ export function RegisterSheet(props: {
                 const recOnline = selectedInstalment
                   ? BigInt(selectedInstalment.onlinePaise)
                   : BigInt(r.todayOnlinePaise);
+                const paidView = paidOnDate(r, viewDay, props.today);
                 const edit = props.canEdit && !locked;
                 const datesOpen = editDates;
                 const matShown = r.instrumentMaturityOn ? formatDMY(r.instrumentMaturityOn) : '';
@@ -3178,13 +3200,13 @@ export function RegisterSheet(props: {
                                 ? 'Correct a recorded amount — you will be asked for a reason'
                                 : 'Type what was actually given, then press Taken to confirm'
                             }
-                            value={d(r.id, 'paidTodayActual', rupeesStr(BigInt(r.paidTodayActualPaise)))}
+                            value={d(r.id, 'paidTodayActual', rupeesStr(paidView.total))}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidTodayActual: v.replace(/[^0-9]/g, '') } }))}
                             onCommit={(v) => {
                               if (!props.canCorrectPay) return;
-                              if (v.trim() === rupeesStr(BigInt(r.paidTodayActualPaise))) return;
+                              if (v.trim() === rupeesStr(paidView.total)) return;
                               const total = BigInt(v || '0');
-                              const currentOnline = BigInt(d(r.id, 'paidOnlineActual', rupeesStr(BigInt(r.paidOnlineTodayPaise))) || '0');
+                              const currentOnline = BigInt(d(r.id, 'paidOnlineActual', rupeesStr(paidView.online)) || '0');
                               const online = currentOnline > total ? 0n : currentOnline;
                               void savePaidSplit(r, total - online, online);
                             }}
@@ -3195,12 +3217,12 @@ export function RegisterSheet(props: {
                             rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}
                             group className={num}
                             disabled={!props.canCorrectPay}
-                            value={d(r.id, 'paidCashActual', rupeesStr(BigInt(r.paidCashTodayPaise)))}
+                            value={d(r.id, 'paidCashActual', rupeesStr(paidView.cash))}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidCashActual: v.replace(/[^0-9]/g, '') } }))}
                             onCommit={(v) => {
                               if (!props.canCorrectPay) return;
-                              if (v.trim() === rupeesStr(BigInt(r.paidCashTodayPaise))) return;
-                              const online = BigInt(d(r.id, 'paidOnlineActual', rupeesStr(BigInt(r.paidOnlineTodayPaise))) || '0');
+                              if (v.trim() === rupeesStr(paidView.cash)) return;
+                              const online = BigInt(d(r.id, 'paidOnlineActual', rupeesStr(paidView.online)) || '0');
                               void savePaidSplit(r, BigInt(v || '0'), online);
                             }}
                           />
@@ -3210,12 +3232,12 @@ export function RegisterSheet(props: {
                             rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}
                             group className={num}
                             disabled={!props.canCorrectPay}
-                            value={d(r.id, 'paidOnlineActual', rupeesStr(BigInt(r.paidOnlineTodayPaise)))}
+                            value={d(r.id, 'paidOnlineActual', rupeesStr(paidView.online))}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidOnlineActual: v.replace(/[^0-9]/g, '') } }))}
                             onCommit={(v) => {
                               if (!props.canCorrectPay) return;
-                              if (v.trim() === rupeesStr(BigInt(r.paidOnlineTodayPaise))) return;
-                              const cash = BigInt(d(r.id, 'paidCashActual', rupeesStr(BigInt(r.paidCashTodayPaise))) || '0');
+                              if (v.trim() === rupeesStr(paidView.online)) return;
+                              const cash = BigInt(d(r.id, 'paidCashActual', rupeesStr(paidView.cash)) || '0');
                               void savePaidSplit(r, cash, BigInt(v || '0'));
                             }}
                           />

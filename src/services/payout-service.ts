@@ -13,9 +13,10 @@ import { writeAudit } from '@/lib/audit';
 import type { SessionUser } from '@/lib/auth/session';
 import { newId } from '@/lib/id';
 import { formatPaise } from '@/lib/money';
+import { legsAfterPayment } from '@/lib/register-view';
 import { planSettlement, validatePayout } from '@/lib/payment-rules';
 import { rebalanceAfter } from '@/lib/schedule-edit';
-import { todayISO } from '@/lib/working-days';
+import { parseISODate, todayISO } from '@/lib/working-days';
 
 export class PayoutError extends Error {
   constructor(
@@ -28,6 +29,23 @@ export class PayoutError extends Error {
 }
 
 const PAYABLE_STATUSES = new Set<MaturityCase['status']>(['APPROVED', 'IN_PROGRESS']);
+
+function resolveValueDate(raw: string | null | undefined, allowPast: boolean): string {
+  const today = todayISO();
+  const value = raw?.trim() || today;
+  try {
+    parseISODate(value);
+  } catch {
+    throw new PayoutError('Enter a valid payment date.', 'VALIDATION');
+  }
+  if (value > today) {
+    throw new PayoutError('Cannot record a payment on a future date.', 'VALIDATION');
+  }
+  if (value !== today && !allowPast) {
+    throw new PayoutError('Only Admin, CMD or CEO can record a payment on an earlier date.', 'FORBIDDEN');
+  }
+  return value;
+}
 
 export interface RecordPayoutInput {
   instalmentId: string;
@@ -689,6 +707,7 @@ export async function correctInstalmentPaid(
     onlinePaise: bigint;
     reason: string;
     reference?: string | null;
+    valueDate?: string | null;
   },
   meta: { ip?: string | null; userAgent?: string | null } = {},
 ) {
@@ -701,6 +720,7 @@ export async function correctInstalmentPaid(
   if (input.onlinePaise > 0n && !input.reference?.trim()) {
     throw new PayoutError('Online payment needs a UTR / reference.', 'REF_REQUIRED');
   }
+  const valueDate = resolveValueDate(input.valueDate, true);
 
   return db.transaction(async (tx) => {
     const [ref] = await tx
@@ -811,17 +831,22 @@ export async function correctInstalmentPaid(
         totalPaise: newTotal,
         reference: input.reference?.trim() || null,
         remarks: `Corrected old-day payment — ${input.reason.trim()}`,
-        valueDate: todayISO(),
+        valueDate,
         recordedById: actor.id,
       });
     }
 
     const newInstPaid = newTotal;
+    const legs = newInstPaid > 0n
+      ? legsAfterPayment(inst.amountPaise, input.cashPaise, input.onlinePaise)
+      : { cashPaise: inst.cashLegPaise, onlinePaise: inst.onlineLegPaise };
     await tx
       .update(payoutInstalments)
       .set({
         paidCashPaise: input.cashPaise,
         paidOnlinePaise: input.onlinePaise,
+        cashLegPaise: legs.cashPaise,
+        onlineLegPaise: legs.onlinePaise,
         status: newInstPaid <= 0n ? 'PENDING' : newInstPaid >= inst.amountPaise ? 'PAID' : 'PARTIAL',
         updatedAt: now,
       })
@@ -1299,6 +1324,8 @@ export async function takeRegisterDays(
     reason?: string | null;
     /** Admin / CMD / CEO may tick a day that has not arrived yet. */
     allowPayAhead?: boolean;
+    /** Calendar day the cash actually left. Cashiers are always today. */
+    valueDate?: string | null;
   },
   meta: { ip?: string | null; userAgent?: string | null } = {},
 ) {
@@ -1331,7 +1358,7 @@ export async function takeRegisterDays(
       .limit(1);
     if (!c) throw new PayoutError('Case not found', 'NOT_FOUND');
 
-    const valueDate = todayISO();
+    const valueDate = resolveValueDate(input.valueDate, Boolean(input.allowPayAhead));
 
     const live = await tx
       .select()
@@ -1467,11 +1494,14 @@ export async function takeRegisterDays(
       const newCash = row.paidCashPaise + line.cashPaise;
       const newOnline = row.paidOnlinePaise + line.onlinePaise;
       const paid = newCash + newOnline;
+      const legs = legsAfterPayment(row.amountPaise, newCash, newOnline);
       await tx
         .update(payoutInstalments)
         .set({
           paidCashPaise: newCash,
           paidOnlinePaise: newOnline,
+          cashLegPaise: legs.cashPaise,
+          onlineLegPaise: legs.onlinePaise,
           status: paid >= row.amountPaise ? 'PAID' : paid > 0n ? 'PARTIAL' : row.status,
           updatedAt: now,
         })

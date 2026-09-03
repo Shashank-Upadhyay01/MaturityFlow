@@ -608,6 +608,14 @@ table th {
   aside, header, footer, .print\:hidden { display: none !important; }
   main { max-width: none !important; padding: 0 !important; }
   .glass { background: white !important; box-shadow: none !important; backdrop-filter: none !important; }
+  input[data-register-cell] {
+    border: none !important;
+    background: transparent !important;
+    color: #000 !important;
+    -webkit-text-fill-color: #000 !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

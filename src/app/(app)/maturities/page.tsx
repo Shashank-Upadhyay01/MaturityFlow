@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { getSession, toActor } from '@/lib/auth/session';
 import { pickWorkingBranch, workingBranches } from '@/lib/branch-routing';
 import { parseRegisterLayout } from '@/lib/register-layout';
-import { parsePayoutDays } from '@/lib/register-view';
+import { parsePaidByDate, parsePayoutDays } from '@/lib/register-view';
 import { activeRole, canTypeRegister, ROLE_SCOPE, roleCan } from '@/lib/rbac';
 import { toISODateString, todayISO } from '@/lib/working-days';
 import {
@@ -153,6 +153,7 @@ export default async function MaturitiesPage({
                 paidTodayActualPaise: r.paidTodayPaise,
                 paidCashTodayPaise: r.paidTodayCashPaise,
                 paidOnlineTodayPaise: r.paidTodayOnlinePaise,
+                paidByDate: parsePaidByDate(r.paidByDate),
                 todayStatus: r.todayStatus,
                 todayCashDuePaise: r.todayCashDuePaise,
                 todayOnlineDuePaise: r.todayOnlineDuePaise,

@@ -112,6 +112,15 @@ They should not need a developer to fix a mistyped payout.
 
 Corrections are audited. Replacing a recorded payment still needs a **reason**.
 
+**Cash stays cash.** A visit typed in Visit total (cash) is stored as cash, and that day's
+Cash / Online columns follow what was actually given so a cash payment cannot keep showing as
+Online.
+
+**Recorded on.** Admin / CMD / CEO pick the calendar day the cash actually left — the agent
+coming on 03/09 for missed days is recorded on 03/09, not on the day somebody typed it in.
+Print, Paid today, Paid in cash and the cashbook follow that date. Filter the Register to that
+day before printing. Cashiers always record today.
+
 ---
 
 ## Import

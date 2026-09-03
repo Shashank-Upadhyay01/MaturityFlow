@@ -17,7 +17,10 @@ import {
   nextDay,
   leftoverOnPayoutDay,
   allocateVisitPaise,
+  legsAfterPayment,
   orderPaidCorrections,
+  paidOnDate,
+  parsePaidByDate,
   plannedOnDate,
   prevDay,
   recommendedPerDay,
@@ -656,6 +659,44 @@ describe('recommendation on a selected payout day', () => {
       0n,
     );
     expect(out.map((d) => d.paidPaise)).toEqual([0n, 0n]);
+  });
+
+  it('moves a cash visit onto the Cash column so it cannot keep showing as Online', () => {
+    expect(legsAfterPayment(8_800_000n, 8_800_000n, 0n)).toEqual({
+      cashPaise: 8_800_000n,
+      onlinePaise: 0n,
+    });
+    expect(legsAfterPayment(8_800_000n, 1_200_000n, 0n)).toEqual({
+      cashPaise: 8_800_000n,
+      onlinePaise: 0n,
+    });
+    expect(legsAfterPayment(8_800_000n, 0n, 8_800_000n)).toEqual({
+      cashPaise: 0n,
+      onlinePaise: 8_800_000n,
+    });
+  });
+
+  it('reads what was actually paid on a chosen calendar day, not only today', () => {
+    const r = {
+      paidTodayActualPaise: '10000000',
+      paidCashTodayPaise: '10000000',
+      paidOnlineTodayPaise: '0',
+      paidByDate: parsePaidByDate({
+        '2026-09-03': { cash: '10000000', online: '0' },
+        '2026-09-04': { cash: '0', online: '5000000' },
+      }),
+    };
+    expect(paidOnDate(r, '2026-09-04', '2026-09-04')).toEqual({
+      total: 10_000_000n,
+      cash: 10_000_000n,
+      online: 0n,
+    });
+    expect(paidOnDate(r, '2026-09-03', '2026-09-04')).toEqual({
+      total: 10_000_000n,
+      cash: 10_000_000n,
+      online: 0n,
+    });
+    expect(paidOnDate(r, '2026-09-02', '2026-09-04').total).toBe(0n);
   });
 
   it('returns zero on an alternate off-day and the exact amount on tomorrow', () => {

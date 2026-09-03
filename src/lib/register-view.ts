@@ -225,6 +225,67 @@ export function splitVisitTender(
   });
 }
 
+/**
+ * After money actually moves, the day's Cash / Online plan must match how it was given.
+ * Unpaid leftover stays on Cash — that is the usual counter tender — so a cash visit cannot
+ * keep showing as Online on the sheet or the printout.
+ */
+export function legsAfterPayment(
+  amountPaise: bigint,
+  paidCashPaise: bigint,
+  paidOnlinePaise: bigint,
+): { cashPaise: bigint; onlinePaise: bigint } {
+  const paid = paidCashPaise + paidOnlinePaise;
+  const unpaid = amountPaise > paid ? amountPaise - paid : 0n;
+  return { cashPaise: paidCashPaise + unpaid, onlinePaise: paidOnlinePaise };
+}
+
+export interface PaidOnDateRow {
+  paidTodayActualPaise: string;
+  paidCashTodayPaise: string;
+  paidOnlineTodayPaise: string;
+  paidByDate?: Record<string, { cash: string; online: string }>;
+}
+
+/** What was actually handed over on a calendar day — cash and online separately. */
+export function paidOnDate(
+  r: PaidOnDateRow,
+  day: string,
+  today: string,
+): { total: bigint; cash: bigint; online: bigint } {
+  if (day === today) {
+    const cash = BigInt(r.paidCashTodayPaise || '0');
+    const online = BigInt(r.paidOnlineTodayPaise || '0');
+    const listed = BigInt(r.paidTodayActualPaise || '0');
+    return { total: listed > 0n ? listed : cash + online, cash, online };
+  }
+  const hit = r.paidByDate?.[day];
+  if (!hit) return { total: 0n, cash: 0n, online: 0n };
+  const cash = BigInt(hit.cash || '0');
+  const online = BigInt(hit.online || '0');
+  return { total: cash + online, cash, online };
+}
+
+export function parsePaidByDate(raw: unknown): Record<string, { cash: string; online: string }> {
+  if (raw == null) return {};
+  try {
+    const v = typeof raw === 'string' ? (JSON.parse(raw) as unknown) : raw;
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+    const out: Record<string, { cash: string; online: string }> = {};
+    for (const [day, item] of Object.entries(v as Record<string, unknown>)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !item || typeof item !== 'object') continue;
+      const o = item as Record<string, unknown>;
+      out[day] = {
+        cash: o.cash != null ? String(o.cash) : '0',
+        online: o.online != null ? String(o.online) : '0',
+      };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 /** Paid already sitting on today when today is not in this visit — warn, or it stacks. */
 export function todayPaidUntickedPaise(
   days: readonly PayoutDayView[],

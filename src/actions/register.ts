@@ -392,6 +392,7 @@ export async function correctRegisterDayPaidAction(
   reason: string,
   reference: string | null = null,
   onlineRupees: string | null = null,
+  valueDate: string | null = null,
 ): Promise<ActionResult> {
   try {
     const { session, actor } = await requireActor();
@@ -408,7 +409,7 @@ export async function correctRegisterDayPaidAction(
     if (cashPaise == null || onlinePaise == null) return fail('Enter a whole rupee amount.', 'VALIDATION');
     await correctInstalmentPaid(
       session,
-      { instalmentId, cashPaise, onlinePaise, reason, reference },
+      { instalmentId, cashPaise, onlinePaise, reason, reference, valueDate },
       await requestMeta(),
     );
     revalidate();
@@ -425,6 +426,7 @@ export async function confirmRegisterTakenAction(
   onlineRupees: string | null = null,
   reference: string | null = null,
   reason: string | null = null,
+  valueDate: string | null = null,
 ): Promise<ActionResult> {
   try {
     const { session, actor } = await requireActor();
@@ -456,6 +458,7 @@ export async function confirmRegisterTakenAction(
         reference,
         reason,
         allowPayAhead: roleCan(actor.role, 'payout.reverse'),
+        valueDate: canOverrideDates(actor.role) ? valueDate : null,
       },
       await requestMeta(),
     );

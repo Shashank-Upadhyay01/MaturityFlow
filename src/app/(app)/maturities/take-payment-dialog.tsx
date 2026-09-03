@@ -51,6 +51,7 @@ export function TakePaymentDialog({
     onlineRupees: string | null;
     reference: string | null;
     reason: string | null;
+    valueDate: string;
     replaceVisit: boolean;
     corrections: {
       instalmentId: string;
@@ -85,6 +86,7 @@ export function TakePaymentDialog({
   const [online, setOnline] = useState('');
   const [reference, setReference] = useState('');
   const [reason, setReason] = useState('');
+  const [valueDate, setValueDate] = useState(today);
   const [paidDraft, setPaidDraft] = useState<Record<string, string>>(() => {
     const next: Record<string, string> = {};
     for (const day of days) next[day.id] = (BigInt(day.paidPaise) / 100n).toString();
@@ -171,7 +173,8 @@ export function TakePaymentDialog({
   const taking = visitReplace ? [] : selected.filter((day) => leftover(day) > 0n);
   const visitZeroing =
     visitReplace && visitTotal === 0n && selected.some((day) => BigInt(day.paidPaise) > 0n);
-  const reasonNeeded = payingAhead || corrections.length > 0 || visitReplace;
+  const reasonNeeded =
+    payingAhead || corrections.length > 0 || visitReplace || (Boolean(allowCorrectPaid) && valueDate !== today);
   const canSubmit =
     (corrections.length > 0 || (taking.length > 0 && willPay > 0n)) &&
     onlinePaise >= 0n &&
@@ -301,6 +304,24 @@ export function TakePaymentDialog({
           </p>
         )}
 
+        {allowCorrectPaid && (
+          <label className="mt-3 block text-[0.72rem] text-[var(--muted-fg)]">
+            Recorded on
+            <input
+              type="date"
+              className="mf-input mt-1 h-9 w-full tabular-nums"
+              max={today}
+              value={valueDate}
+              onChange={(event) => setValueDate(event.target.value)}
+              aria-label="Date this payment was actually given"
+            />
+            <span className="mt-1 block text-[0.68rem]">
+              The calendar day the cash left the drawer — not today unless it really was today.
+              Print and Paid today follow this date.
+            </span>
+          </label>
+        )}
+
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <label className="block text-[0.72rem] text-[var(--muted-fg)]">
             {allowCorrectPaid ? 'Visit total (cash)' : 'Custom amount (cash)'}
@@ -415,6 +436,7 @@ export function TakePaymentDialog({
                 onlineRupees: custom.trim() === '' && online.trim() === '' ? null : online.trim() || '0',
                 reference: reference.trim() || null,
                 reason: reason.trim() || null,
+                valueDate: allowCorrectPaid ? valueDate || today : today,
                 replaceVisit: visitReplace,
                 corrections: corrections.map((row) => ({
                   instalmentId: row.instalmentId,
