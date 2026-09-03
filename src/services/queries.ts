@@ -572,8 +572,9 @@ export async function searchWorkspace(actor: Actor, raw: string, limit = 10) {
  * The two correlated subqueries are per-case and hit `inst_case_status_idx` / `inst_due_status_idx`;
  * they replace what would otherwise be a second round trip per row from the component.
  */
-export async function listRegister(actor: Actor, date = todayISO()) {
+export async function listRegister(actor: Actor, date = todayISO(), branchId?: string | null) {
   const scope = caseScope(actor);
+  const branchFilter = branchId ? eq(maturityCases.branchId, branchId) : undefined;
 
   /**
    * One expression per field of today's instalment, rather than a join: a case can hold rows from
@@ -694,6 +695,7 @@ export async function listRegister(actor: Actor, date = todayISO()) {
           'ON_HOLD',
         ]),
         ...(scope ? [scope] : []),
+        ...(branchFilter ? [branchFilter] : []),
       ),
     )
     .orderBy(asc(maturityCases.approvedOn), asc(customers.name));

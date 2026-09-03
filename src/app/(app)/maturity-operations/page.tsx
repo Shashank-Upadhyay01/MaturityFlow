@@ -1,10 +1,10 @@
 import { redirect } from 'next/navigation';
 
 import { getSession, toActor } from '@/lib/auth/session';
-import { isAzamgarhHeadBranch } from '@/lib/branch-routing';
+import { pickWorkingBranch, workingBranches } from '@/lib/branch-routing';
 import { DEFAULT_OPERATIONS_MATURITY_ON } from '@/lib/maturity-operations';
 import { recommendedPerDay } from '@/lib/register-view';
-import { roleCan } from '@/lib/rbac';
+import { activeRole, ROLE_SCOPE, roleCan } from '@/lib/rbac';
 import { addDays, toISODateString, todayISO } from '@/lib/working-days';
 import { getFormOptions, listRegister } from '@/services/queries';
 import { OperationsGrid } from './operations-grid';
@@ -12,14 +12,26 @@ import { OperationsGrid } from './operations-grid';
 export const metadata = { title: 'Maturities' };
 export const dynamic = 'force-dynamic';
 
-export default async function MaturityOperationsPage() {
+export default async function MaturityOperationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ branch?: string }>;
+}) {
   const session = await getSession();
   if (!session) redirect('/login');
   const actor = toActor(session);
   if (!roleCan(session.role, 'case.approve')) redirect('/dashboard');
   const today = todayISO();
-  const [rows, options] = await Promise.all([listRegister(actor, today), getFormOptions(actor)]);
-  const headBranch = options.branches.find(isAzamgarhHeadBranch) ?? options.branches[0] ?? null;
+  const options = await getFormOptions(actor);
+  const hq = ROLE_SCOPE[activeRole(session.role)] === 'ALL';
+  const sp = await searchParams;
+  const picked = pickWorkingBranch(options.branches, {
+    requested: sp.branch,
+    sessionBranchId: session.branchId,
+    hq,
+  });
+  const rows = await listRegister(actor, today, picked.branchId);
+  const branch = options.branches.find((b) => b.id === picked.branchId) ?? null;
 
   return (
     <div className="space-y-4">
@@ -28,12 +40,31 @@ export default async function MaturityOperationsPage() {
         <h1 className="text-2xl font-semibold leading-tight tracking-tight">Operations review</h1>
         <p className="mt-1 text-sm text-[var(--muted-fg)]">Day 1 maturity · Day 2 form · Day 3 Operations review or automatic progression · Day 4 payment begins.</p>
       </div>
+      {hq && (
+        <form className="flex items-center gap-2 print:hidden">
+          <label htmlFor="ops-branch" className="sr-only">Branch</label>
+          <select
+            id="ops-branch"
+            name="branch"
+            defaultValue={picked.compiled ? 'all' : picked.branchId ?? ''}
+            className="mf-input h-9 max-w-xs py-1 text-[0.8125rem]"
+          >
+            <option value="all">All branches</option>
+            {workingBranches(options.branches).map((b) => (
+              <option key={b.id} value={b.id}>{b.code} — {b.name}</option>
+            ))}
+          </select>
+          <button type="submit" className="rounded-[11px] border border-[var(--input-border)] px-3 py-1.5 text-[0.8125rem] font-medium hover:bg-[var(--glass-bg-subtle)]">
+            Show
+          </button>
+        </form>
+      )}
       <OperationsGrid
         canEdit={roleCan(session.role, 'case.approve')}
         canSchedule={roleCan(session.role, 'schedule.override')}
         canPay={roleCan(session.role, 'payout.record')}
         isAdmin={session.role === 'ADMIN' || session.role === 'OPS_HEAD'}
-        addRowBranchId={headBranch?.id ?? null}
+        addRowBranchId={picked.compiled ? null : branch?.id ?? null}
         rows={rows.map((row) => {
           const paid = row.paidCashPaise + row.paidOnlinePaise;
           const remaining = row.maturityAmountPaise - paid;

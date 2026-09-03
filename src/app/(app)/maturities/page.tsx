@@ -1,10 +1,10 @@
 import { redirect } from 'next/navigation';
 
 import { getSession, toActor } from '@/lib/auth/session';
+import { pickWorkingBranch, workingBranches } from '@/lib/branch-routing';
 import { parseRegisterLayout } from '@/lib/register-layout';
 import { parsePayoutDays } from '@/lib/register-view';
 import { activeRole, canTypeRegister, ROLE_SCOPE, roleCan } from '@/lib/rbac';
-import { isAzamgarhHeadBranch } from '@/lib/branch-routing';
 import { toISODateString, todayISO } from '@/lib/working-days';
 import {
   getFormOptions,
@@ -17,28 +17,44 @@ import { RegisterTabs } from './register-tabs';
 export const metadata = { title: 'Register' };
 export const dynamic = 'force-dynamic';
 
-export default async function MaturitiesPage() {
+const EMPTY_DESK = {
+  cashInHandPaise: 0n,
+  plannedOnlinePaise: 0n,
+  dayStatus: 'OPEN',
+  withdrawalsToday: 0,
+  paidTodayPaise: 0n,
+  paidTodayCashPaise: 0n,
+  paidTodayOnlinePaise: 0n,
+};
+
+export default async function MaturitiesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ branch?: string }>;
+}) {
   const session = await getSession();
   if (!session) redirect('/login');
   const actor = toActor(session);
   const today = todayISO();
-  const [rows, options] = await Promise.all([listRegister(actor, today), getFormOptions(actor)]);
-  const compiledView = ROLE_SCOPE[activeRole(session.role)] === 'ALL';
-  const headBranch = options.branches.find(isAzamgarhHeadBranch) ?? options.branches[0] ?? null;
-  const branch = options.branches.find((b) => b.id === session.branchId) ?? headBranch;
-  const desk = branch
-    ? await getRegisterDesk(branch.id, today)
-    : {
-        cashInHandPaise: 0n,
-        plannedOnlinePaise: 0n,
-        dayStatus: 'OPEN',
-        withdrawalsToday: 0,
-        paidTodayPaise: 0n,
-        paidTodayCashPaise: 0n,
-        paidTodayOnlinePaise: 0n,
-      };
-
+  const options = await getFormOptions(actor);
+  const hq = ROLE_SCOPE[activeRole(session.role)] === 'ALL';
+  const sp = await searchParams;
+  const picked = pickWorkingBranch(options.branches, {
+    requested: sp.branch,
+    sessionBranchId: session.branchId,
+    hq,
+  });
+  const compiledView = picked.compiled;
+  const branch = options.branches.find((b) => b.id === picked.branchId) ?? null;
+  const [rows, loadedDesk] = await Promise.all([
+    listRegister(actor, today, picked.branchId),
+    branch ? getRegisterDesk(branch.id, today) : Promise.resolve(null),
+  ]);
+  const desk = loadedDesk ?? EMPTY_DESK;
   const cashLimit = branch?.dailyCashComfortPaise ?? rows[0]?.dailyCashComfortPaise ?? 50_000_000n;
+  const sheetAgents = picked.branchId
+    ? options.agents.filter((a) => a.branchId === picked.branchId)
+    : options.agents;
 
   /**
    * A role that may not type the register gets none of its write affordances, whatever
@@ -48,8 +64,11 @@ export default async function MaturitiesPage() {
    * straight off the role left the "Add rows" button and the "Form in" tick interactive on a
    * sheet they are not allowed to change — the server rejected every click. Ask the register's
    * own question first, then the permission.
+   *
+   * HQ on the compiled "all branches" view also stays read-only: typing there used to create
+   * rows on Azamgarh. Pick a branch first.
    */
-  const canType = canTypeRegister(session.role);
+  const canType = canTypeRegister(session.role) && !compiledView;
   const canOnSheet = (p: Parameters<typeof roleCan>[1]) => canType && roleCan(session.role, p);
 
   return (
@@ -60,12 +79,25 @@ export default async function MaturitiesPage() {
             role={session.role}
             branchLabel={
               compiledView
-                ? `All branches · Head: ${headBranch ? `${headBranch.code} — ${headBranch.name}` : 'Azamgarh'}`
+                ? 'All branches'
                 : branch
                   ? `${branch.code} · ${branch.name}`
                   : 'Register'
             }
             branchId={branch?.id ?? ''}
+            branchSwitch={
+              hq
+                ? {
+                    path: '/maturities',
+                    allowAll: true,
+                    branches: workingBranches(options.branches).map((b) => ({
+                      id: b.id,
+                      code: b.code,
+                      name: b.name,
+                    })),
+                  }
+                : undefined
+            }
             today={today}
             dayStatus={desk.dayStatus}
             cashLimitPaise={cashLimit.toString()}
@@ -77,7 +109,7 @@ export default async function MaturitiesPage() {
             canSchedule={canOnSheet('schedule.override')}
             canPay={canOnSheet('payout.record')}
             canSubmit={canOnSheet('case.submit')}
-            canImport={canOnSheet('data.import') && !compiledView}
+            canImport={canOnSheet('data.import')}
             canCreate={canOnSheet('case.create')}
             canSetCash={canOnSheet('cash.setOpening')}
             canRequestClose={canOnSheet('payout.record') || canOnSheet('settings.manage')}
@@ -85,7 +117,7 @@ export default async function MaturitiesPage() {
             canLayout={roleCan(session.role, 'settings.manage')}
             canRemove={canOnSheet('case.cancel')}
             columnLayout={parseRegisterLayout(branch?.registerColumnOrder)}
-            agents={options.agents.map((a) => ({ id: a.id, name: a.name }))}
+            agents={sheetAgents.map((a) => ({ id: a.id, name: a.name }))}
             rows={rows.map((r) => {
               const paid = r.paidCashPaise + r.paidOnlinePaise;
               return {
@@ -111,11 +143,6 @@ export default async function MaturitiesPage() {
                   Boolean(r.submittedAt) ||
                   ['SUBMITTED', 'APPROVED', 'IN_PROGRESS', 'COMPLETED'].includes(r.status),
                 approved: ['APPROVED', 'IN_PROGRESS', 'COMPLETED', 'ON_HOLD'].includes(r.status),
-                /*
-                  "Scheduled" is a fact about the case, read off the instalment table, not a box
-                  anybody ticks. Approval is gone (ADR-0005): submitting a row generates its
-                  schedule, and that is the only thing that can make this true.
-                */
                 scheduled: r.liveInstalmentCount > 0,
                 todayInstalmentId: r.todayInstalmentId,
                 todayDuePaise: r.todayDuePaise,

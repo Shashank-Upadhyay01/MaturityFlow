@@ -868,6 +868,11 @@ export function RegisterSheet(props: {
   role: Role;
   branchLabel: string;
   branchId: string;
+  branchSwitch?: {
+    path: string;
+    allowAll?: boolean;
+    branches: { id: string; code: string; name: string }[];
+  };
   today: string;
   dayStatus: string;
   cashLimitPaise: string;
@@ -1840,6 +1845,32 @@ export function RegisterSheet(props: {
                 and the code carries the identity. Nothing is lost: the full label is in the
                 tooltip, and the top bar prints it for anyone scoped to a single branch.
               */}
+              {props.branchSwitch && props.branchSwitch.branches.length > 0 ? (
+                <label className="flex items-center gap-1.5 text-[0.72rem] text-[var(--muted-fg)]">
+                  <span className="sr-only">Branch</span>
+                  <select
+                    className="mf-input h-8 max-w-[14rem] py-0 text-[0.75rem]"
+                    value={props.branchId || 'all'}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      const path = props.branchSwitch!.path;
+                      router.push(next === 'all' ? `${path}?branch=all` : `${path}?branch=${next}`);
+                    }}
+                    aria-label="Working branch"
+                    title="Open this branch's own register"
+                  >
+                    {props.branchSwitch.allowAll && <option value="all">All branches</option>}
+                    {props.branchSwitch.branches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.code} — {b.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="tabular-nums text-[var(--faint-fg)]">
+                    {liveCount} live / {props.rows.length}
+                  </span>
+                </label>
+              ) : (
               <span
                 className="whitespace-nowrap text-[0.72rem] text-[var(--muted-fg)]"
                 title={props.branchLabel}
@@ -1851,6 +1882,7 @@ export function RegisterSheet(props: {
                   · {liveCount} live / {props.rows.length}
                 </span>
               </span>
+              )}
 
               <Div />
 

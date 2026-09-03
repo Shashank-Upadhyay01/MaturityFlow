@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { isAzamgarhHeadBranch, resolveImportBranch } from '../src/lib/branch-routing';
+import {
+  isAzamgarhHeadBranch,
+  pickWorkingBranch,
+  resolveImportBranch,
+} from '../src/lib/branch-routing';
 
 const branches = [
   { id: 'azm', code: 'AZM', name: 'Azamgarh' },
@@ -22,5 +26,24 @@ describe('compiled register branch routing', () => {
   it('recognises Azamgarh as the head branch', () => {
     expect(isAzamgarhHeadBranch(branches[0])).toBe(true);
     expect(isAzamgarhHeadBranch(branches[1])).toBe(false);
+  });
+});
+
+describe('HQ working branch', () => {
+  it('lands Admin on a real branch so typing is never a mixed sheet', () => {
+    expect(pickWorkingBranch(branches, { hq: true, sessionBranchId: null }).branchId).toBe('azm');
+    expect(pickWorkingBranch(branches, { hq: true, sessionBranchId: null }).compiled).toBe(false);
+  });
+
+  it('opens the branch Admin asked for, including a new one', () => {
+    expect(
+      pickWorkingBranch(branches, { hq: true, sessionBranchId: null, requested: 'mau' }).branchId,
+    ).toBe('mau');
+  });
+
+  it('keeps an All-branches compiled view when asked', () => {
+    expect(
+      pickWorkingBranch(branches, { hq: true, sessionBranchId: null, requested: 'all' }),
+    ).toEqual({ branchId: null, compiled: true });
   });
 });

@@ -6,7 +6,9 @@ import { EmptyState } from '@/components/ui/misc';
 import { StatTile } from '@/components/ui/stat';
 import { Money } from '@/components/ui/money';
 import { getSession, toActor } from '@/lib/auth/session';
+import { pickWorkingBranch, workingBranches } from '@/lib/branch-routing';
 import { ROLE_SCOPE, roleCan, activeRole } from '@/lib/rbac';
+import { getFormOptions } from '@/services/queries';
 import { serialize } from '@/lib/serialize';
 import { formatISODate, todayISO } from '@/lib/working-days';
 import { getDueToday } from '@/services/payout-service';
@@ -19,7 +21,7 @@ export const dynamic = 'force-dynamic';
 export default async function PayoutsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string }>;
+  searchParams: Promise<{ date?: string; branch?: string }>;
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
@@ -28,7 +30,16 @@ export default async function PayoutsPage({
   const sp = await searchParams;
   const date = /^\d{4}-\d{2}-\d{2}$/.test(sp.date ?? '') ? sp.date! : todayISO();
   const actor = toActor(session);
-  const branchId = ROLE_SCOPE[activeRole(session.role)] === 'ALL' ? null : session.branchId;
+  const hq = ROLE_SCOPE[activeRole(session.role)] === 'ALL';
+  const options = hq ? await getFormOptions(actor) : { branches: [] as { id: string; code: string; name: string }[] };
+  const picked = hq
+    ? pickWorkingBranch(options.branches, {
+        requested: sp.branch,
+        sessionBranchId: session.branchId,
+        hq: true,
+      })
+    : { branchId: session.branchId, compiled: false };
+  const branchId = picked.compiled ? null : picked.branchId;
 
   const [due, stats] = await Promise.all([
     getDueToday(branchId, date),
@@ -55,6 +66,26 @@ export default async function PayoutsPage({
         title="Payout desk"
         description={`What is due on ${formatISODate(date)}, including any earlier instalment that was missed. Record what actually goes out — cash, online, or a part payment.`}
       />
+      {hq && options.branches.length > 0 && (
+        <form className="flex items-center gap-2 print:hidden">
+          <input type="hidden" name="date" value={date} />
+          <label htmlFor="payout-branch" className="sr-only">Branch</label>
+          <select
+            id="payout-branch"
+            name="branch"
+            defaultValue={picked.compiled ? 'all' : picked.branchId ?? ''}
+            className="mf-input h-9 max-w-xs py-1 text-[0.8125rem]"
+          >
+            <option value="all">All branches</option>
+            {workingBranches(options.branches).map((b) => (
+              <option key={b.id} value={b.id}>{b.code} — {b.name}</option>
+            ))}
+          </select>
+          <button type="submit" className="rounded-[11px] border border-[var(--input-border)] px-3 py-1.5 text-[0.8125rem] font-medium hover:bg-[var(--glass-bg-subtle)]">
+            Show
+          </button>
+        </form>
+      )}
 
       <section className="mf-stagger grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Still to pay today" value={<Money paise={outstanding} compact />} tone="warn" />
