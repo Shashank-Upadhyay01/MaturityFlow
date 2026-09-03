@@ -76,6 +76,9 @@ export function TakePaymentDialog({
 
   const selected = days.filter((day) => ticked[day.id]);
   const selectedLeft = selected.reduce((sum, day) => sum + leftover(day), 0n);
+  const remainingAll = days.reduce((sum, day) => sum + leftover(day), 0n);
+  const recRupees = (payoutDays: number) =>
+    remainingAll <= 0n ? 0n : remainingAll / 100n / BigInt(payoutDays);
   const customPaise = custom.trim() === '' ? null : tryParseRupeesToPaise(custom);
   const onlinePaise = online.trim() === '' ? 0n : (tryParseRupeesToPaise(online) ?? -1n);
   const payingAhead = selected.some((day) => day.dueOn > today);
@@ -124,7 +127,8 @@ export function TakePaymentDialog({
         </h2>
         <p className="mt-1 text-[0.78rem] text-[var(--muted-fg)]">
           Tick the days to pay. Leave the amount blank to pay each ticked day in full, or type
-          what was actually given.
+          what was actually given. A larger custom amount re-spreads the rest across later unpaid
+          days.
         </p>
 
         <div className="mt-3 max-h-[16rem] overflow-auto rounded-[12px] border border-[var(--hairline)]">
@@ -188,6 +192,13 @@ export function TakePaymentDialog({
             </tbody>
           </table>
         </div>
+
+        {remainingAll > 0n && (
+          <p className="mt-2 text-[0.72rem] text-[var(--muted-fg)]">
+            Recommended if split evenly — 12 days ₹{inr(recRupees(12) * 100n)}, 6 days ₹
+            {inr(recRupees(6) * 100n)}, 3 days ₹{inr(recRupees(3) * 100n)}. Advice only.
+          </p>
+        )}
 
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <label className="block text-[0.72rem] text-[var(--muted-fg)]">

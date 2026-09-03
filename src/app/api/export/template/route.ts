@@ -4,26 +4,23 @@ import { NextResponse } from 'next/server';
 import { db } from '@/db';
 import { branches } from '@/db/schema';
 import { requireActor } from '@/lib/auth/session';
-import { excelHeadersForLayout, parseRegisterLayout, visibleRegisterCols } from '@/lib/register-layout';
+import { REGISTER_IMPORT_HEADERS } from '@/lib/excel-register';
 import { assertCan } from '@/lib/rbac';
 
 export const dynamic = 'force-dynamic';
 
 const SAMPLE: Record<string, string | number> = {
-  account: '1001602329',
-  customer: 'Sample Customer',
-  maturityDate: '29/06/2026',
-  formDate: '24/07/2026',
-  paymentDate: '29/07/2026',
-  amount: 104035,
-  paid: 80000,
-  remaining: 24035,
-  agent: 'Agent Name',
-  days: 15,
-  perDay: 1602,
-  today: 0,
-  cash: 0,
-  online: 0,
+  'Savings Account Number': '1001602329',
+  'Customer Name': 'Sample Customer',
+  'Date of Maturity': '29/06/2026',
+  'Form Submission Date': '24/07/2026',
+  'Payment Date': '29/07/2026',
+  'Maturity Amount': 104035,
+  'Paid Maturity': 80000,
+  'Remaining Amount': 24035,
+  "Customer's Agent Name": 'Agent Name',
+  'Window Days': 15,
+  'Due Payment': 0,
 };
 
 export async function GET(request: Request) {
@@ -33,31 +30,26 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const compiled = url.searchParams.get('scope') === 'all';
   const branchId = url.searchParams.get('branch') || session.branchId;
-  let raw: unknown = null;
   let sampleBranchCode = 'AZM';
   if (branchId) {
     const [b] = await db
-      .select({ code: branches.code, registerColumnOrder: branches.registerColumnOrder })
+      .select({ code: branches.code })
       .from(branches)
       .where(eq(branches.id, branchId))
       .limit(1);
-    raw = b?.registerColumnOrder;
     sampleBranchCode = b?.code ?? sampleBranchCode;
   } else {
     const [b] = await db
-      .select({ code: branches.code, registerColumnOrder: branches.registerColumnOrder })
+      .select({ code: branches.code })
       .from(branches)
       .where(eq(branches.isActive, true))
       .orderBy(asc(branches.code))
       .limit(1);
-    raw = b?.registerColumnOrder;
     sampleBranchCode = b?.code ?? sampleBranchCode;
   }
-  const layout = parseRegisterLayout(raw);
-  const cols = visibleRegisterCols(layout);
   const headers = [
     ...(compiled ? ['Branch Code'] : []),
-    ...excelHeadersForLayout(layout),
+    ...REGISTER_IMPORT_HEADERS,
   ];
 
   const ExcelJS = (await import('exceljs')).default;
@@ -67,7 +59,7 @@ export async function GET(request: Request) {
   ws.getRow(1).font = { bold: true };
   ws.addRow([
     ...(compiled ? [sampleBranchCode] : []),
-    ...cols.map((c) => SAMPLE[c.id] ?? ''),
+    ...REGISTER_IMPORT_HEADERS.map((h) => SAMPLE[h] ?? ''),
   ]);
   ws.columns.forEach((c) => {
     c.width = 18;

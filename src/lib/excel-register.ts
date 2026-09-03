@@ -7,13 +7,28 @@ import { parseISODate, type ISODate } from './working-days';
 
 export const REGISTER_COLUMNS = excelHeadersForLayout(DEFAULT_REGISTER_LAYOUT);
 
+/** Headers the branch import file always has. Hidden Register columns must not strip these. */
+export const REGISTER_IMPORT_HEADERS = [
+  'Savings Account Number',
+  'Customer Name',
+  'Date of Maturity',
+  'Form Submission Date',
+  'Payment Date',
+  'Maturity Amount',
+  'Paid Maturity',
+  'Remaining Amount',
+  "Customer's Agent Name",
+  'Window Days',
+  'Due Payment',
+] as const;
+
 export interface RegisterRow {
   /** Branch code/name from a compiled HQ workbook. Empty on a single-branch legacy sheet. */
   branchReference: string;
   accountNumber: string;
   customerName: string;
   instrumentMaturityOn: ISODate | null;
-  formSubmittedOn: ISODate;
+  formSubmittedOn: ISODate | null;
   paymentOn: ISODate | null;
   maturityRupees: number;
   paidRupees: number;
@@ -129,27 +144,32 @@ export function parseRegisterGrid(grid: unknown[][]): { rows: RegisterRow[]; err
 
   const header = grid[0].map((h) => String(h ?? '').trim().toLowerCase());
   const idx = (label: string) => header.findIndex((h) => h.includes(label));
+  const firstIdx = (...labels: string[]) => {
+    for (const label of labels) {
+      const i = idx(label);
+      if (i >= 0) return i;
+    }
+    return -1;
+  };
   const iAcct = idx('account');
-  const iName = idx('customer');
-  const iMat = idx('date of maturity') >= 0 ? idx('date of maturity') : idx('maturity');
-  const iSub = idx('submission');
-  const iPay = idx('payment');
+  const iName = firstIdx('customer name', 'customer');
+  const iMat = firstIdx('date of maturity', 'maturity date', 'maturity');
+  const iSub = firstIdx('form submission', 'submission', 'form in', 'form date');
+  const iPay = firstIdx('payment date', 'payment');
   const iAmt = header.findIndex((h) => h === 'maturity amount' || h.includes('maturity amount'));
   const iPaid = idx('paid');
   const iRem = idx('remaining');
   const iAgent = idx('agent');
-  const iToday = idx('today');
-  const iWin = idx('window');
+  const iToday = firstIdx('due payment', 'today');
+  const iWin = firstIdx('window days', 'window', 'days');
   const iBranchCode = header.findIndex((h) => h === 'branch code' || h.includes('branch code'));
   const iBranchName = header.findIndex((h) => h === 'branch name' || h.includes('branch name'));
   const iBranch = iBranchCode >= 0 ? iBranchCode : iBranchName >= 0 ? iBranchName : header.indexOf('branch');
 
-  if (iName < 0 || iAmt < 0 || iSub < 0) {
+  if (iName < 0 || iAmt < 0) {
     return {
       rows: [],
-      errors: [
-        'Header row must include Customer Name, Maturity Amount and Form Submission Date. Download the template.',
-      ],
+      errors: ['Header row must include Customer Name and Maturity Amount. Download the Register template.'],
     };
   }
 
@@ -159,7 +179,7 @@ export function parseRegisterGrid(grid: unknown[][]): { rows: RegisterRow[]; err
     const customerName = String(excelCellRaw(line[iName]) ?? '').trim();
     if (!customerName) continue;
     const warnings: string[] = [];
-    const formSubmittedOn = parseRegisterDate(excelCellRaw(line[iSub]));
+    const formSubmittedOn = iSub >= 0 ? parseRegisterDate(excelCellRaw(line[iSub])) : null;
     let paymentOn = iPay >= 0 ? parseRegisterDate(excelCellRaw(line[iPay])) : null;
     const instrumentMaturityOn = iMat >= 0 ? parseRegisterDate(excelCellRaw(line[iMat])) : null;
     const maturityRupees = parseRupeesNumber(excelCellRaw(line[iAmt]));
@@ -170,10 +190,12 @@ export function parseRegisterGrid(grid: unknown[][]): { rows: RegisterRow[]; err
       warnings.push('Remaining did not match amount − paid; remaining was recomputed.');
     }
     if (!formSubmittedOn) {
-      errors.push(`Row ${r + 1} (${customerName}): missing form submission date.`);
-      continue;
+      warnings.push('Form-in date is blank; it will be filled from the maturity date or today.');
     }
-    if (paymentOn && paymentOn < formSubmittedOn) {
+    if (!instrumentMaturityOn) {
+      warnings.push('Maturity date is blank.');
+    }
+    if (paymentOn && formSubmittedOn && paymentOn < formSubmittedOn) {
       const iso = String(excelCellRaw(line[iPay]) ?? '').match(ISO);
       const swapped = iso ? toISO(Number(iso[1]), Number(iso[3]), Number(iso[2])) : null;
       if (swapped && swapped >= formSubmittedOn) paymentOn = swapped;

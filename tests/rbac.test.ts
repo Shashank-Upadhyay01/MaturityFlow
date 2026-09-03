@@ -120,9 +120,12 @@ describe('permission grants', () => {
     );
   });
 
-  it('only Admin may override workflow dates after payment or on a closed day', () => {
+  it('Admin, CMD and CEO may override workflow dates and recorded money', () => {
     expect(canOverrideDates('ADMIN')).toBe(true);
-    for (const r of ['CMD', 'CEO', 'BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const) {
+    expect(canOverrideDates('CMD')).toBe(true);
+    expect(canOverrideDates('CEO')).toBe(true);
+    expect(canOverrideDates('OPS_HEAD')).toBe(true);
+    for (const r of ['BRANCH_MANAGER', 'CASHIER', 'AGENT', 'AUDITOR'] as const) {
       expect(canOverrideDates(r)).toBe(false);
     }
   });

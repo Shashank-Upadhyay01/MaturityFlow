@@ -119,36 +119,14 @@ describe('planSettlement — one figure at the counter, spread over the days it 
     expect(over.code).toBe('EXCEEDS_DUE_TODAY');
   });
 
-  it('holds the cash cap to the day the cash moves, however many days it clears', () => {
+  it('does not refuse cash because of a per-customer cash cap', () => {
     const plan = planSettlement(
       { cashPaise: R(26_000), onlinePaise: 0n },
-      ctx({ cashCapPerDayPaise: R(25_000) }),
-    );
-    expect(plan.ok).toBe(false);
-    if (plan.ok) return;
-    expect(plan.code).toBe('EXCEEDS_CASH_CAP');
-    expect(plan.message).toContain('does not raise the cap');
-  });
-
-  it('counts cash already handed over today against the cap', () => {
-    const plan = planSettlement(
-      { cashPaise: R(10_000), onlinePaise: 0n },
       ctx({ cashCapPerDayPaise: R(25_000), cashAlreadyPaidTodayPaise: R(20_000) }),
-    );
-    expect(plan.ok).toBe(false);
-    if (plan.ok) return;
-    expect(plan.code).toBe('EXCEEDS_CASH_CAP');
-  });
-
-  it('lets the online leg carry what the cash cap will not', () => {
-    const plan = planSettlement(
-      { cashPaise: R(25_000), onlinePaise: R(1_000), reference: 'UTR123' },
-      ctx({ cashCapPerDayPaise: R(25_000) }),
     );
     expect(plan.ok).toBe(true);
     if (!plan.ok) return;
-    expect(plan.lines.reduce((s, l) => s + l.cashPaise, 0n)).toBe(R(25_000));
-    expect(plan.lines.reduce((s, l) => s + l.onlinePaise, 0n)).toBe(R(1_000));
+    expect(plan.totalPaise).toBe(R(26_000));
   });
 
   it('still refuses an online leg with no reference', () => {

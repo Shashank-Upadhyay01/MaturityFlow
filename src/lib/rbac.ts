@@ -278,7 +278,8 @@ export function canTypeRegister(role: Role): boolean {
  * and after the register day is closed. Other roles still follow the ordinary locks.
  */
 export function canOverrideDates(role: Role): boolean {
-  return activeRole(role) === 'ADMIN';
+  const current = activeRole(role);
+  return current === 'ADMIN' || current === 'CMD' || current === 'CEO';
 }
 
 /**

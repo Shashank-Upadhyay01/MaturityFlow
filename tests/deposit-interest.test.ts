@@ -132,8 +132,8 @@ describe('parseDepositInterestGrid', () => {
       ['Broken', 'not-money'],
     ]);
     expect(parsed.rows).toEqual([
-      { name: 'Asha', depositedPaise: rupees('100000'), maturityOn: null },
-      { name: 'Bala', depositedPaise: rupees('50000.50'), maturityOn: null },
+      { name: 'Asha', depositedPaise: rupees('100000'), maturityOn: null, agentName: null },
+      { name: 'Bala', depositedPaise: rupees('50000.50'), maturityOn: null, agentName: null },
     ]);
     expect(parsed.skipped).toBe(1);
     expect(parsed.errors.some((e) => e.includes('Broken'))).toBe(true);
@@ -167,9 +167,9 @@ describe('parseDepositInterestGrid', () => {
     ]);
     expect(parsed.errors).toEqual([]);
     expect(parsed.rows).toEqual([
-      { name: 'Asha', depositedPaise: rupees('100000'), maturityOn: '2026-08-29' },
-      { name: 'Bala', depositedPaise: rupees('50000'), maturityOn: null },
-      { name: 'Chitra', depositedPaise: rupees('25000'), maturityOn: '2026-09-15' },
+      { name: 'Asha', depositedPaise: rupees('100000'), maturityOn: '2026-08-29', agentName: null },
+      { name: 'Bala', depositedPaise: rupees('50000'), maturityOn: null, agentName: null },
+      { name: 'Chitra', depositedPaise: rupees('25000'), maturityOn: '2026-09-15', agentName: null },
     ]);
   });
 });

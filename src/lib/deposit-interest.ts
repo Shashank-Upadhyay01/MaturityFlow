@@ -23,12 +23,14 @@ export const MAX_INTEREST_BPS = 10_000;
 
 export const DEPOSIT_INTEREST_HEADERS = [
   'Customer Name',
+  'Agent Name',
   'Maturity Date',
   'Total Deposited Amount',
 ] as const;
 
 export const DEPOSIT_INTEREST_EXPORT_HEADERS = [
   'Customer Name',
+  'Agent Name',
   'Maturity Date',
   'Total Deposited Amount',
   'Interest',
@@ -40,6 +42,7 @@ export interface DepositRow {
   name: string;
   depositedPaise: Paise;
   maturityOn?: ISODate | null;
+  agentName?: string | null;
 }
 
 export interface DepositInterestLine extends DepositRow {
@@ -153,6 +156,7 @@ export function applyInterest(rows: readonly DepositRow[], rateBps: number): Dep
     const maturityPaise = row.depositedPaise + interestPaise;
     return {
       name: row.name,
+      agentName: row.agentName ?? null,
       depositedPaise: row.depositedPaise,
       maturityOn: row.maturityOn ?? null,
       interestPaise,
@@ -426,6 +430,7 @@ export function parseDepositInterestGrid(grid: unknown[][]): DepositInterestPars
 
   const header = (grid[0] ?? []).map(headerKey);
   const iName = columnIndex(header, 'Customer Name', 'Customer', 'Name');
+  const iAgent = columnIndex(header, 'Agent Name', 'Agent');
   const iDeposit = depositColumnIndex(header);
   const iDate = maturityDateColumnIndex(header);
   if (iName < 0 || iDeposit < 0) {
@@ -455,7 +460,12 @@ export function parseDepositInterestGrid(grid: unknown[][]): DepositInterestPars
     if (dateText && !maturityOn) {
       result.errors.push(`Row ${index + 1} (${name}): maturity date is not a valid date.`);
     }
-    result.rows.push({ name, depositedPaise, maturityOn });
+    result.rows.push({
+      name,
+      depositedPaise,
+      maturityOn,
+      agentName: iAgent >= 0 ? clean(line[iAgent]) || null : null,
+    });
   }
 
   return result;

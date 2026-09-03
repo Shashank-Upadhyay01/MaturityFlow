@@ -156,3 +156,16 @@ export function payoutPlanFor(
 
   return { cadence, processingDays, payoutDays, stride };
 }
+
+/**
+ * Window length that yields `payoutDays` instalments at this amount's cadence.
+ *
+ * The sheet's Days column is the number of days the customer can withdraw, not the processing
+ * gap. ₹1 lakh+ at 12 → window 15 daily; below ₹1 lakh at 6 → alternate days inside that window.
+ */
+export function windowDaysForPayoutCount(maturityAmountPaise: bigint, payoutDays: number): number {
+  const n = Math.max(1, Math.floor(payoutDays) || 1);
+  const stride = strideFor(cadenceFor(maturityAmountPaise));
+  const usable = stride === 1 ? n : n * stride - (stride - 1);
+  return Math.max(MIN_WINDOW_DAYS, usable + PROCESSING_WORKING_DAYS);
+}

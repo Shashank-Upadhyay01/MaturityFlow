@@ -36,18 +36,20 @@ export interface SeedDeposit {
   name: string;
   depositedPaise: string;
   maturityOn: string | null;
+  agentName?: string | null;
 }
 
 interface SheetRow {
   id: string;
   name: string;
+  agentName: string;
   amountDraft: string;
   maturityOn: string;
 }
 
 type SortKey = 'amount' | 'name' | 'date';
 
-const STORAGE_KEY = 'kggnl.deposit-interest.v3';
+const STORAGE_KEY = 'kggnl.deposit-interest.v4';
 const BLANK_COUNT = 6;
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -61,7 +63,7 @@ function draftFromPaise(paise: bigint): string {
 }
 
 function blankRows(count: number): SheetRow[] {
-  return Array.from({ length: count }, () => ({ id: newId(), name: '', amountDraft: '', maturityOn: '' }));
+  return Array.from({ length: count }, () => ({ id: newId(), name: '', agentName: '', amountDraft: '', maturityOn: '' }));
 }
 
 function rowsFromSeed(seed: SeedDeposit[]): SheetRow[] {
@@ -70,6 +72,7 @@ function rowsFromSeed(seed: SeedDeposit[]): SheetRow[] {
     ...seed.map((row) => ({
       id: row.id,
       name: row.name,
+      agentName: row.agentName?.trim() ?? '',
       amountDraft: draftFromPaise(BigInt(row.depositedPaise)),
       maturityOn: row.maturityOn && ISO.test(row.maturityOn) ? row.maturityOn : '',
     })),
@@ -78,7 +81,12 @@ function rowsFromSeed(seed: SeedDeposit[]): SheetRow[] {
 }
 
 function isFilled(row: SheetRow): boolean {
-  return row.name.trim() !== '' || row.amountDraft.trim() !== '' || row.maturityOn.trim() !== '';
+  return (
+    row.name.trim() !== '' ||
+    row.agentName.trim() !== '' ||
+    row.amountDraft.trim() !== '' ||
+    row.maturityOn.trim() !== ''
+  );
 }
 
 function toDepositRows(rows: SheetRow[]): DepositRow[] {
@@ -88,7 +96,7 @@ function toDepositRows(rows: SheetRow[]): DepositRow[] {
     const depositedPaise = tryParseRupeesToPaise(row.amountDraft);
     if (!name || depositedPaise == null || depositedPaise <= 0n) continue;
     const maturityOn = ISO.test(row.maturityOn) ? (row.maturityOn as ISODate) : null;
-    out.push({ name, depositedPaise, maturityOn });
+    out.push({ name, depositedPaise, maturityOn, agentName: row.agentName.trim() || null });
   }
   return out;
 }
@@ -114,10 +122,17 @@ function loadStored(): { rateDraft: string; rows: SheetRow[] } | null {
     const rows: SheetRow[] = [];
     for (const item of parsed.rows) {
       if (!item || typeof item !== 'object') continue;
-      const row = item as { id?: unknown; name?: unknown; amountDraft?: unknown; maturityOn?: unknown };
+      const row = item as {
+        id?: unknown;
+        name?: unknown;
+        agentName?: unknown;
+        amountDraft?: unknown;
+        maturityOn?: unknown;
+      };
       if (typeof row.id !== 'string' || typeof row.name !== 'string' || typeof row.amountDraft !== 'string') continue;
       const maturityOn = typeof row.maturityOn === 'string' && ISO.test(row.maturityOn) ? row.maturityOn : '';
-      rows.push({ id: row.id, name: row.name, amountDraft: row.amountDraft, maturityOn });
+      const agentName = typeof row.agentName === 'string' ? row.agentName : '';
+      rows.push({ id: row.id, name: row.name, agentName, amountDraft: row.amountDraft, maturityOn });
     }
     return { rateDraft: parsed.rateDraft, rows };
   } catch {
@@ -169,6 +184,7 @@ export function DepositInterestBoard({ seed, today }: { seed: SeedDeposit[]; tod
         row.name.trim() && depositedPaise != null && depositedPaise > 0n
           ? applyInterest([{
               name: row.name,
+              agentName: row.agentName.trim() || null,
               depositedPaise,
               maturityOn: ISO.test(row.maturityOn) ? (row.maturityOn as ISODate) : null,
             }], rateBps)[0]
@@ -176,7 +192,11 @@ export function DepositInterestBoard({ seed, today }: { seed: SeedDeposit[]; tod
       return { row, depositedPaise, line };
     });
     const filtered = needle
-      ? decorated.filter((item) => item.row.name.toLowerCase().includes(needle))
+      ? decorated.filter(
+          (item) =>
+            item.row.name.toLowerCase().includes(needle) ||
+            item.row.agentName.toLowerCase().includes(needle),
+        )
       : decorated;
     const filled = filtered.filter((item) => isFilled(item.row));
     const blanks = filtered.filter((item) => !isFilled(item.row));
@@ -216,13 +236,14 @@ export function DepositInterestBoard({ seed, today }: { seed: SeedDeposit[]; tod
     if (live.length === 0) {
       ws.addRow([...DEPOSIT_INTEREST_HEADERS]);
       ws.getRow(1).font = { bold: true };
-      ws.addRow(['Sample Customer', '29/08/2026', 100000]);
+      ws.addRow(['Sample Customer', 'Agent Name', '29/08/2026', 100000]);
     } else {
       ws.addRow([...DEPOSIT_INTEREST_EXPORT_HEADERS]);
       ws.getRow(1).font = { bold: true };
       for (const line of live) {
         ws.addRow([
           line.name,
+          line.agentName ?? '',
           line.maturityOn ? formatDMY(line.maturityOn) : '',
           paiseToExcelNumber(line.depositedPaise),
           paiseToExcelNumber(line.interestPaise),
@@ -275,6 +296,7 @@ export function DepositInterestBoard({ seed, today }: { seed: SeedDeposit[]; tod
           parsed.rows.map((row) => ({
             id: newId(),
             name: row.name,
+            agentName: row.agentName ?? '',
             amountDraft: draftFromPaise(row.depositedPaise),
             maturityOn: row.maturityOn ?? '',
           })),
@@ -302,7 +324,8 @@ export function DepositInterestBoard({ seed, today }: { seed: SeedDeposit[]; tod
   const skewed = insights.lineCount >= 3 && insights.averageDepositPaise > insights.medianDepositPaise * 2n;
 
   return (
-    <div className="space-y-3">
+    <>
+    <div className="space-y-3 print:hidden">
       <Glass className="px-3 py-2 sm:px-4">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <p className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-[var(--faint-fg)]">
@@ -320,7 +343,7 @@ export function DepositInterestBoard({ seed, today }: { seed: SeedDeposit[]; tod
                 if (parsed != null) setRateDraft(formatBpsAsPercent(parsed));
               }}
               className={cn(
-                'mf-input tnum h-8 w-[5.75rem] py-1 pr-7 text-right text-[0.9375rem] font-semibold tracking-[-0.02em]',
+                'mf-input tnum h-8 w-[8rem] py-1 pr-8 text-right text-[0.9375rem] font-semibold tracking-[-0.02em]',
                 !rateValid && rateDraft.trim() !== '' && 'aria-[invalid]:border-[var(--color-danger-500)]',
               )}
               aria-invalid={rateDraft.trim() !== '' && !rateValid}
@@ -342,7 +365,18 @@ export function DepositInterestBoard({ seed, today }: { seed: SeedDeposit[]; tod
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <Button type="button" variant="glass" size="sm" onClick={() => void downloadWorkbook()}>
               <Download className="h-3.5 w-3.5" />
-              Download template
+              Download Excel
+            </Button>
+            <Button
+              type="button"
+              variant="glass"
+              size="sm"
+              className="print:hidden"
+              onClick={() => window.print()}
+              disabled={insights.lineCount === 0}
+            >
+              <Download className="h-3.5 w-3.5" />
+              Save as PDF
             </Button>
             <label className="inline-flex">
               <input
@@ -608,13 +642,13 @@ export function DepositInterestBoard({ seed, today }: { seed: SeedDeposit[]; tod
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="relative min-w-[10rem] flex-1 sm:flex-none">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--faint-fg)]" />
+            <div className="relative min-w-[12rem] flex-1 sm:flex-none">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--faint-fg)]" />
               <Input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Find a customer"
-                className="h-8 pl-8 text-[0.8125rem]"
+                className="h-8 pl-10 text-[0.8125rem]"
               />
             </div>
             <Button
@@ -663,17 +697,19 @@ export function DepositInterestBoard({ seed, today }: { seed: SeedDeposit[]; tod
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[48rem] table-fixed text-left">
+          <table className="w-full min-w-[56rem] table-fixed text-left">
             <colgroup>
-              <col className="w-[30%]" />
+              <col className="w-[24%]" />
+              <col className="w-[16%]" />
+              <col className="w-[16%]" />
               <col className="w-[18%]" />
-              <col className="w-[20%]" />
-              <col className="w-[22%]" />
-              <col className="w-[10%]" />
+              <col className="w-[18%]" />
+              <col className="w-[8%]" />
             </colgroup>
             <thead>
               <tr className="border-b text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-[var(--faint-fg)]">
                 <th className="px-4 py-2.5 sm:px-5">Customer name</th>
+                <th className="px-3 py-2.5">Agent name</th>
                 <th className="px-3 py-2.5">Maturity date</th>
                 <th className="px-3 py-2.5 text-right">Total deposited</th>
                 <th className="px-3 py-2.5 text-right">With {formatBpsAsPercent(rateBps)}%</th>
@@ -693,6 +729,15 @@ export function DepositInterestBoard({ seed, today }: { seed: SeedDeposit[]; tod
                         onChange={(event) => updateRow(row.id, { name: event.target.value })}
                         placeholder="Customer name"
                         className="mf-input h-9 border-transparent bg-transparent px-2 text-[0.9375rem] hover:border-[var(--input-border)]"
+                      />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <input
+                        aria-label={`Agent for ${row.name || 'this customer'}`}
+                        value={row.agentName}
+                        onChange={(event) => updateRow(row.id, { agentName: event.target.value })}
+                        placeholder="Agent name"
+                        className="mf-input h-9 border-transparent bg-transparent px-2 text-[0.8125rem] hover:border-[var(--input-border)]"
                       />
                     </td>
                     <td className="px-2 py-1.5">
@@ -758,6 +803,59 @@ export function DepositInterestBoard({ seed, today }: { seed: SeedDeposit[]; tod
         </div>
       </Glass>
     </div>
+
+      <section className="hidden print:block">
+        <h1 className="text-xl font-semibold">Deposit interest at {formatBpsAsPercent(rateBps)}%</h1>
+        <p className="mt-1 text-sm">
+          Deposited {formatPaise(insights.depositedPaise, { decimals: false })} · Interest{' '}
+          {formatPaise(insights.interestPaise, { decimals: false })} · With interest{' '}
+          {formatPaise(insights.maturityPaise, { decimals: false })}
+        </p>
+        <table className="mt-4 w-full text-left text-sm">
+          <thead>
+            <tr>
+              <th>Customer</th>
+              <th>Agent</th>
+              <th>Maturity</th>
+              <th className="text-right">Deposited</th>
+              <th className="text-right">With interest</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.filter(isFilled).map((row) => {
+              const depositedPaise = tryParseRupeesToPaise(row.amountDraft);
+              const line =
+                row.name.trim() && depositedPaise != null && depositedPaise > 0n
+                  ? applyInterest(
+                      [
+                        {
+                          name: row.name,
+                          agentName: row.agentName.trim() || null,
+                          depositedPaise,
+                          maturityOn: ISO.test(row.maturityOn) ? (row.maturityOn as ISODate) : null,
+                        },
+                      ],
+                      rateBps,
+                    )[0]
+                  : null;
+              return (
+                <tr key={`print-${row.id}`}>
+                  <td>{row.name}</td>
+                  <td>{row.agentName}</td>
+                  <td>{row.maturityOn ? formatDMY(row.maturityOn) : ''}</td>
+                  <td className="text-right">
+                    {depositedPaise != null ? formatPaise(depositedPaise, { decimals: false }) : ''}
+                  </td>
+                  <td className="text-right">
+                    {line ? formatPaise(line.maturityPaise, { decimals: false }) : ''}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </section>
+    </>
   );
 }
 

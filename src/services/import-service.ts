@@ -13,9 +13,8 @@ import { writeAudit } from '@/lib/audit';
 import type { SessionUser } from '@/lib/auth/session';
 import { resolveImportBranch } from '@/lib/branch-routing';
 import { formatCaseNumber, newId } from '@/lib/id';
-import { DEFAULT_CASH_CAP_PAISE } from '@/lib/org-settings';
 import { parseRupeesToPaise } from '@/lib/money';
-import { loadOrgSettings } from '@/services/org-settings';
+import { todayISO } from '@/lib/working-days';
 import type { RegisterRow } from '@/lib/excel-register';
 import { sql } from 'drizzle-orm';
 import { caseCounters, branches } from '@/db/schema';
@@ -61,8 +60,6 @@ export async function importRegisterRows(
   let skipped = 0;
   let importedBranchCode = branchId;
   let importedBranchName = 'Branch';
-  const org = await loadOrgSettings();
-  const cashCap = org.cashCapPaise > 0n ? org.cashCapPaise : DEFAULT_CASH_CAP_PAISE;
 
   await db.transaction(async (tx) => {
     const [branch] = await tx.select().from(branches).where(eq(branches.id, branchId)).limit(1);
@@ -128,13 +125,21 @@ export async function importRegisterRows(
         });
       }
 
+      const formSubmittedOn = row.formSubmittedOn ?? row.instrumentMaturityOn ?? todayISO();
+      if (!row.formSubmittedOn) {
+        warnings.push(`Row ${row.rowNumber} (${row.customerName}): form-in date was blank — used ${formSubmittedOn}.`);
+      }
+      if (!row.instrumentMaturityOn) {
+        warnings.push(`Row ${row.rowNumber} (${row.customerName}): maturity date was blank.`);
+      }
+
       const dup = await tx
         .select({ id: maturityCases.id })
         .from(maturityCases)
         .where(
           and(
             eq(maturityCases.customerId, customerId),
-            eq(maturityCases.formSubmittedOn, row.formSubmittedOn),
+            eq(maturityCases.formSubmittedOn, formSubmittedOn),
             eq(maturityCases.maturityAmountPaise, paiseFromRupeesNumber(row.maturityRupees)),
           ),
         )
@@ -147,10 +152,10 @@ export async function importRegisterRows(
 
       const amount = paiseFromRupeesNumber(row.maturityRupees);
       const paid = paiseFromRupeesNumber(row.paidRupees);
-      const year = Number(row.formSubmittedOn.slice(0, 4));
+      const year = Number(formSubmittedOn.slice(0, 4));
       const caseNumber = await nextCaseNumber(tx, branch.code, year);
       const caseId = newId('case');
-      const approvedOn = row.paymentOn && row.paymentOn >= row.formSubmittedOn ? row.paymentOn : row.formSubmittedOn;
+      const approvedOn = row.paymentOn && row.paymentOn >= formSubmittedOn ? row.paymentOn : formSubmittedOn;
 
       await tx.insert(maturityCases).values({
         id: caseId,
@@ -160,15 +165,15 @@ export async function importRegisterRows(
         customerId,
         maturityAmountPaise: amount,
         instrumentMaturityOn: row.instrumentMaturityOn,
-        formSubmittedOn: row.formSubmittedOn,
+        formSubmittedOn,
         paymentOn: row.paymentOn,
-        submittedAt: new Date(`${row.formSubmittedOn}T10:00:00+05:30`),
+        submittedAt: new Date(`${formSubmittedOn}T10:00:00+05:30`),
         status: 'SUBMITTED',
         windowDays: row.windowDays,
         roundingPaise: branch.defaultRoundingPaise,
         distribution: 'FRONT_LOADED',
-        cashPolicy: 'CASH_CAP',
-        cashCapPerDayPaise: cashCap,
+        cashPolicy: 'CASH_ONLY',
+        cashCapPerDayPaise: null,
         startOnNextWorkingDay: false,
         todayApprovedPaise: 0n,
         createdById: actor.id,

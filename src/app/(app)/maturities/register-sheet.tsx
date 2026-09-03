@@ -98,6 +98,7 @@ import {
   REGISTER_COL_DEFS,
 } from '@/lib/register-layout';
 import { formatPaise, tryParseRupeesToPaise } from '@/lib/money';
+import { payoutPlanFor, windowDaysForPayoutCount } from '@/lib/payout-policy';
 import { cn } from '@/lib/utils';
 import { formatDMY } from '@/lib/working-days';
 import type { Role } from '@/db/schema';
@@ -1408,7 +1409,18 @@ export function RegisterSheet(props: {
       });
       const r = await importRegisterAction(props.branchId, grid);
       if (!r.ok) toast.error(r.error);
-      else toast.success(`Imported ${r.data?.created ?? 0} rows`, { description: r.data?.skipped ? `${r.data.skipped} skipped` : undefined });
+      else {
+        const warnings = r.data?.warnings ?? [];
+        const errors = r.data?.errors ?? [];
+        const extra = [
+          r.data?.skipped ? `${r.data.skipped} skipped` : '',
+          warnings.length ? `${warnings.length} note${warnings.length === 1 ? '' : 's'}` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        toast.success(`Imported ${r.data?.created ?? 0} rows`, { description: extra || undefined, duration: 8000 });
+        for (const note of [...warnings, ...errors].slice(0, 6)) toast.message(note);
+      }
       router.refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not read file');
@@ -1456,6 +1468,26 @@ export function RegisterSheet(props: {
         return inr(BigInt(r.paidOnlineTodayPaise));
     }
   }
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'c') return;
+      const tag = (event.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      const ids = Object.keys(selected).filter((id) => selected[id]);
+      if (ids.length === 0) return;
+      const lines = ids.map((id) => {
+        const row = props.rows.find((item) => item.id === id);
+        if (!row) return '';
+        return visCols.map((col) => String(exportValue(col.id, row))).join('\t');
+      });
+      void navigator.clipboard.writeText(lines.join('\n'));
+      toast.success(`Copied ${ids.length} row${ids.length === 1 ? '' : 's'}`);
+      event.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selected, props.rows, visCols]);
 
   function download(blob: Blob, filename: string) {
     const url = URL.createObjectURL(blob);
@@ -2983,11 +3015,31 @@ export function RegisterSheet(props: {
                             ariaLabel={`${c.label} for ${r.customerName}`}
                             className="text-center tabular-nums"
                             disabled={!edit}
-                            value={d(r.id, 'windowDays', String(r.windowDays))}
-                            onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], windowDays: v } }))}
+                            title="Payout days — 12 daily if ₹1 lakh+, 6 alternate if below. Type a custom count to split across that many days."
+                            value={d(
+                              r.id,
+                              'payoutDaysCount',
+                              String(
+                                (() => {
+                                  try {
+                                    return payoutPlanFor(amtP, daysN).payoutDays;
+                                  } catch {
+                                    return daysN;
+                                  }
+                                })(),
+                              ),
+                            )}
+                            onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], payoutDaysCount: v } }))}
                             onCommit={(v) => {
-                              if (v.trim() === String(r.windowDays)) return;
-                              void save(r.id, { windowDays: Number(v) || 15 });
+                              const n = Math.max(1, Number(v) || 12);
+                              let shown = daysN;
+                              try {
+                                shown = payoutPlanFor(amtP, daysN).payoutDays;
+                              } catch {
+                                shown = daysN;
+                              }
+                              if (n === shown) return;
+                              void save(r.id, { windowDays: windowDaysForPayoutCount(amtP, n) });
                             }}
                           />
                         )}
@@ -3145,7 +3197,7 @@ export function RegisterSheet(props: {
                         state={arrearsPay && !r.todayInstalmentId ? 'due' : dayState}
                         instalmentId={isViewingToday ? (r.todayInstalmentId ?? arrearsPay?.id ?? null) : null}
                         hasUnpaid={unpaidPayoutDays(r.payoutDays ?? [], props.today).length > 0}
-                        disabled={locked || !props.canPay || !isViewingToday}
+                        disabled={locked || !props.canPay}
                         busy={paying && payRow?.id === r.id}
                         onPay={() => setPayRow(r)}
                         onNotTaken={(id, clear) => void onNotTaken(id, clear)}
@@ -3205,7 +3257,7 @@ export function RegisterSheet(props: {
                                 state={day.status === 'PAID' ? 'taken' : day.status === 'PARTIAL' ? 'partial' : 'due'}
                                 instalmentId={day.id}
                                 hasUnpaid={leftoverOnPayoutDay(day) > 0n}
-                                disabled={locked || !props.canPay || !isViewingToday}
+                                disabled={locked || !props.canPay}
                                 busy={paying && payRow?.id === r.id}
                                 onPay={() => setPayRow(r)}
                                 onNotTaken={(id, clear) => void onNotTaken(id, clear)}

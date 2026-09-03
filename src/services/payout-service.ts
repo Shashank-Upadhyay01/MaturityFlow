@@ -14,6 +14,7 @@ import type { SessionUser } from '@/lib/auth/session';
 import { newId } from '@/lib/id';
 import { formatPaise } from '@/lib/money';
 import { planSettlement, validatePayout } from '@/lib/payment-rules';
+import { rebalanceAfter } from '@/lib/schedule-edit';
 import { todayISO } from '@/lib/working-days';
 
 export class PayoutError extends Error {
@@ -943,7 +944,7 @@ export async function settleRegisterRow(
         caseIsPayable: PAYABLE_STATUSES.has(c.status) || c.status === 'COMPLETED',
         // Today's cash was just rolled back, so the cap is measured against the new figure alone.
         cashAlreadyPaidTodayPaise: 0n,
-        cashCapPerDayPaise: c.cashPolicy === 'CASH_CAP' ? (c.cashCapPerDayPaise ?? 0n) : null,
+        cashCapPerDayPaise: null,
       },
     );
     if (!plan.ok) throw new PayoutError(plan.message, plan.code);
@@ -1165,6 +1166,47 @@ export async function takeRegisterDays(
       throw new PayoutError('That day has not arrived yet.', 'NOT_YET_DUE');
     }
 
+    if (usingCustom && selected.length === 1) {
+      const row = selected[0];
+      const leftover = row.amountPaise - row.paidCashPaise - row.paidOnlinePaise;
+      const want = cashPaiseIn + onlinePaiseIn;
+      if (want > leftover) {
+        const rounding = c.roundingPaise > 0n ? c.roundingPaise : 100_000n;
+        const editable = live.map((inst) => ({
+          id: inst.id,
+          seq: inst.seq,
+          dueOn: inst.dueOn,
+          amountPaise: inst.amountPaise,
+          paidPaise: inst.paidCashPaise + inst.paidOnlinePaise,
+          isFinal: inst.isFinal,
+        }));
+        const balanced = rebalanceAfter(
+          editable,
+          row.id,
+          row.paidCashPaise + row.paidOnlinePaise + want,
+          rounding,
+        );
+        if (!balanced.ok) throw new PayoutError(balanced.message, balanced.error);
+        const nowEdit = new Date();
+        for (const inst of balanced.instalments) {
+          const before = byId.get(inst.id);
+          if (!before || before.amountPaise === inst.amountPaise) continue;
+          await tx
+            .update(payoutInstalments)
+            .set({
+              amountPaise: inst.amountPaise,
+              cashLegPaise: inst.amountPaise,
+              onlineLegPaise: 0n,
+              updatedAt: nowEdit,
+            })
+            .where(eq(payoutInstalments.id, inst.id));
+          before.amountPaise = inst.amountPaise;
+          before.cashLegPaise = inst.amountPaise;
+          before.onlineLegPaise = 0n;
+        }
+      }
+    }
+
     let cashPaise = cashPaiseIn;
     let onlinePaise = onlinePaiseIn;
     if (!usingCustom) {
@@ -1218,7 +1260,7 @@ export async function takeRegisterDays(
         casePaidTotalPaise: c.paidCashPaise + c.paidOnlinePaise,
         caseIsPayable: PAYABLE_STATUSES.has(c.status) || c.status === 'COMPLETED',
         cashAlreadyPaidTodayPaise,
-        cashCapPerDayPaise: c.cashPolicy === 'CASH_CAP' ? (c.cashCapPerDayPaise ?? 0n) : null,
+        cashCapPerDayPaise: null,
         allowedInstalmentIds: ids,
       },
     );

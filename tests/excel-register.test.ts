@@ -102,6 +102,36 @@ describe('parseRegisterGrid', () => {
     expect(errors[0]).toMatch(/Header row/);
   });
 
+  it('imports the Register template even when Form-in or maturity dates are blank', () => {
+    const { rows, errors } = parseRegisterGrid([
+      [
+        'Savings Account Number',
+        'Customer Name',
+        'Date of Maturity',
+        'Form Submission Date',
+        'Payment Date',
+        'Maturity Amount',
+        "Customer's Agent Name",
+      ],
+      ['1001', 'Asha', '', '', '', 50000, 'Suresh'],
+    ]);
+    expect(errors).toEqual([]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].customerName).toBe('Asha');
+    expect(rows[0].formSubmittedOn).toBeNull();
+    expect(rows[0].instrumentMaturityOn).toBeNull();
+    expect(rows[0].warnings.some((w) => /form-in date is blank/i.test(w))).toBe(true);
+  });
+
+  it('accepts the on-screen Form in heading as the form date', () => {
+    const { rows, errors } = parseRegisterGrid([
+      ['Customer Name', 'Maturity Amount', 'Form in'],
+      ['Asha', 50000, '24/07/2026'],
+    ]);
+    expect(errors).toEqual([]);
+    expect(rows[0].formSubmittedOn).toBe('2026-07-24');
+  });
+
   it('parses the live MATURITY.xlsx register', async () => {
     const fs = await import('node:fs');
     const path = 'tests/fixtures/MATURITY.xlsx';

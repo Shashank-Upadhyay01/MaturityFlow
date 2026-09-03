@@ -191,6 +191,7 @@ export async function listForecastDeposits(actor: Actor) {
       name: maturityForecasts.customerName,
       depositedPaise: maturityForecasts.totalDepositPaise,
       maturityOn: maturityForecasts.maturityOn,
+      agentName: maturityForecasts.agentName,
     })
     .from(maturityForecasts)
     .where(and(...conds))

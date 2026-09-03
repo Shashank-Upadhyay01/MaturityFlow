@@ -10,6 +10,7 @@ import {
   isPriorityCase,
   payoutPlanFor,
   strideFor,
+  windowDaysForPayoutCount,
 } from '../src/lib/payout-policy';
 
 const LAKH = 10_000_000n; // ₹1,00,000 in paise
@@ -36,6 +37,12 @@ describe('the ₹1 lakh line', () => {
 });
 
 describe('payoutPlanFor', () => {
+  it('turns 12 daily payouts and 6 alternate payouts into the stored window', () => {
+    expect(windowDaysForPayoutCount(LAKH, 12)).toBe(15);
+    expect(payoutPlanFor(LAKH, windowDaysForPayoutCount(LAKH, 12)).payoutDays).toBe(12);
+    expect(payoutPlanFor(LAKH - 1n, windowDaysForPayoutCount(LAKH - 1n, 6)).payoutDays).toBe(6);
+  });
+
   it('gives a large case 12 daily payouts in a 15-day window', () => {
     expect(payoutPlanFor(LAKH, 15)).toEqual({
       cadence: 'DAILY',

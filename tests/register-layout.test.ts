@@ -16,7 +16,7 @@ describe('register layout', () => {
     expect(layout.order[0]).toBe('agent');
     expect(layout.order[1]).toBe('customer');
     expect(layout.order).toContain('amount');
-    expect(layout.hidden).toContain('perDay');
+    expect(layout.hidden).not.toContain('perDay');
   });
 
   it('cannot hide required columns', () => {

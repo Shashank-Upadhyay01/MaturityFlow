@@ -286,20 +286,6 @@ export function planSettlement(
     };
   }
 
-  if (ctx.cashCapPerDayPaise != null && cashPaise > 0n) {
-    const capLeft = ctx.cashCapPerDayPaise - ctx.cashAlreadyPaidTodayPaise;
-    if (cashPaise > capLeft) {
-      return {
-        ok: false,
-        code: 'EXCEEDS_CASH_CAP',
-        message:
-          `Cash to this customer is capped at ${formatPaise(ctx.cashCapPerDayPaise)} a day and ` +
-          `${formatPaise(capLeft > 0n ? capLeft : 0n)} is left today. ` +
-          'Clearing several days at once does not raise the cap — pay the rest online.',
-      };
-    }
-  }
-
   const allowed = ctx.allowedInstalmentIds ? new Set(ctx.allowedInstalmentIds) : null;
   const open = ctx.instalments
     .filter((i) => outstandingOf(i) > 0n && (!allowed || allowed.has(i.id)))

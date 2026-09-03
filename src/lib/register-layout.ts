@@ -105,7 +105,7 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
   },
   days: {
     id: 'days', label: 'Days', excel: 'Window Days', right: true, w: 'w-[3.25rem]', priority: 6,
-    hint: 'The TOTAL window in working days \u2014 15 means 3 processing days plus 12 that pay.',
+    hint: 'Payout days the customer can withdraw. ₹1 lakh+ defaults to 12 daily; below that, 6 alternate. Type any count to split across that many days.',
   },
   perDay: {
     id: 'perDay', label: 'Recommended', excel: 'Recommended Payment', right: true, required: true, w: 'w-[6.2rem]', priority: 1,
