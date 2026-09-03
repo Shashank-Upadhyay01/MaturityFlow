@@ -26,7 +26,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { saveRegisterLayoutAction } from '@/actions/admin';
-import { setInstalmentAmountAction } from '@/actions/cases';
+import { setInstalmentAmountAction, setInstalmentLegsAction } from '@/actions/cases';
 import { importRegisterAction } from '@/actions/import';
 import {
   createRegisterRowWithFieldsAction,
@@ -1271,6 +1271,16 @@ export function RegisterSheet(props: {
       return;
     }
     const result = await setInstalmentAmountAction(row.id, instalmentId, amountRupees || '0');
+    if (!result.ok) toast.error(result.error);
+    else { rememberGridFocus(); router.refresh(); }
+  }
+
+  async function saveLegs(row: RegisterRow, cashRupees: string, onlineRupees: string, instalmentId: string | null) {
+    if (!instalmentId) {
+      toast.error('This row has no scheduled payment for that day.');
+      return;
+    }
+    const result = await setInstalmentLegsAction(row.id, instalmentId, cashRupees || '0', onlineRupees || '0');
     if (!result.ok) toast.error(result.error);
     else { rememberGridFocus(); router.refresh(); }
   }
@@ -2845,8 +2855,15 @@ export function RegisterSheet(props: {
                 const scheduled = Boolean(selectedInstalment);
                 const rec = recommendedPerDay(liveRemaining, amtP, daysN);
                 const selectedInstalmentId = selectedInstalment?.id ?? null;
-                const recCash = scheduled ? planned.cash : BigInt(r.todayCashPaise);
-                const recOnline = scheduled ? planned.online : BigInt(r.todayOnlinePaise);
+                const scheduledAmount = selectedInstalment
+                  ? BigInt(selectedInstalment.amountPaise)
+                  : planned.total;
+                const recCash = selectedInstalment
+                  ? BigInt(selectedInstalment.cashPaise)
+                  : BigInt(r.todayCashPaise);
+                const recOnline = selectedInstalment
+                  ? BigInt(selectedInstalment.onlinePaise)
+                  : BigInt(r.todayOnlinePaise);
                 const edit = props.canEdit && !locked;
                 const datesOpen = editDates;
                 const matShown = r.instrumentMaturityOn ? formatDMY(r.instrumentMaturityOn) : '';
@@ -3077,12 +3094,12 @@ export function RegisterSheet(props: {
                               ariaLabel={`${c.label} for ${r.customerName}`}
                               group
                               className={cn(num, dayState === 'due' && 'font-semibold text-[var(--color-brand-700)]')}
-                              disabled={!props.canSchedule || locked}
-                              title={SCHEDULED_TODAY_HINT[dayState]}
-                              value={d(r.id, 'todayDue', rupeesStr(planned.total))}
+                              disabled={!props.canSchedule}
+                              title="Scheduled amount for this day. Later unpaid days rebalance. You can edit this even after the day is paid."
+                              value={d(r.id, 'todayDue', rupeesStr(scheduledAmount))}
                               onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], todayDue: v.replace(/[^0-9]/g, '') } }))}
                               onCommit={(v) => {
-                                const original = rupeesStr(planned.total);
+                                const original = rupeesStr(scheduledAmount);
                                 if (v.trim() === original) return;
                                 void savePlannedAmount(r, v, selectedInstalmentId);
                               }}
@@ -3104,58 +3121,44 @@ export function RegisterSheet(props: {
                               }}
                             />
                           ))}
-                        {c.id === 'cash' &&
-                          (scheduled ? (
-                            <span
-                              className={cn(num, 'flex h-7 items-center justify-end px-1 text-[0.7rem] text-[var(--muted-fg)]')}
-                              title="The cash half the engine planned for today, inside the branch cash cap"
-                            >
-                              {inr(recCash)}
-                            </span>
-                          ) : (
+                        {c.id === 'cash' && (
                             <CellInput
                               rowKey={r.id}
                               cellKey={c.id}
                               ariaLabel={`${c.label} for ${r.customerName}`}
                               group
                               className={num}
-                              disabled={!edit}
-                              title="Cash for today"
+                              disabled={scheduled ? !props.canSchedule : !edit}
+                              title="Cash half of this day's schedule"
                               value={d(r.id, 'tcash', rupeesStr(recCash))}
-                              onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], tcash: v } }))}
+                              onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], tcash: v.replace(/[^0-9]/g, '') } }))}
                               onCommit={(v) => {
                                 const onlineNow = d(r.id, 'tonline', rupeesStr(recOnline));
                                 if (v.trim() === rupeesStr(recCash) && onlineNow === rupeesStr(recOnline)) return;
-                                void save(r.id, { todayCashRupees: v, todayOnlineRupees: onlineNow });
+                                if (scheduled) void saveLegs(r, v, onlineNow, selectedInstalmentId);
+                                else void save(r.id, { todayCashRupees: v, todayOnlineRupees: onlineNow });
                               }}
                             />
-                          ))}
-                        {c.id === 'online' &&
-                          (scheduled ? (
-                            <span
-                              className={cn(num, 'flex h-7 items-center justify-end px-1 text-[0.7rem] text-[var(--muted-fg)]')}
-                              title="The transfer half the engine planned for today"
-                            >
-                              {inr(recOnline)}
-                            </span>
-                          ) : (
+                          )}
+                        {c.id === 'online' && (
                             <CellInput
                               rowKey={r.id}
                               cellKey={c.id}
                               ariaLabel={`${c.label} for ${r.customerName}`}
                               group
                               className={num}
-                              disabled={!edit}
-                              title="Online for today"
+                              disabled={scheduled ? !props.canSchedule : !edit}
+                              title="Online half of this day's schedule"
                               value={d(r.id, 'tonline', rupeesStr(recOnline))}
-                              onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], tonline: v } }))}
+                              onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], tonline: v.replace(/[^0-9]/g, '') } }))}
                               onCommit={(v) => {
                                 const cashNow = d(r.id, 'tcash', rupeesStr(recCash));
                                 if (cashNow === rupeesStr(recCash) && v.trim() === rupeesStr(recOnline)) return;
-                                void save(r.id, { todayCashRupees: cashNow, todayOnlineRupees: v });
+                                if (scheduled) void saveLegs(r, cashNow, v, selectedInstalmentId);
+                                else void save(r.id, { todayCashRupees: cashNow, todayOnlineRupees: v });
                               }}
                             />
-                          ))}
+                          )}
                         {c.id === 'paidToday' && (
                           <CellInput
                             rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}

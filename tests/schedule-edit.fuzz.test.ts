@@ -69,12 +69,13 @@ describe(`rebalanceAfter — ${ITERATIONS.toLocaleString('en-IN')} randomised ed
           throw new Error(`Row ${now.id} fell below what was paid. ${ctx}`);
         }
         if (now.amountPaise < 0n) throw new Error(`Negative row ${now.id}. ${ctx}`);
-        // Rows before the edited one never move.
-        if (was.seq < pick.seq && now.amountPaise !== was.amountPaise) {
+        const laterUnpaid = rows.some((r) => r.seq > pick.seq && r.paidPaise < r.amountPaise);
+        // Rows before the edit stay put unless this is the last unpaid day.
+        if (laterUnpaid && was.seq < pick.seq && now.amountPaise !== was.amountPaise) {
           throw new Error(`Row ${now.id} before the edit changed. ${ctx}`);
         }
-        // A fully paid row is never rewritten.
-        if (was.paidPaise >= was.amountPaise && now.amountPaise !== was.amountPaise) {
+        // Other fully paid rows are never rewritten. The edited day itself may grow.
+        if (was.id !== pick.id && was.paidPaise >= was.amountPaise && now.amountPaise !== was.amountPaise) {
           throw new Error(`Fully paid row ${now.id} was rewritten. ${ctx}`);
         }
       }

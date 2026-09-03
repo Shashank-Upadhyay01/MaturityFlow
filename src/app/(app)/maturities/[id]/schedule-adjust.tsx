@@ -95,7 +95,7 @@ export function ScheduleAdjust({
       ) : (
         <div className="space-y-3">
           <p className="text-[0.8125rem] text-[var(--muted-fg)]">
-            Change one day. The days after it move to keep the total at{' '}
+            Change any day, including one already paid. Other unpaid days move to keep the total at{' '}
             <strong className="font-medium text-[var(--page-fg)]">
               {formatPaise(total, { decimals: false })}
             </strong>
@@ -136,13 +136,9 @@ export function ScheduleAdjust({
                   ) : (
                     <button
                       type="button"
-                      disabled={fullyPaid}
                       onClick={() => startEdit(was)}
                       className={cn(
-                        'mt-0.5 w-full text-left text-[0.9375rem] font-semibold tabular-nums',
-                        fullyPaid
-                          ? 'cursor-not-allowed text-[var(--faint-fg)]'
-                          : 'hover:text-[var(--color-brand-600)]',
+                        'mt-0.5 w-full text-left text-[0.9375rem] font-semibold tabular-nums hover:text-[var(--color-brand-600)]',
                       )}
                     >
                       {formatPaise(r.amountPaise, { decimals: false })}

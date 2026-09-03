@@ -65,9 +65,6 @@ export function rebalanceAfter(
   if (idx < 0) return fail('ROW_NOT_FOUND', 'That day is not part of this schedule.');
 
   const target = instalments[idx];
-  if (target.paidPaise >= target.amountPaise) {
-    return fail('EDITED_ROW_ALREADY_PAID', 'This day has already been paid in full.');
-  }
   if (newAmountPaise < target.paidPaise) {
     return fail(
       'AMOUNT_BELOW_ALREADY_PAID',
@@ -85,13 +82,14 @@ export function rebalanceAfter(
 
   if (delta === 0n) return { ok: true, instalments: next };
 
-  // Only later rows that still have something unpaid can move. A fully paid day is a fact.
-  const movable = next.slice(idx + 1).filter((r) => r.paidPaise < r.amountPaise);
+  // Later unpaid days first; if this is the last unpaid day, earlier unpaid days absorb it.
+  const later = next.slice(idx + 1).filter((r) => r.paidPaise < r.amountPaise);
+  const earlier = next.slice(0, idx).filter((r) => r.paidPaise < r.amountPaise).reverse();
+  const movable = later.length > 0 ? later : earlier;
   if (movable.length === 0) {
     return fail(
       'NO_LATER_UNPAID_DAYS',
-      'There is no later unpaid day to move the difference into. Edit an earlier day, or ' +
-        'reschedule the case.',
+      'There is no unpaid day left to move the difference into.',
     );
   }
 

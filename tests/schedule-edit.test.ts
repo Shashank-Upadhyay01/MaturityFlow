@@ -58,12 +58,20 @@ describe('rebalanceAfter', () => {
     for (const r of res.instalments) expect(r.amountPaise % STEP).toBe(0n);
   });
 
-  it('refuses to edit a fully paid row', () => {
+  it('refuses to cut a fully paid row below what went out', () => {
     const rows = sixDays({ 1: { paidPaise: 1_000_000n } });
     const res = rebalanceAfter(rows, 'i1', 500_000n, STEP);
     expect(res.ok).toBe(false);
     if (res.ok) return;
-    expect(res.error).toBe('EDITED_ROW_ALREADY_PAID');
+    expect(res.error).toBe('AMOUNT_BELOW_ALREADY_PAID');
+  });
+
+  it('lets a fully paid row be increased; later unpaid days absorb it', () => {
+    const rows = sixDays({ 1: { paidPaise: 1_000_000n } });
+    const res = rebalanceAfter(rows, 'i1', 2_000_000n, STEP);
+    if (!res.ok) throw new Error(`expected ok, got ${res.error}`);
+    expect(res.instalments[0].amountPaise).toBe(2_000_000n);
+    expect(total(res.instalments)).toBe(6_000_000n);
   });
 
   it('lets a part-paid row be cut to exactly what went out', () => {
@@ -90,8 +98,22 @@ describe('rebalanceAfter', () => {
     expect(total(zero.instalments)).toBe(6_000_000n);
   });
 
-  it('refuses when there is no later row to absorb the change', () => {
+  it('uses earlier unpaid days when the edited day is the last one', () => {
     const res = rebalanceAfter(sixDays(), 'i6', 2_000_000n, STEP);
+    if (!res.ok) throw new Error(`expected ok, got ${res.error}`);
+    expect(res.instalments[5].amountPaise).toBe(2_000_000n);
+    expect(total(res.instalments)).toBe(6_000_000n);
+  });
+
+  it('refuses when every other day is already paid', () => {
+    const rows = sixDays({
+      1: { paidPaise: 1_000_000n },
+      2: { paidPaise: 1_000_000n },
+      3: { paidPaise: 1_000_000n },
+      4: { paidPaise: 1_000_000n },
+      5: { paidPaise: 1_000_000n },
+    });
+    const res = rebalanceAfter(rows, 'i6', 2_000_000n, STEP);
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.error).toBe('NO_LATER_UNPAID_DAYS');

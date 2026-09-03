@@ -288,20 +288,12 @@ export async function persistInstalmentEdit({
   const res = rebalanceAfter(editable, instalmentId, newAmountPaise, caseRow.roundingPaise);
   if (!res.ok) throw new Error(res.message);
 
-  const cap = caseRow.cashPolicy === 'CASH_CAP' ? (caseRow.cashCapPerDayPaise ?? 0n) : null;
   let changed = 0;
   for (let k = 0; k < res.instalments.length; k++) {
     const now = res.instalments[k];
     const was = ordered[k];
     if (now.amountPaise === was.amountPaise) continue;
-    // Legs are re-split from the case's own cash policy, never carried over from the old row —
-    // INV-3 (cash + online === amount) is a database CHECK and must hold on every write.
-    const cash =
-      caseRow.cashPolicy === 'ONLINE_ONLY'
-        ? 0n
-        : cap !== null && now.amountPaise > cap
-          ? cap
-          : now.amountPaise;
+    const cash = caseRow.cashPolicy === 'ONLINE_ONLY' ? 0n : now.amountPaise;
     await tx
       .update(payoutInstalments)
       .set({
@@ -314,6 +306,51 @@ export async function persistInstalmentEdit({
     changed++;
   }
   return { changed };
+}
+
+/** Set the cash/online split on one day. Cash + online must equal that day's amount. */
+export async function persistInstalmentLegs({
+  tx,
+  caseRow,
+  instalmentId,
+  cashPaise,
+  onlinePaise,
+}: {
+  tx: Queryable;
+  caseRow: MaturityCase;
+  instalmentId: string;
+  cashPaise: bigint;
+  onlinePaise: bigint;
+}): Promise<void> {
+  if (cashPaise < 0n || onlinePaise < 0n) {
+    throw new Error('Cash and online cannot be negative.');
+  }
+  const [inst] = await tx
+    .select()
+    .from(payoutInstalments)
+    .where(
+      and(
+        eq(payoutInstalments.id, instalmentId),
+        eq(payoutInstalments.caseId, caseRow.id),
+        ne(payoutInstalments.status, 'SUPERSEDED'),
+      ),
+    )
+    .for('update')
+    .limit(1);
+  if (!inst) throw new Error('That day is not on this schedule.');
+  const total = cashPaise + onlinePaise;
+  if (total !== inst.amountPaise) {
+    await persistInstalmentEdit({ tx, caseRow, instalmentId, newAmountPaise: total });
+  }
+  await tx
+    .update(payoutInstalments)
+    .set({
+      cashLegPaise: cashPaise,
+      onlineLegPaise: onlinePaise,
+      amountPaise: total,
+      updatedAt: new Date(),
+    })
+    .where(eq(payoutInstalments.id, instalmentId));
 }
 
 /**

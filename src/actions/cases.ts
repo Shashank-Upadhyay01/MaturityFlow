@@ -12,7 +12,7 @@ import { parseRupeesToPaise } from '@/lib/money';
 import { MIN_WINDOW_DAYS } from '@/lib/payout-policy';
 import { assertCan } from '@/lib/rbac';
 import { writeAudit } from '@/lib/audit';
-import { persistInstalmentEdit } from '@/services/schedule-service';
+import { persistInstalmentEdit, persistInstalmentLegs } from '@/services/schedule-service';
 import { setInstalmentDueOn } from '@/services/admin-dates';
 import {
   cancelCase,
@@ -458,6 +458,51 @@ export async function setInstalmentAmountAction(
 
     revalidateCase(caseId);
     return ok({ changed: out.changed });
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+/** Set the cash/online split on one scheduled day. Paid or not. */
+export async function setInstalmentLegsAction(
+  caseId: string,
+  instalmentId: string,
+  cashRupees: string,
+  onlineRupees: string,
+): Promise<ActionResult> {
+  try {
+    const { session, actor } = await requireActor();
+    const c = await loadCaseScope(caseId);
+    if (!c) return fail('Case not found', 'NOT_FOUND');
+    assertCan(actor, 'schedule.override', c);
+    let cashPaise: bigint;
+    let onlinePaise: bigint;
+    try {
+      cashPaise = parseRupeesToPaise(cashRupees || '0');
+      onlinePaise = parseRupeesToPaise(onlineRupees || '0');
+    } catch {
+      return fail('Enter valid rupee amounts', 'VALIDATION');
+    }
+    await db.transaction(async (tx) => {
+      const [row] = await tx
+        .select()
+        .from(maturityCases)
+        .where(eq(maturityCases.id, caseId))
+        .for('update')
+        .limit(1);
+      if (!row) throw new Error('Case not found');
+      await persistInstalmentLegs({ tx, caseRow: row, instalmentId, cashPaise, onlinePaise });
+      await writeAudit(tx, session, {
+        action: 'schedule.adjusted',
+        entity: 'MaturityCase',
+        entityId: caseId,
+        branchId: row.branchId,
+        summary: `${row.caseNumber}: cash/online split set to ${cashRupees} / ${onlineRupees}`,
+        ...(await requestMeta()),
+      });
+    });
+    revalidateCase(caseId);
+    return ok();
   } catch (e) {
     return toActionError(e);
   }

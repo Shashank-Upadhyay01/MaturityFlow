@@ -91,6 +91,10 @@ unpaid). They cannot silently rewrite an earlier **already paid** amount.
 **Admin / CMD / CEO:** open Taken on the customer, type a new **Paid** figure on the old day,
 enter a reason, save. That is how old-day payments are edited.
 
+**Due payment, Cash and Online** are editable on every customer, paid or not, on Register,
+Maturities, and the case schedule. Changing Due rebalances other unpaid days. Changing Cash or
+Online sets that day's split (and rebalances if the two no longer add up to the day).
+
 **Admin, CMD, CEO** (and Operational Head = Admin) may change **any** value if something went
 wrong: paid amount, amount still to pay, dates, custom figures. The schedule **rebalances live**.
 They should not need a developer to fix a mistyped payout.
