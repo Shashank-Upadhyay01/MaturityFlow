@@ -174,6 +174,29 @@ describe('planSettlement — one figure at the counter, spread over the days it 
     if (plan.ok) return;
     expect(plan.code).toBe('CASE_NOT_PAYABLE');
   });
+
+  it('pays only the days the clerk ticked, even if an older unpaid day is left', () => {
+    const plan = planSettlement(
+      { cashPaise: R(13_000), onlinePaise: 0n },
+      ctx({ allowedInstalmentIds: ['i2'] }),
+    );
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.lines).toHaveLength(1);
+    expect(plan.lines[0]?.instalmentId).toBe('i2');
+  });
+
+  it('spreads a custom amount over the ticked days, oldest first among them', () => {
+    const plan = planSettlement(
+      { cashPaise: R(20_000), onlinePaise: 0n },
+      ctx({ allowedInstalmentIds: ['i1', 'i2'] }),
+    );
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.lines.map((l) => l.instalmentId)).toEqual(['i1', 'i2']);
+    expect(plan.lines[0]?.totalPaise).toBe(R(13_000));
+    expect(plan.lines[1]?.totalPaise).toBe(R(7_000));
+  });
 });
 
 describe('planSettlement — invariants under 20,000 random settlements', () => {

@@ -110,6 +110,7 @@ export default async function MaturitiesPage({
             canEdit={canType}
             canSchedule={canOnSheet('schedule.override')}
             canPay={canOnSheet('payout.record')}
+            canCorrectPay={canOnSheet('payout.reverse')}
             canSubmit={canOnSheet('case.submit')}
             canImport={canOnSheet('data.import')}
             canCreate={canOnSheet('case.create')}

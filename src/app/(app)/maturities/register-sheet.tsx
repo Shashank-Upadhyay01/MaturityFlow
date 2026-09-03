@@ -34,8 +34,8 @@ import {
   bulkSetFormSubmittedAction,
   bulkSetTodayAction,
   confirmCloseDayAction,
+  confirmRegisterTakenAction,
   markNotTakenAction,
-  markTakenAction,
   removeRegisterRowsAction,
   reopenDayAction,
   requestCloseDayAction,
@@ -67,6 +67,8 @@ import {
   dayStateOf,
   groupIndian,
   hasMissedPayment,
+  leftoverOnPayoutDay,
+  unpaidPayoutDays,
   isDueToday,
   isOnTodaysList,
   isRangeActive,
@@ -100,6 +102,7 @@ import { cn } from '@/lib/utils';
 import { formatDMY } from '@/lib/working-days';
 import type { Role } from '@/db/schema';
 import { canOverrideDates } from '@/lib/rbac';
+import { TakePaymentDialog } from './take-payment-dialog';
 
 export interface RegisterRow {
   id: string;
@@ -386,89 +389,38 @@ const SCHEDULED_TODAY_HINT: Record<DayState, string> = {
   none: 'The schedule plans nothing for today.',
 };
 
-type Tender = 'CASH' | 'ONLINE' | 'SPLIT';
-
-const TENDER_LABEL: Record<Tender, string> = {
-  SPLIT: 'As planned',
-  CASH: 'All cash',
-  ONLINE: 'All online',
-};
-
 /**
- * The one question this page exists to ask: did this customer take today's money?
+ * Taken / Not taken on a row.
  *
- * It replaces the old `Given` column, which asked the wrong question in the wrong shape. That
- * column offered `Cash` / `Online` / `Both` as three bare words wrapped onto three lines inside a
- * 4.5rem cell — so it spilled over the next column, made tender the primary decision when tender
- * is a detail, and gave the clerk no way at all to say the customer did NOT come, which is the
- * fact the whole missed-payments list is built from.
- *
- * So: two buttons, one line, always the same width. ✓ records the full scheduled amount for
- * today through the ordinary locked, audited payout path; ✗ records a no-show without writing
- * the money off. Tender hides behind the caret and defaults to the split the engine already
- * planned, so agreeing with the plan — which is the overwhelming majority of days — is one click.
- *
- * Once a day is answered the buttons give way to the answer, because the counter should not be
- * able to un-take money by mis-clicking a row. A wrong ✗ is undone here; a wrong ✓ moved money
- * and is reversed on the case page, where it leaves a reversal in the trail.
+ * ✓ opens the payment list so the clerk can tick days and confirm an amount. ✗ records a
+ * no-show without writing the money off. A recorded payout is corrected by Admin / CMD / CEO,
+ * not by un-clicking Taken.
  */
 function DayMark({
   state,
   instalmentId,
-  onlineDuePaise,
+  hasUnpaid,
   disabled,
   busy,
-  onTaken,
+  onPay,
   onNotTaken,
 }: {
   state: DayState;
   instalmentId: string | null;
-  /** How much of today is planned to go out online. Decides whether ✓ needs a UTR first. */
-  onlineDuePaise: bigint;
+  hasUnpaid: boolean;
   disabled: boolean;
   busy: boolean;
-  onTaken: (instalmentId: string, tender: Tender, reference: string | null) => void;
+  onPay: () => void;
   onNotTaken: (instalmentId: string, clear: boolean) => void;
 }) {
-  const [menu, setMenu] = useState(false);
-  const [utr, setUtr] = useState<Tender | null>(null);
-  const [ref, setRef] = useState('');
-
-  /**
-   * A transfer cannot be recorded without its UTR — INV-4, and the bank's own rule.
-   *
-   * So ✓ is one click on a cash day and two steps on a day with an online leg, which is the
-   * honest shape of the work rather than a shortcut that the server would refuse. "All cash"
-   * skips it because there is then nothing to reference.
-   */
-  const needsRef = (t: Tender) => (t === 'CASH' ? false : t === 'ONLINE' || onlineDuePaise > 0n);
-
-  const go = (t: Tender) => {
-    if (!instalmentId) return;
-    if (needsRef(t)) {
-      setUtr(t);
-      setRef('');
-      return;
-    }
-    onTaken(instalmentId, t, null);
-  };
-
-  if (state === 'none' || !instalmentId) {
-    return (
-      <span className="text-[0.65rem] text-[var(--faint-fg)]" title={DAY_STATE_LABEL.none}>
-        &mdash;
-      </span>
-    );
-  }
-
-  if (state === 'taken') {
+  if (!hasUnpaid && state === 'taken') {
     return (
       <span
         className={cn(
           'inline-flex h-6 w-full items-center justify-center gap-1 whitespace-nowrap rounded-[6px] text-[0.65rem] font-medium',
           DAY_PILL.taken,
         )}
-        title={`${DAY_STATE_LABEL.taken} — reverse it on the case page if this was wrong`}
+        title={`${DAY_STATE_LABEL.taken} — Admin / CMD / CEO can correct a mistaken amount`}
       >
         <Check className="h-3 w-3" />
         Paid
@@ -476,114 +428,38 @@ function DayMark({
     );
   }
 
-  // 'due', 'partial' and 'missed' are all still collectable. A missed yesterday used to
-  // collapse to a "Not paid" pill with no ✓, so the clerk could see the arrears and could
-  // not record that the customer had come in to collect them.
+  if (!hasUnpaid && (state === 'none' || !instalmentId)) {
+    return (
+      <span className="text-[0.65rem] text-[var(--faint-fg)]" title={DAY_STATE_LABEL.none}>
+        &mdash;
+      </span>
+    );
+  }
+
   return (
     <div className="relative flex items-center gap-0.5">
       <button
         type="button"
         disabled={disabled || busy}
-        onClick={() => go('SPLIT')}
-        title={
-          (state === 'partial'
-            ? 'Paid — records the rest of today’s planned amount'
-            : 'Paid — records today’s planned amount in full') +
-          (onlineDuePaise > 0n ? '. Part of it goes out online, so it needs a UTR.' : '')
-        }
-        aria-label="Record today's scheduled payment"
+        onClick={onPay}
+        title="Opens this customer’s payment list — tick days and confirm what was given"
+        aria-label="Record payment"
         className="inline-flex h-6 flex-1 items-center justify-center rounded-[6px] bg-[var(--row-taken)] text-[var(--row-taken-fg)] transition-colors hover:bg-[var(--row-taken-strong)] disabled:cursor-not-allowed disabled:opacity-50"
       >
         <Check className="h-3.5 w-3.5" />
       </button>
-      <button
-        type="button"
-        disabled={disabled || busy}
-        onClick={() => onNotTaken(instalmentId, false)}
-        title="Not paid — the customer did not collect today. The amount remains owed."
-        aria-label="Mark today's scheduled payment as not paid"
-        className="inline-flex h-6 flex-1 items-center justify-center rounded-[6px] bg-[var(--row-missed)] text-[var(--row-missed-fg)] transition-colors hover:bg-[var(--row-missed-strong)] disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <X className="h-3.5 w-3.5" />
-      </button>
-      <button
-        type="button"
-        disabled={disabled || busy}
-        aria-label="Choose how it was paid"
-        title="Cash, online, or the planned split"
-        onClick={() => setMenu((v) => !v)}
-        className="inline-flex h-6 w-3.5 items-center justify-center rounded-[5px] text-[var(--faint-fg)] transition-colors hover:bg-[var(--glass-bg-strong)] hover:text-[var(--page-fg)] disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <ChevronDown className="h-3 w-3" />
-      </button>
-
-      {/*
-        The wrapper is what is positioned; the panel inside is not `.glass`. Putting `absolute`
-        on a `.glass` element renders it in flow instead — see the trap in CLAUDE.md.
-      */}
-      <Popover open={menu} label="How it was paid" width="w-36">
-        <div className="flex flex-col gap-0.5">
-          {(['SPLIT', 'CASH', 'ONLINE'] as Tender[]).map((t) => (
-            <button
-              key={t}
-              type="button"
-              className="rounded-[6px] px-2 py-1 text-left text-[0.7rem] hover:bg-[var(--glass-bg-strong)]"
-              onClick={() => {
-                setMenu(false);
-                go(t);
-              }}
-            >
-              {TENDER_LABEL[t]}
-            </button>
-          ))}
-        </div>
-      </Popover>
-
-      {/* The reference step. Enter commits, Escape backs out — this is a counter, not a form. */}
-      <Popover open={utr !== null} label="Transaction reference" width="w-56">
-        <div className="flex flex-col gap-1.5">
-          <p className="text-[0.7rem] text-[var(--muted-fg)]">
-            UTR / NEFT / IMPS reference for the online part.
-          </p>
-          <input
-            autoFocus
-            value={ref}
-            onChange={(e) => setRef(e.target.value)}
-            placeholder="e.g. UTR123456789"
-            className={cell}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') setUtr(null);
-              if (e.key === 'Enter' && ref.trim() && instalmentId) {
-                const t = utr ?? 'SPLIT';
-                setUtr(null);
-                onTaken(instalmentId, t, ref.trim());
-              }
-            }}
-          />
-          <div className="flex justify-end gap-1">
-            <button
-              type="button"
-              className="rounded-[6px] px-2 py-1 text-[0.7rem] text-[var(--muted-fg)] hover:bg-[var(--glass-bg-strong)]"
-              onClick={() => setUtr(null)}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              disabled={!ref.trim()}
-              className="rounded-[6px] bg-[var(--row-taken-strong)] px-2 py-1 text-[0.7rem] font-medium text-[var(--row-taken-fg)] disabled:opacity-50"
-              onClick={() => {
-                if (!ref.trim() || !instalmentId) return;
-                const t = utr ?? 'SPLIT';
-                setUtr(null);
-                onTaken(instalmentId, t, ref.trim());
-              }}
-            >
-              Record payment
-            </button>
-          </div>
-        </div>
-      </Popover>
+      {instalmentId && state !== 'taken' && (
+        <button
+          type="button"
+          disabled={disabled || busy}
+          onClick={() => onNotTaken(instalmentId, false)}
+          title="Not paid — the customer did not collect today. The amount remains owed."
+          aria-label="Mark today's scheduled payment as not paid"
+          className="inline-flex h-6 flex-1 items-center justify-center rounded-[6px] bg-[var(--row-missed)] text-[var(--row-missed-fg)] transition-colors hover:bg-[var(--row-missed-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   );
 }
@@ -885,6 +761,8 @@ export function RegisterSheet(props: {
   canEdit: boolean;
   canSchedule: boolean;
   canPay: boolean;
+  /** Admin / CMD / CEO may correct a recorded payout. Cashiers type, then confirm Taken. */
+  canCorrectPay?: boolean;
   canSubmit: boolean;
   canImport: boolean;
   canCreate: boolean;
@@ -1058,15 +936,12 @@ export function RegisterSheet(props: {
     };
     const cmpStr = (a: string, b: string) => a.localeCompare(b, 'en-IN', { numeric: true, sensitivity: 'base' });
     const cmpBig = (a: bigint, b: bigint) => (a < b ? -1 : a > b ? 1 : 0);
-    const perDay = (r: RegisterRow) => {
-      const exact = payoutOnDate(r, viewDay);
-      if (exact) return plannedOnDate(r, selectedPayoutDate).total;
-      return recommendedPerDay(
+    const perDay = (r: RegisterRow) =>
+      recommendedPerDay(
         asBig(r.remainingPaise),
         asBig(r.maturityPaise),
         Number(d(r.id, 'windowDays', String(r.windowDays))) || r.windowDays,
       );
-    };
 
     return [...list].sort((a, b) => {
       let c = 0;
@@ -1473,15 +1348,31 @@ export function RegisterSheet(props: {
    * The server would reject it on INV-4, but the right place to stop it is before it is sent.
    */
   const [marking, setMarking] = useState<Record<string, boolean>>({});
+  const [payRow, setPayRow] = useState<RegisterRow | null>(null);
+  const [paying, setPaying] = useState(false);
 
-  async function onTaken(instalmentId: string, tender: Tender, reference: string | null) {
-    if (marking[instalmentId]) return;
-    setMarking((m) => ({ ...m, [instalmentId]: true }));
-    const r = await markTakenAction(instalmentId, tender, reference);
-    setMarking((m) => ({ ...m, [instalmentId]: false }));
-    if (!r.ok) toast.error(r.error);
+  async function confirmPay(input: {
+    instalmentIds: string[];
+    cashRupees: string | null;
+    onlineRupees: string | null;
+    reference: string | null;
+    reason: string | null;
+  }) {
+    if (!payRow || paying) return;
+    setPaying(true);
+    const result = await confirmRegisterTakenAction(
+      payRow.id,
+      input.instalmentIds,
+      input.cashRupees,
+      input.onlineRupees,
+      input.reference,
+      input.reason,
+    );
+    setPaying(false);
+    if (!result.ok) toast.error(result.error);
     else {
       toast.success('Payment recorded');
+      setPayRow(null);
       router.refresh();
     }
   }
@@ -1548,10 +1439,7 @@ export function RegisterSheet(props: {
       case 'days':
         return r.windowDays;
       case 'perDay': {
-        const day = payoutOnDate(r, viewDay);
-        const per = day
-          ? plannedOnDate(r, selectedPayoutDate).total
-          : recommendedPerDay(BigInt(r.remainingPaise), BigInt(r.maturityPaise), r.windowDays);
+        const per = recommendedPerDay(BigInt(r.remainingPaise), BigInt(r.maturityPaise), r.windowDays);
         return per > 0n ? inr(per) : '0';
       }
       case 'today':
@@ -2904,7 +2792,7 @@ export function RegisterSheet(props: {
                 */
                 const planned = plannedOnDate(r, selectedPayoutDate);
                 const scheduled = Boolean(selectedInstalment);
-                const rec = scheduled ? planned.total : recommendedPerDay(liveRemaining, amtP, daysN);
+                const rec = recommendedPerDay(liveRemaining, amtP, daysN);
                 const selectedInstalmentId = selectedInstalment?.id ?? null;
                 const isViewingToday = viewDay === props.today;
                 const recCash = scheduled ? planned.cash : BigInt(r.todayCashPaise);
@@ -3104,21 +2992,12 @@ export function RegisterSheet(props: {
                           />
                         )}
                         {c.id === 'perDay' && (
-                          <CellInput
-                            rowKey={r.id}
-                            cellKey={c.id}
-                            ariaLabel={`${c.label} for ${r.customerName}`}
-                            group
-                            className={num}
-                            disabled={!props.canSchedule || locked || !scheduled}
-                            title="Edit the recommended amount; later unpaid days rebalance automatically"
-                            value={d(r.id, 'recommended', rupeesStr(rec))}
-                            onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], recommended: v.replace(/[^0-9]/g, '') } }))}
-                            onCommit={(v) => {
-                              if (v.trim() === rupeesStr(rec)) return;
-                              void savePlannedAmount(r, v, selectedInstalmentId);
-                            }}
-                          />
+                          <span
+                            className={cn(num, 'flex h-7 items-center justify-end px-1 text-[0.7rem] text-[var(--muted-fg)]')}
+                            title="Advice only — remaining money spread over the days that pay. Not today’s due amount."
+                          >
+                            {inr(rec)}
+                          </span>
                         )}
                         {c.id === 'today' &&
                           (scheduled ? (
@@ -3210,10 +3089,17 @@ export function RegisterSheet(props: {
                         {c.id === 'paidToday' && (
                           <CellInput
                             rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}
-                            group className={cn(num, 'font-semibold')} disabled={!props.canPay || locked || (!scheduled && r.overdueCount === 0) || !isViewingToday}
+                            group className={cn(num, 'font-semibold')}
+                            disabled={!props.canPay || locked || !isViewingToday}
+                            title={
+                              props.canCorrectPay
+                                ? 'Correct a recorded amount — you will be asked for a reason'
+                                : 'Type what was actually given, then press Taken to confirm'
+                            }
                             value={d(r.id, 'paidTodayActual', rupeesStr(BigInt(r.paidTodayActualPaise)))}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidTodayActual: v.replace(/[^0-9]/g, '') } }))}
                             onCommit={(v) => {
+                              if (!props.canCorrectPay) return;
                               if (v.trim() === rupeesStr(BigInt(r.paidTodayActualPaise))) return;
                               const total = BigInt(v || '0');
                               const currentOnline = BigInt(d(r.id, 'paidOnlineActual', rupeesStr(BigInt(r.paidOnlineTodayPaise))) || '0');
@@ -3225,10 +3111,12 @@ export function RegisterSheet(props: {
                         {c.id === 'paidCashToday' && (
                           <CellInput
                             rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}
-                            group className={num} disabled={!props.canPay || locked || !scheduled || !isViewingToday}
+                            group className={num}
+                            disabled={!props.canCorrectPay || locked || !isViewingToday}
                             value={d(r.id, 'paidCashActual', rupeesStr(BigInt(r.paidCashTodayPaise)))}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidCashActual: v.replace(/[^0-9]/g, '') } }))}
                             onCommit={(v) => {
+                              if (!props.canCorrectPay) return;
                               if (v.trim() === rupeesStr(BigInt(r.paidCashTodayPaise))) return;
                               const online = BigInt(d(r.id, 'paidOnlineActual', rupeesStr(BigInt(r.paidOnlineTodayPaise))) || '0');
                               void savePaidSplit(r, BigInt(v || '0'), online);
@@ -3238,10 +3126,12 @@ export function RegisterSheet(props: {
                         {c.id === 'paidOnlineToday' && (
                           <CellInput
                             rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}
-                            group className={num} disabled={!props.canPay || locked || !scheduled || !isViewingToday}
+                            group className={num}
+                            disabled={!props.canCorrectPay || locked || !isViewingToday}
                             value={d(r.id, 'paidOnlineActual', rupeesStr(BigInt(r.paidOnlineTodayPaise)))}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidOnlineActual: v.replace(/[^0-9]/g, '') } }))}
                             onCommit={(v) => {
+                              if (!props.canCorrectPay) return;
                               if (v.trim() === rupeesStr(BigInt(r.paidOnlineTodayPaise))) return;
                               const cash = BigInt(d(r.id, 'paidCashActual', rupeesStr(BigInt(r.paidCashTodayPaise))) || '0');
                               void savePaidSplit(r, cash, BigInt(v || '0'));
@@ -3254,10 +3144,10 @@ export function RegisterSheet(props: {
                       <DayMark
                         state={arrearsPay && !r.todayInstalmentId ? 'due' : dayState}
                         instalmentId={isViewingToday ? (r.todayInstalmentId ?? arrearsPay?.id ?? null) : null}
-                        onlineDuePaise={arrearsPay && !r.todayInstalmentId ? BigInt(arrearsPay.onlinePaise) : recOnline}
+                        hasUnpaid={unpaidPayoutDays(r.payoutDays ?? [], props.today).length > 0}
                         disabled={locked || !props.canPay || !isViewingToday}
-                        busy={Boolean((r.todayInstalmentId ?? arrearsPay?.id) && marking[r.todayInstalmentId ?? arrearsPay?.id ?? ''])}
-                        onTaken={(id, t, reference) => void onTaken(id, t, reference)}
+                        busy={paying && payRow?.id === r.id}
+                        onPay={() => setPayRow(r)}
                         onNotTaken={(id, clear) => void onNotTaken(id, clear)}
                       />
                     </td>
@@ -3314,10 +3204,10 @@ export function RegisterSheet(props: {
                               <DayMark
                                 state={day.status === 'PAID' ? 'taken' : day.status === 'PARTIAL' ? 'partial' : 'due'}
                                 instalmentId={day.id}
-                                onlineDuePaise={BigInt(day.onlinePaise)}
+                                hasUnpaid={leftoverOnPayoutDay(day) > 0n}
                                 disabled={locked || !props.canPay || !isViewingToday}
-                                busy={Boolean(marking[day.id])}
-                                onTaken={(id, t, reference) => void onTaken(id, t, reference)}
+                                busy={paying && payRow?.id === r.id}
+                                onPay={() => setPayRow(r)}
                                 onNotTaken={(id, clear) => void onNotTaken(id, clear)}
                               />
                             </span>
@@ -3411,6 +3301,20 @@ export function RegisterSheet(props: {
           </span>
         </p>
       </div>
+
+      {payRow && (
+        <TakePaymentDialog
+          row={payRow}
+          today={props.today}
+          draftPaidRupees={d(payRow.id, 'paidTodayActual', rupeesStr(BigInt(payRow.paidTodayActualPaise)))}
+          allowPayAhead={Boolean(props.canCorrectPay)}
+          busy={paying}
+          onClose={() => {
+            if (!paying) setPayRow(null);
+          }}
+          onConfirm={confirmPay}
+        />
+      )}
     </div>
   );
 }

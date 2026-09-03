@@ -127,11 +127,21 @@ export function payoutOnDate(r: { payoutDays?: PayoutDayView[] }, day: string): 
   return (r.payoutDays ?? []).find((d) => d.dueOn === day) ?? null;
 }
 
-function leftoverOnDay(d: PayoutDayView): bigint {
+/** What a scheduled day still owes. Paid / dropped days are zero. */
+export function leftoverOnPayoutDay(d: PayoutDayView): bigint {
   if (d.status === 'PAID' || d.status === 'SUPERSEDED' || d.status === 'CANCELLED') return 0n;
   const due = BigInt(d.amountPaise);
   const paid = BigInt(d.paidPaise);
   return due > paid ? due - paid : 0n;
+}
+
+/**
+ * Unpaid days that a cashier may tick without authorising a future payment: today and earlier.
+ */
+export function unpaidPayoutDays(days: readonly PayoutDayView[], asOf: string): PayoutDayView[] {
+  return [...days]
+    .filter((day) => leftoverOnPayoutDay(day) > 0n && day.dueOn <= asOf)
+    .sort((a, b) => (a.dueOn < b.dueOn ? -1 : a.dueOn > b.dueOn ? 1 : 0));
 }
 
 /**
@@ -302,7 +312,7 @@ export function plannedOnDate(
   if (!day) return todayPlannedSplit(r);
   const inst = payoutOnDate(r, day);
   if (!inst) return { total: 0n, cash: 0n, online: 0n };
-  const total = leftoverOnDay(inst);
+  const total = leftoverOnPayoutDay(inst);
   if (total === 0n) return { total: 0n, cash: 0n, online: 0n };
   const planCash = BigInt(inst.cashPaise);
   const cash = planCash < total ? planCash : total;
@@ -610,7 +620,7 @@ export function nextPayoutDay(
     if (BigInt(r.remainingPaise) <= 0n) continue;
     for (const d of r.payoutDays ?? []) {
       if (d.dueOn < from) continue;
-      const left = leftoverOnDay(d);
+      const left = leftoverOnPayoutDay(d);
       if (left <= 0n) continue;
       const cur = byDate.get(d.dueOn) ?? { count: 0, total: 0n };
       cur.count += 1;
@@ -641,7 +651,7 @@ export function summariseAgentsForDay(
   for (const r of rows) {
     const inst = payoutOnDate(r, day);
     if (!inst) continue;
-    const left = leftoverOnDay(inst);
+    const left = leftoverOnPayoutDay(inst);
     if (left <= 0n) continue;
     const cur = map.get(r.agentId) ?? {
       agentId: r.agentId,

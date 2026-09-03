@@ -200,6 +200,11 @@ export interface SettlementContext {
   cashAlreadyPaidTodayPaise: Paise;
   /** Null when the case has no CASH_CAP policy. */
   cashCapPerDayPaise: Paise | null;
+  /**
+   * When set, only these days may take money. The clerk ticked them. Order is still oldest
+   * first among the tick, so an unticked yesterday is left unpaid on purpose.
+   */
+  allowedInstalmentIds?: readonly string[];
 }
 
 /** What one instalment takes from the figure the cashier typed. */
@@ -295,8 +300,9 @@ export function planSettlement(
     }
   }
 
+  const allowed = ctx.allowedInstalmentIds ? new Set(ctx.allowedInstalmentIds) : null;
   const open = ctx.instalments
-    .filter((i) => outstandingOf(i) > 0n)
+    .filter((i) => outstandingOf(i) > 0n && (!allowed || allowed.has(i.id)))
     .sort((a, b) => (a.dueOn === b.dueOn ? a.seq - b.seq : a.dueOn < b.dueOn ? -1 : 1));
 
   if (open.length === 0) {

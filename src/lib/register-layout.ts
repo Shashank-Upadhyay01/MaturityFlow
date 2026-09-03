@@ -108,8 +108,8 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
     hint: 'The TOTAL window in working days \u2014 15 means 3 processing days plus 12 that pay.',
   },
   perDay: {
-    id: 'perDay', label: 'Recommended payment', excel: 'Recommended Payment', right: true, w: 'w-[7rem]', priority: 1,
-    hint: 'Remaining spread over the days that actually pay \u2014 not over the whole window.',
+    id: 'perDay', label: 'Recommended', excel: 'Recommended Payment', right: true, required: true, w: 'w-[6.2rem]', priority: 1,
+    hint: 'Advice only: remaining money spread over the days that actually pay. Not what must be handed over today.',
   },
   today: {
     id: 'today', label: 'Due payment', excel: 'Due Payment', right: true, required: true, w: 'w-[5.7rem]', priority: 1,
@@ -125,7 +125,7 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
   },
   paidToday: {
     id: 'paidToday', label: 'Paid today', excel: 'Paid Today', right: true, w: 'w-[5rem]', priority: 2,
-    hint: 'The amount actually recorded today, cash and online together.',
+    hint: 'Type what was actually given, then press Taken. Nothing is recorded until you confirm.',
   },
   paidCashToday: {
     id: 'paidCashToday', label: 'Paid in cash', excel: 'Paid in Cash', right: true, w: 'w-[5rem]', priority: 2,

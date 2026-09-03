@@ -1085,3 +1085,246 @@ export async function settleRegisterRow(
     };
   });
 }
+
+/**
+ * Record a Taken payment from the register dialog: the clerk ticked days, and optionally typed
+ * a custom amount.
+ *
+ * This ADDS to what was already recorded today. Replacing a mistaken figure is a different act
+ * (`settleRegisterRow`, Admin/CMD/CEO, with a reason). Two cashiers cannot both land a Taken
+ * on the same leftover because the case is locked first and each instalment is re-read inside
+ * that lock.
+ */
+export async function takeRegisterDays(
+  actor: SessionUser,
+  input: {
+    caseId: string;
+    instalmentIds: string[];
+    /** When set, pay this figure. When omitted, pay the leftover of each ticked day. */
+    cashPaise?: bigint | null;
+    onlinePaise?: bigint | null;
+    reference?: string | null;
+    reason?: string | null;
+    /** Admin / CMD / CEO may tick a day that has not arrived yet. */
+    allowPayAhead?: boolean;
+  },
+  meta: { ip?: string | null; userAgent?: string | null } = {},
+) {
+  const ids = [...new Set(input.instalmentIds.filter(Boolean))];
+  if (ids.length === 0) {
+    throw new PayoutError('Tick at least one unpaid day.', 'NOTHING_SELECTED');
+  }
+
+  const customCash = input.cashPaise ?? null;
+  const customOnline = input.onlinePaise ?? null;
+  if (customCash != null && customCash < 0n) {
+    throw new PayoutError('Paid amounts cannot be negative.', 'NEGATIVE');
+  }
+  if (customOnline != null && customOnline < 0n) {
+    throw new PayoutError('Paid amounts cannot be negative.', 'NEGATIVE');
+  }
+  const usingCustom = customCash != null || customOnline != null;
+  const cashPaiseIn = customCash ?? 0n;
+  const onlinePaiseIn = customOnline ?? 0n;
+  if (usingCustom && cashPaiseIn + onlinePaiseIn <= 0n) {
+    throw new PayoutError('Enter an amount greater than zero.', 'NON_POSITIVE_AMOUNT');
+  }
+
+  return db.transaction(async (tx) => {
+    const [c] = await tx
+      .select()
+      .from(maturityCases)
+      .where(eq(maturityCases.id, input.caseId))
+      .for('update')
+      .limit(1);
+    if (!c) throw new PayoutError('Case not found', 'NOT_FOUND');
+
+    const valueDate = todayISO();
+
+    const live = await tx
+      .select()
+      .from(payoutInstalments)
+      .where(
+        and(
+          eq(payoutInstalments.caseId, c.id),
+          sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`,
+        ),
+      )
+      .for('update')
+      .orderBy(payoutInstalments.dueOn, payoutInstalments.seq);
+
+    const byId = new Map(live.map((row) => [row.id, row]));
+    const selected = ids.map((id) => {
+      const row = byId.get(id);
+      if (!row) throw new PayoutError('One of the ticked days is not on this case.', 'NOT_FOUND');
+      return row;
+    });
+
+    const ahead = selected.filter((row) => row.dueOn > valueDate);
+    if (ahead.length > 0 && !input.allowPayAhead) {
+      throw new PayoutError('That day has not arrived yet.', 'NOT_YET_DUE');
+    }
+
+    let cashPaise = cashPaiseIn;
+    let onlinePaise = onlinePaiseIn;
+    if (!usingCustom) {
+      cashPaise = 0n;
+      onlinePaise = 0n;
+      for (const row of selected) {
+        const left = row.amountPaise - row.paidCashPaise - row.paidOnlinePaise;
+        if (left <= 0n) continue;
+        const cashLeft = row.cashLegPaise - row.paidCashPaise;
+        const takeCash = cashLeft > 0n ? (cashLeft < left ? cashLeft : left) : 0n;
+        cashPaise += takeCash;
+        onlinePaise += left - takeCash;
+      }
+      if (cashPaise + onlinePaise <= 0n) {
+        throw new PayoutError('The ticked days are already paid in full.', 'ALREADY_PAID');
+      }
+    }
+
+    const todayCash = await tx
+      .select({
+        cash: sql<string>`COALESCE(SUM(${payoutTransactions.cashPaise}), 0)::text`,
+      })
+      .from(payoutTransactions)
+      .where(
+        and(
+          eq(payoutTransactions.caseId, c.id),
+          eq(payoutTransactions.valueDate, valueDate),
+          isNull(payoutTransactions.reversedAt),
+        ),
+      );
+    const cashAlreadyPaidTodayPaise = BigInt(todayCash[0]?.cash ?? '0');
+
+    const plan = planSettlement(
+      {
+        cashPaise,
+        onlinePaise,
+        reference: input.reference,
+        reason: input.reason,
+      },
+      {
+        instalments: selected.map((row) => ({
+          id: row.id,
+          seq: row.seq,
+          dueOn: row.dueOn,
+          amountPaise: row.amountPaise,
+          paidCashPaise: row.paidCashPaise,
+          paidOnlinePaise: row.paidOnlinePaise,
+        })),
+        today: valueDate,
+        caseTotalPaise: c.maturityAmountPaise,
+        casePaidTotalPaise: c.paidCashPaise + c.paidOnlinePaise,
+        caseIsPayable: PAYABLE_STATUSES.has(c.status) || c.status === 'COMPLETED',
+        cashAlreadyPaidTodayPaise,
+        cashCapPerDayPaise: c.cashPolicy === 'CASH_CAP' ? (c.cashCapPerDayPaise ?? 0n) : null,
+        allowedInstalmentIds: ids,
+      },
+    );
+    if (!plan.ok) throw new PayoutError(plan.message, plan.code);
+
+    const now = new Date();
+    const allocation = new Map(plan.lines.map((line) => [line.instalmentId, line]));
+    const txnIds: string[] = [];
+
+    for (const row of selected) {
+      const line = allocation.get(row.id);
+      if (!line) continue;
+      const newCash = row.paidCashPaise + line.cashPaise;
+      const newOnline = row.paidOnlinePaise + line.onlinePaise;
+      const paid = newCash + newOnline;
+      await tx
+        .update(payoutInstalments)
+        .set({
+          paidCashPaise: newCash,
+          paidOnlinePaise: newOnline,
+          status: paid >= row.amountPaise ? 'PAID' : paid > 0n ? 'PARTIAL' : row.status,
+          updatedAt: now,
+        })
+        .where(eq(payoutInstalments.id, row.id));
+
+      const txnId = newId('txn');
+      txnIds.push(txnId);
+      await tx.insert(payoutTransactions).values({
+        id: txnId,
+        caseId: c.id,
+        instalmentId: row.id,
+        branchId: c.branchId,
+        cashPaise: line.cashPaise,
+        onlinePaise: line.onlinePaise,
+        totalPaise: line.totalPaise,
+        reference: input.reference?.trim() || null,
+        remarks:
+          plan.lines.length > 1
+            ? `Register Taken: ${formatPaise(plan.totalPaise)} across ${plan.lines.length} days`
+            : 'Register Taken',
+        valueDate,
+        recordedById: actor.id,
+      });
+    }
+
+    const newCaseCash = c.paidCashPaise + cashPaise;
+    const newCaseOnline = c.paidOnlinePaise + onlinePaise;
+    const casePaid = newCaseCash + newCaseOnline;
+    const complete = casePaid >= c.maturityAmountPaise;
+
+    await tx
+      .update(maturityCases)
+      .set({
+        paidCashPaise: newCaseCash,
+        paidOnlinePaise: newCaseOnline,
+        status: complete ? 'COMPLETED' : c.status === 'APPROVED' ? 'IN_PROGRESS' : c.status,
+        completedAt: complete ? (c.completedAt ?? now) : null,
+        updatedAt: now,
+      })
+      .where(eq(maturityCases.id, c.id));
+
+    const dayList = plan.lines
+      .map((line) => `day ${line.seq} (${line.dueOn}) ${formatPaise(line.totalPaise)}`)
+      .join(', ');
+
+    await tx.insert(caseEvents).values({
+      id: newId('evt'),
+      caseId: c.id,
+      type: 'PAYMENT_RECORDED',
+      actorId: actor.id,
+      note: `Taken at the register — ${formatPaise(plan.totalPaise)} · ${dayList}`,
+    });
+
+    if (complete) {
+      await tx.insert(caseEvents).values({
+        id: newId('evt'),
+        caseId: c.id,
+        type: 'COMPLETED',
+        actorId: actor.id,
+        toStatus: 'COMPLETED',
+        note: `Fully paid — ${formatPaise(c.maturityAmountPaise)}`,
+      });
+    }
+
+    await writeAudit(tx, actor, {
+      action: 'payout.recorded',
+      entity: 'MaturityCase',
+      entityId: c.id,
+      branchId: c.branchId,
+      summary: `${c.caseNumber}: Taken ${formatPaise(plan.totalPaise)} across ${plan.lines.length} day(s) — ${dayList}`,
+      before: { casePaidPaise: c.paidCashPaise + c.paidOnlinePaise },
+      after: {
+        casePaidPaise: casePaid,
+        caseRemainingPaise: c.maturityAmountPaise - casePaid,
+        transactionIds: txnIds,
+        complete,
+      },
+      ...meta,
+    });
+
+    return {
+      ok: true as const,
+      totalPaise: plan.totalPaise,
+      daysSettled: plan.lines.length,
+      remainingPaise: c.maturityAmountPaise - casePaid,
+      caseCompleted: complete,
+    };
+  });
+}

@@ -15,9 +15,11 @@ import {
   isOnTodaysList,
   isTodayButUnset,
   nextDay,
+  leftoverOnPayoutDay,
   plannedOnDate,
   prevDay,
   recommendedPerDay,
+  unpaidPayoutDays,
   resolveDatePreset,
   rowStateOf,
   rowInDateRange,
@@ -559,6 +561,19 @@ describe('recommendation on a selected payout day', () => {
 
     expect(recommendedPerDay(88_073_800n, 88_073_800n, 13)).toBe(8_807_380n);
     expect(plannedOnDate(r, '2026-09-01').total).toBe(8_800_000n);
+    // The recommendation is not today's due figure — those two numbers must be allowed to differ.
+    expect(recommendedPerDay(88_073_800n, 88_073_800n, 13)).not.toBe(plannedOnDate(r, '2026-09-01').total);
+  });
+
+  it('lists unpaid days on or before today, never a future day', () => {
+    const days = [
+      { id: 'a', dueOn: '2026-09-01', amountPaise: '1000000', cashPaise: '1000000', onlinePaise: '0', paidPaise: '0', status: 'PENDING' },
+      { id: 'b', dueOn: '2026-09-02', amountPaise: '1000000', cashPaise: '1000000', onlinePaise: '0', paidPaise: '500000', status: 'PARTIAL' },
+      { id: 'c', dueOn: '2026-09-02', amountPaise: '1000000', cashPaise: '1000000', onlinePaise: '0', paidPaise: '1000000', status: 'PAID' },
+      { id: 'd', dueOn: '2026-09-03', amountPaise: '1000000', cashPaise: '1000000', onlinePaise: '0', paidPaise: '0', status: 'PENDING' },
+    ];
+    expect(unpaidPayoutDays(days, '2026-09-02').map((d) => d.id)).toEqual(['a', 'b']);
+    expect(leftoverOnPayoutDay(days[1]!)).toBe(500000n);
   });
 
   it('returns zero on an alternate off-day and the exact amount on tomorrow', () => {

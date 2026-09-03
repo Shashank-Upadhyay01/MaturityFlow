@@ -24,6 +24,7 @@ import {
   replaceInstalmentPayout,
   type Tender,
   settleRegisterRow,
+  takeRegisterDays,
 } from '@/services/payout-service';
 import {
   MAX_BLANK_ROWS_PER_CALL,
@@ -377,6 +378,60 @@ export async function setTodayPaidSplitAction(
  * yet — the service decides that, not this action, so the browser and the server cannot disagree
  * about when authorisation is required.
  */
+/**
+ * Taken on the register: tick days, optionally type a custom amount, then confirm.
+ *
+ * Empty cash/online means pay each ticked day in full. A figure pays that amount onto the
+ * ticked days, oldest first. Future days need Admin/CMD/CEO and a reason.
+ */
+export async function confirmRegisterTakenAction(
+  caseId: string,
+  instalmentIds: string[],
+  cashRupees: string | null = null,
+  onlineRupees: string | null = null,
+  reference: string | null = null,
+  reason: string | null = null,
+): Promise<ActionResult> {
+  try {
+    const { session, actor } = await requireActor();
+    const c = await scopeByCase(caseId);
+    if (!c) return fail('Row not found', 'NOT_FOUND');
+    assertCanTypeRegister(actor);
+    assertCan(actor, 'payout.record', c);
+
+    const cashRaw = cashRupees?.trim() ?? '';
+    const onlineRaw = onlineRupees?.trim() ?? '';
+    const usingCustom = cashRaw !== '' || onlineRaw !== '';
+    let cashPaise: bigint | null = null;
+    let onlinePaise: bigint | null = null;
+    if (usingCustom) {
+      const cash = cashRaw === '' ? 0n : tryParseRupeesToPaise(cashRaw);
+      const online = onlineRaw === '' ? 0n : tryParseRupeesToPaise(onlineRaw);
+      if (cash == null || online == null) return fail('Enter whole rupee amounts.', 'VALIDATION');
+      cashPaise = cash;
+      onlinePaise = online;
+    }
+
+    await takeRegisterDays(
+      session,
+      {
+        caseId,
+        instalmentIds,
+        cashPaise,
+        onlinePaise,
+        reference,
+        reason,
+        allowPayAhead: roleCan(actor.role, 'payout.reverse'),
+      },
+      await requestMeta(),
+    );
+    revalidate();
+    return ok();
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
 export async function settleRegisterRowAction(
   caseId: string,
   cashRupees: string,
