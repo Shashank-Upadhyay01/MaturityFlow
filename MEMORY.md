@@ -65,13 +65,22 @@ that day and shrinks later unpaid days.
 
 ## Register and Maturities should work like a sheet
 
-Staff live on **Register** and **Maturities**. They expect Excel-like work:
+Staff live on **Register** and **Maturities** (including Operations review). They expect
+Excel-like work:
 
-- Edit cells, rows and columns.
-- **Copy / paste** (Ctrl+C / Ctrl+V).
-- **Undo / redo** (Ctrl+Z / Ctrl+Y) for cell edits.
-- **Shift-click** to select a range of rows (already exists — keep it).
-- Drag-select of cells is wanted; do not break money locks to fake it.
+- Edit cells, rows and columns. Column letters (A, B, C…) and row numbers sit on the Operations
+  sheet. The box above the sheet shows the active cell (C7).
+- **Copy / paste** (Ctrl+C / Ctrl+V) from Excel or Google Sheets. A pasted block lands in the
+  same shape, starting at the cell you clicked. Each cell still saves the audited single-row path.
+- **Undo / redo** (Ctrl+Z / Ctrl+Y) for cell edits, not for Taken payments.
+- **Shift-click** a second cell to select a block.
+- Filter the sheet by name, account or agent.
+- Do not break money locks to fake a formula engine. Taken stays a payment list.
+
+A **Guide** button (bottom right, or press ?) explains the current screen in plain words and
+shows a New badge when What's new has an update this person has not opened. It does not invent
+money advice — answers are written in `workspace-guide.ts` and should be extended whenever a
+feature ships.
 
 Recommended must not drive Taken. Taken opens the payment list (tick days, custom amount,
 confirm). **Taken and Not taken stay available on every unpaid day, including missed days.**
