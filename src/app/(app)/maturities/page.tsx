@@ -76,6 +76,7 @@ export default async function MaturitiesPage({
       <RegisterTabs
         sheet={
           <RegisterSheet
+            key={compiledView ? 'all' : picked.branchId ?? 'none'}
             role={session.role}
             branchLabel={
               compiledView
@@ -84,6 +85,7 @@ export default async function MaturitiesPage({
                   ? `${branch.code} · ${branch.name}`
                   : 'Register'
             }
+            compiledView={compiledView}
             branchId={branch?.id ?? ''}
             branchSwitch={
               hq

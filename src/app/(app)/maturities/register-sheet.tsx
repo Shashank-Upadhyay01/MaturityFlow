@@ -868,6 +868,8 @@ export function RegisterSheet(props: {
   role: Role;
   branchLabel: string;
   branchId: string;
+  /** HQ compiled bank — every branch together, read-only. */
+  compiledView?: boolean;
   branchSwitch?: {
     path: string;
     allowAll?: boolean;
@@ -1857,7 +1859,7 @@ export function RegisterSheet(props: {
                       router.push(next === 'all' ? `${path}?branch=all` : `${path}?branch=${next}`);
                     }}
                     aria-label="Working branch"
-                    title="Open this branch's own register"
+                    title="All branches shows every row. Pick one branch to type into that register."
                   >
                     {props.branchSwitch.allowAll && <option value="all">All branches</option>}
                     {props.branchSwitch.branches.map((b) => (
@@ -2495,6 +2497,17 @@ export function RegisterSheet(props: {
         </Callout>
       )}
 
+      {props.compiledView && props.branchSwitch && (
+        <p className="px-1 text-[0.8125rem] text-[var(--muted-fg)] print:hidden">
+          This list is every branch together. Choose one branch to add or change rows.
+        </p>
+      )}
+      {!props.compiledView && props.branchSwitch && props.rows.length === 0 && (
+        <p className="px-1 text-[0.8125rem] text-[var(--muted-fg)] print:hidden">
+          This branch has no rows yet. Choose All branches to see the existing register.
+        </p>
+      )}
+
       {/*
         Print header. Screen-hidden; on paper it is the only thing that says what this sheet is,
         which day it covers and what it adds up to — a printout with no total is a printout the
@@ -2860,7 +2873,11 @@ export function RegisterSheet(props: {
                           ? 'Nothing is due today. Open All to see the rest of the register.'
                           : tab !== 'all'
                             ? `No ${TAB_LABEL[tab].toLowerCase()} rows.`
-                            : 'No rows. Add a row or import the Excel template.'}
+                            : props.compiledView
+                              ? 'No rows in the register.'
+                              : props.branchSwitch
+                                ? 'No rows in this branch. Choose All branches to see the existing register, or type a new row here.'
+                                : 'No rows. Add a row or import the Excel template.'}
                   </td>
                 </tr>
               )}

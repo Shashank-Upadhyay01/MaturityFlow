@@ -4,9 +4,11 @@ import {
   isAzamgarhHeadBranch,
   pickWorkingBranch,
   resolveImportBranch,
+  workingBranches,
 } from '../src/lib/branch-routing';
 
 const branches = [
+  { id: 'ahi', code: 'AHI', name: 'Ahiraula' },
   { id: 'azm', code: 'AZM', name: 'Azamgarh' },
   { id: 'mau', code: 'MAU', name: 'Mau Branch' },
 ];
@@ -24,26 +26,50 @@ describe('compiled register branch routing', () => {
   });
 
   it('recognises Azamgarh as the head branch', () => {
-    expect(isAzamgarhHeadBranch(branches[0])).toBe(true);
-    expect(isAzamgarhHeadBranch(branches[1])).toBe(false);
+    expect(isAzamgarhHeadBranch({ code: 'AZM', name: 'Azamgarh' })).toBe(true);
+    expect(isAzamgarhHeadBranch({ code: 'AHI', name: 'Ahiraula' })).toBe(false);
   });
 });
 
 describe('HQ working branch', () => {
-  it('lands Admin on a real branch so typing is never a mixed sheet', () => {
-    expect(pickWorkingBranch(branches, { hq: true, sessionBranchId: null }).branchId).toBe('azm');
-    expect(pickWorkingBranch(branches, { hq: true, sessionBranchId: null }).compiled).toBe(false);
+  it('lists Azamgarh first so an empty new branch is not the default pick', () => {
+    expect(workingBranches(branches).map((branch) => branch.code)).toEqual(['AZM', 'AHI', 'MAU']);
   });
 
-  it('opens the branch Admin asked for, including a new one', () => {
+  it('lands Admin on the compiled bank so existing rows stay visible', () => {
+    expect(pickWorkingBranch(branches, { hq: true, sessionBranchId: null })).toEqual({
+      branchId: null,
+      compiled: true,
+    });
+  });
+
+  it('does not hide the book behind a home branch or the first code in the list', () => {
+    expect(
+      pickWorkingBranch(branches, { hq: true, sessionBranchId: 'ahi' }),
+    ).toEqual({ branchId: null, compiled: true });
+    expect(
+      pickWorkingBranch(branches, { hq: true, sessionBranchId: null, requested: 'AHI' }),
+    ).toEqual({ branchId: null, compiled: true });
+  });
+
+  it('opens the branch Admin asked for, including a new empty one', () => {
     expect(
       pickWorkingBranch(branches, { hq: true, sessionBranchId: null, requested: 'mau' }).branchId,
     ).toBe('mau');
+    expect(
+      pickWorkingBranch(branches, { hq: true, sessionBranchId: null, requested: 'ahi' }),
+    ).toEqual({ branchId: 'ahi', compiled: false });
   });
 
   it('keeps an All-branches compiled view when asked', () => {
     expect(
       pickWorkingBranch(branches, { hq: true, sessionBranchId: null, requested: 'all' }),
     ).toEqual({ branchId: null, compiled: true });
+  });
+
+  it('pins a branch clerk to their assigned branch', () => {
+    expect(
+      pickWorkingBranch(branches, { hq: false, sessionBranchId: 'mau' }),
+    ).toEqual({ branchId: 'mau', compiled: false });
   });
 });

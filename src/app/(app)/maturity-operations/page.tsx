@@ -57,6 +57,9 @@ export default async function MaturityOperationsPage({
           <button type="submit" className="rounded-[11px] border border-[var(--input-border)] px-3 py-1.5 text-[0.8125rem] font-medium hover:bg-[var(--glass-bg-subtle)]">
             Show
           </button>
+          {picked.compiled && (
+            <span className="text-[0.8125rem] text-[var(--muted-fg)]">Every branch. Choose one to work a single register.</span>
+          )}
         </form>
       )}
       <OperationsGrid

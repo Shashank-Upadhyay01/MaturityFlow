@@ -3,20 +3,34 @@ export const ALL_BRANCHES = '__ALL_BRANCHES__';
 /** Query value for the compiled HQ view. Not a branch id. */
 export const COMPILED_BRANCH = 'all';
 
-/** Head-office / non-paying codes stay off the working picker. */
-export function workingBranches<T extends { id: string; code: string }>(branches: readonly T[]): T[] {
+function branchNameOf(branch: { code: string; name?: string }): string {
+  return typeof branch.name === 'string' ? branch.name : branch.code;
+}
+
+/** Head-office / non-paying codes stay off the working picker. Azamgarh stays first. */
+export function workingBranches<T extends { id: string; code: string; name?: string }>(
+  branches: readonly T[],
+): T[] {
   const paying = branches.filter((branch) => branch.code !== 'HO');
-  return paying.length > 0 ? paying : [...branches];
+  const list = paying.length > 0 ? [...paying] : [...branches];
+  list.sort((a, b) => {
+    const aHead = isAzamgarhHeadBranch({ code: a.code, name: branchNameOf(a) });
+    const bHead = isAzamgarhHeadBranch({ code: b.code, name: branchNameOf(b) });
+    if (aHead !== bHead) return aHead ? -1 : 1;
+    return a.code.localeCompare(b.code, 'en');
+  });
+  return list;
 }
 
 /**
  * Which branch's book HQ is working in.
  *
- * Admin/CMD/CEO can open any created branch as its own register. `branch=all` is the compiled
- * view (read). With no query, we land on a real branch so typing never silently hits Azamgarh.
+ * Admin/CMD/CEO can open any created branch as its own register. With no `?branch=`, HQ lands
+ * on the compiled bank so existing rows stay visible. Typing still requires picking one branch
+ * — the mixed view is read-only, so new rows cannot silently land on Azamgarh.
  */
 export function pickWorkingBranch(
-  branches: readonly { id: string; code: string }[],
+  branches: readonly { id: string; code: string; name?: string }[],
   opts: { requested?: string | null; sessionBranchId: string | null; hq: boolean },
 ): { branchId: string | null; compiled: boolean } {
   const list = workingBranches(branches);
@@ -27,14 +41,13 @@ export function pickWorkingBranch(
         : list[0]?.id ?? null;
     return { branchId: id, compiled: false };
   }
-  if (opts.requested === COMPILED_BRANCH) return { branchId: null, compiled: true };
-  if (opts.requested && list.some((branch) => branch.id === opts.requested)) {
+  if (opts.requested === COMPILED_BRANCH || !opts.requested) {
+    return { branchId: null, compiled: true };
+  }
+  if (list.some((branch) => branch.id === opts.requested)) {
     return { branchId: opts.requested, compiled: false };
   }
-  if (opts.sessionBranchId && list.some((branch) => branch.id === opts.sessionBranchId)) {
-    return { branchId: opts.sessionBranchId, compiled: false };
-  }
-  return { branchId: list[0]?.id ?? null, compiled: list.length === 0 };
+  return { branchId: null, compiled: true };
 }
 
 export interface ImportBranch {
