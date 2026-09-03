@@ -391,6 +391,7 @@ export async function correctRegisterDayPaidAction(
   paidRupees: string,
   reason: string,
   reference: string | null = null,
+  onlineRupees: string | null = null,
 ): Promise<ActionResult> {
   try {
     const { session, actor } = await requireActor();
@@ -401,11 +402,13 @@ export async function correctRegisterDayPaidAction(
     if (!c) return fail('Row not found', 'NOT_FOUND');
     assertCanTypeRegister(actor);
     assertCan(actor, 'payout.reverse', c);
-    const paidPaise = tryParseRupeesToPaise(paidRupees);
-    if (paidPaise == null) return fail('Enter a whole rupee amount.', 'VALIDATION');
+    const cashPaise = tryParseRupeesToPaise(paidRupees);
+    const onlineRaw = onlineRupees?.trim() ?? '';
+    const onlinePaise = onlineRaw === '' ? 0n : tryParseRupeesToPaise(onlineRaw);
+    if (cashPaise == null || onlinePaise == null) return fail('Enter a whole rupee amount.', 'VALIDATION');
     await correctInstalmentPaid(
       session,
-      { instalmentId, cashPaise: paidPaise, onlinePaise: 0n, reason, reference },
+      { instalmentId, cashPaise, onlinePaise, reason, reference },
       await requestMeta(),
     );
     revalidate();

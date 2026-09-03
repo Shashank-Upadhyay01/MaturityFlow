@@ -91,6 +91,17 @@ unpaid). They cannot silently rewrite an earlier **already paid** amount.
 **Admin / CMD / CEO:** open Taken on the customer, type a new **Paid** figure on the old day,
 enter a reason, save. That is how old-day payments are edited.
 
+**One visit, one amount.** If the agent missed 1 Sep and 2 Sep (₹88,000 each) and came on 3 Sep,
+the plan was ₹2,64,000. If Ops Head approved **₹1,00,000 for the whole visit**, that figure is
+the total given covering the ticked days — not an extra payment on top of today's already
+recorded ₹88,000. Tick 1 Sep, 2 Sep **and today**, type 100000, enter a reason, save. The
+system sets paid oldest-first up to each day's plan: 1 Sep ₹88,000, 2 Sep ₹12,000, today ₹0
+(today's earlier ₹88,000 is reversed). Unpaid leftover stays on those days
+(₹76,000 on 2 Sep + ₹88,000 today = ₹1,64,000). If today already shows paid and is not ticked,
+the dialog warns that the custom amount would sit on top of today's paid figure.
+
+Cashiers still add onto unpaid leftover; they cannot rewrite an already-paid day.
+
 **Due payment, Cash and Online** are editable on every customer, paid or not, on Register,
 Maturities, and the case schedule. Changing Due rebalances other unpaid days. Changing Cash or
 Online sets that day's split (and rebalances if the two no longer add up to the day).

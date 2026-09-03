@@ -1369,16 +1369,25 @@ export function RegisterSheet(props: {
     onlineRupees: string | null;
     reference: string | null;
     reason: string | null;
-    corrections: { instalmentId: string; paidRupees: string }[];
+    replaceVisit: boolean;
+    corrections: {
+      instalmentId: string;
+      paidRupees: string;
+      cashRupees: string;
+      onlineRupees: string;
+      previousPaidRupees: string;
+    }[];
   }) {
     if (!payRow || paying) return;
     setPaying(true);
     for (const correction of input.corrections) {
+      if (correction.paidRupees === correction.previousPaidRupees) continue;
       const result = await correctRegisterDayPaidAction(
         correction.instalmentId,
-        correction.paidRupees,
+        correction.cashRupees,
         input.reason || 'Register correction',
         input.reference,
+        correction.onlineRupees,
       );
       if (!result.ok) {
         setPaying(false);
@@ -1386,7 +1395,7 @@ export function RegisterSheet(props: {
         return;
       }
     }
-    if (input.instalmentIds.length > 0) {
+    if (!input.replaceVisit && input.instalmentIds.length > 0) {
       const result = await confirmRegisterTakenAction(
         payRow.id,
         input.instalmentIds,
@@ -1402,7 +1411,7 @@ export function RegisterSheet(props: {
       }
     }
     setPaying(false);
-    toast.success(input.corrections.length ? 'Payment updated' : 'Payment recorded');
+    toast.success(input.replaceVisit || input.corrections.length ? 'Payment updated' : 'Payment recorded');
     setPayRow(null);
     router.refresh();
   }

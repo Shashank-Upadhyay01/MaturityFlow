@@ -4,7 +4,14 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { formatPaise, tryParseRupeesToPaise } from '@/lib/money';
-import { leftoverOnPayoutDay, type PayoutDayView } from '@/lib/register-view';
+import {
+  leftoverOnPayoutDay,
+  orderPaidCorrections,
+  splitVisitTender,
+  todayPaidUntickedPaise,
+  visitReplacePlan,
+  type PayoutDayView,
+} from '@/lib/register-view';
 import { formatDMY } from '@/lib/working-days';
 
 export interface PayDialogRow {
@@ -44,7 +51,14 @@ export function TakePaymentDialog({
     onlineRupees: string | null;
     reference: string | null;
     reason: string | null;
-    corrections: { instalmentId: string; paidRupees: string }[];
+    replaceVisit: boolean;
+    corrections: {
+      instalmentId: string;
+      paidRupees: string;
+      cashRupees: string;
+      onlineRupees: string;
+      previousPaidRupees: string;
+    }[];
   }) => Promise<void>;
 }) {
   const days = useMemo(
@@ -57,14 +71,17 @@ export function TakePaymentDialog({
 
   const [ticked, setTicked] = useState<Record<string, boolean>>(() => {
     const next: Record<string, boolean> = {};
-    const todayDay = days.find((day) => day.dueOn === today && leftover(day) > 0n);
-    if (todayDay) next[todayDay.id] = true;
+    const todayDay = days.find((day) => day.dueOn === today);
+    if (todayDay && (leftover(todayDay) > 0n || (allowCorrectPaid && BigInt(todayDay.paidPaise) > 0n))) {
+      next[todayDay.id] = true;
+    }
     return next;
   });
   const draftPaise = tryParseRupeesToPaise(draftPaidRupees);
-  const [custom, setCustom] = useState(() =>
-    draftPaise != null && draftPaise > 0n ? (draftPaise / 100n).toString() : '',
-  );
+  const [custom, setCustom] = useState(() => {
+    if (allowCorrectPaid) return '';
+    return draftPaise != null && draftPaise > 0n ? (draftPaise / 100n).toString() : '';
+  });
   const [online, setOnline] = useState('');
   const [reference, setReference] = useState('');
   const [reason, setReason] = useState('');
@@ -89,30 +106,79 @@ export function TakePaymentDialog({
     remainingAll <= 0n ? 0n : remainingAll / 100n / BigInt(payoutDays);
   const customPaise = custom.trim() === '' ? null : tryParseRupeesToPaise(custom);
   const onlinePaise = online.trim() === '' ? 0n : (tryParseRupeesToPaise(online) ?? -1n);
+  const usingCustom = custom.trim() !== '' || online.trim() !== '';
   const payingAhead = selected.some((day) => day.dueOn > today);
-  const corrections = allowCorrectPaid
+  const rupeesOf = (paise: bigint) => (paise / 100n).toString();
+  const paidEdits = allowCorrectPaid
     ? days
         .filter((day) => {
-          const draft = paidDraft[day.id] ?? (BigInt(day.paidPaise) / 100n).toString();
-          return draft !== (BigInt(day.paidPaise) / 100n).toString();
+          const draft = paidDraft[day.id] ?? rupeesOf(BigInt(day.paidPaise));
+          return draft !== rupeesOf(BigInt(day.paidPaise));
         })
-        .map((day) => ({ instalmentId: day.id, paidRupees: paidDraft[day.id] ?? '0' }))
+        .map((day) => {
+          const paidRupees = paidDraft[day.id] ?? '0';
+          const paidPaise = tryParseRupeesToPaise(paidRupees) ?? 0n;
+          return {
+            instalmentId: day.id,
+            paidRupees,
+            cashRupees: paidRupees,
+            onlineRupees: '0',
+            previousPaidRupees: rupeesOf(BigInt(day.paidPaise)),
+            paidPaise,
+            previousPaidPaise: BigInt(day.paidPaise),
+          };
+        })
     : [];
-  const willPay =
-    custom.trim() === '' && online.trim() === ''
+  const visitReplace = Boolean(allowCorrectPaid && usingCustom && selected.length > 0);
+  const visitCash = customPaise ?? 0n;
+  const visitOnline = onlinePaise > 0n ? onlinePaise : 0n;
+  const visitTotal = visitCash + visitOnline;
+  const visitLines = visitReplace ? visitReplacePlan(selected, visitTotal) : [];
+  const visitLegs = visitReplace ? splitVisitTender(visitLines, visitCash) : [];
+  const visitCorrections = visitReplace
+    ? orderPaidCorrections(visitLines)
+        .filter((line) => line.paidPaise !== line.previousPaidPaise)
+        .map((line) => {
+          const leg = visitLegs.find((row) => row.id === line.id);
+          return {
+            instalmentId: line.id,
+            paidRupees: rupeesOf(line.paidPaise),
+            cashRupees: rupeesOf(leg?.cashPaise ?? line.paidPaise),
+            onlineRupees: rupeesOf(leg?.onlinePaise ?? 0n),
+            previousPaidRupees: rupeesOf(line.previousPaidPaise),
+            paidPaise: line.paidPaise,
+            previousPaidPaise: line.previousPaidPaise,
+          };
+        })
+    : [];
+  const visitIds = new Set(visitCorrections.map((row) => row.instalmentId));
+  const corrections = orderPaidCorrections(
+    visitReplace
+      ? [...visitCorrections, ...paidEdits.filter((row) => !visitIds.has(row.instalmentId))]
+      : paidEdits,
+  );
+  const willPay = visitReplace
+    ? visitTotal
+    : custom.trim() === '' && online.trim() === ''
       ? selectedLeft
       : customPaise != null && onlinePaise >= 0n
         ? customPaise + onlinePaise
         : 0n;
-
-  const taking = selected.filter((day) => leftover(day) > 0n);
+  const stackedTodayPaise = todayPaidUntickedPaise(days, ticked, today);
+  const missedUnticked = visitReplace
+    ? days.filter((day) => day.dueOn <= today && leftover(day) > 0n && !ticked[day.id])
+    : [];
+  const taking = visitReplace ? [] : selected.filter((day) => leftover(day) > 0n);
+  const visitZeroing =
+    visitReplace && visitTotal === 0n && selected.some((day) => BigInt(day.paidPaise) > 0n);
+  const reasonNeeded = payingAhead || corrections.length > 0 || visitReplace;
   const canSubmit =
-    (corrections.length > 0 && reason.trim().length > 0) ||
-    (taking.length > 0 &&
-      willPay > 0n &&
-      onlinePaise >= 0n &&
-      (onlinePaise === 0n || reference.trim().length > 0) &&
-      (!payingAhead || (allowPayAhead && reason.trim().length > 0)));
+    (corrections.length > 0 || (taking.length > 0 && willPay > 0n)) &&
+    onlinePaise >= 0n &&
+    (onlinePaise === 0n || reference.trim().length > 0) &&
+    (!reasonNeeded || reason.trim().length > 0) &&
+    (!payingAhead || allowPayAhead) &&
+    (!visitReplace || visitTotal > 0n || visitZeroing);
 
   function toggle(day: PayoutDayView) {
     const left = leftover(day);
@@ -131,22 +197,24 @@ export function TakePaymentDialog({
     >
       <div
         role="dialog"
-        aria-label="Record payment"
-        aria-labelledby="take-pay-title"
+        aria-labelledby="take-pay-kicker take-pay-title"
         className="w-full max-w-lg rounded-[16px] border border-[var(--glass-border)] p-4 shadow-[0_24px_60px_-20px_rgb(0_0_0/0.45)]"
         style={{ background: 'var(--surface-solid)' }}
         onClick={(event) => event.stopPropagation()}
       >
-        <p className="text-[0.68rem] font-bold uppercase tracking-[0.08em] text-[var(--color-brand-700)]">
+        <p
+          id="take-pay-kicker"
+          className="text-[0.68rem] font-bold uppercase tracking-[0.08em] text-[var(--color-brand-700)]"
+        >
           Record payment
         </p>
         <h2 id="take-pay-title" className="mt-0.5 text-[1.05rem] font-semibold tracking-tight">
           {row.customerName}
         </h2>
         <p className="mt-1 text-[0.78rem] text-[var(--muted-fg)]">
-          Tick unpaid days to pay them. {allowCorrectPaid
-            ? 'To change an old paid day, type the new Paid figure and a reason, then save.'
-            : 'Leave the amount blank to pay each ticked day in full, or type what was actually given.'}
+          {allowCorrectPaid
+            ? 'Tick every day this visit covers, including today if today\'s payment is part of it. Type the amount actually given — that figure replaces paid on the ticked days, it is not added on top. You can also type a new Paid figure on any day.'
+            : 'Tick unpaid days to pay them. Leave the amount blank to pay each ticked day in full, or type what was actually given.'}
         </p>
 
         <div className="mt-3 max-h-[16rem] overflow-auto rounded-[12px] border border-[var(--hairline)]">
@@ -235,11 +303,15 @@ export function TakePaymentDialog({
 
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <label className="block text-[0.72rem] text-[var(--muted-fg)]">
-            Custom amount (cash)
+            {allowCorrectPaid ? 'Visit total (cash)' : 'Custom amount (cash)'}
             <input
               className="mf-input mt-1 h-9 w-full tabular-nums"
               inputMode="numeric"
-              placeholder="Leave blank to pay ticked days in full"
+              placeholder={
+                allowCorrectPaid
+                  ? 'Whole visit for the ticked days'
+                  : 'Leave blank to pay ticked days in full'
+              }
               value={custom}
               onChange={(event) => setCustom(event.target.value.replace(/[^0-9]/g, ''))}
             />
@@ -266,25 +338,64 @@ export function TakePaymentDialog({
             />
           </label>
         )}
-        {(payingAhead || corrections.length > 0) && (
+        {reasonNeeded && (
           <label className="mt-2 block text-[0.72rem] text-[var(--muted-fg)]">
-            {corrections.length > 0
-              ? 'Reason for changing a recorded payment'
+            {visitReplace || corrections.length > 0
+              ? 'Reason for this visit / changing a recorded payment'
               : 'Reason for paying a day that is not due yet'}
             <input
               className="mf-input mt-1 h-9 w-full"
               value={reason}
               onChange={(event) => setReason(event.target.value)}
+              placeholder="Required"
             />
           </label>
         )}
 
+        {stackedTodayPaise > 0n && (
+          <p className="mt-2 rounded-[10px] border border-[var(--hairline)] bg-[var(--color-brand-50)] px-3 py-2 text-[0.75rem] text-[var(--color-brand-700)]">
+            Today already shows ₹{inr(stackedTodayPaise)} paid and is not ticked. Tick today if
+            ₹{inr(willPay)} is the whole visit (missed days + today). Leave it unticked only if
+            you want this amount added on top of today's ₹{inr(stackedTodayPaise)}.
+          </p>
+        )}
+        {missedUnticked.length > 0 && (
+          <p className="mt-2 rounded-[10px] border border-[var(--hairline)] bg-[var(--color-brand-50)] px-3 py-2 text-[0.75rem] text-[var(--color-brand-700)]">
+            {missedUnticked.map((day) => formatDMY(day.dueOn)).join(', ')} still unpaid and not
+            ticked. Tick those days if ₹{inr(willPay)} is meant to cover them as well as today.
+          </p>
+        )}
+
+        {visitReplace && visitLines.length > 0 && (
+          <ul className="mt-2 space-y-0.5 text-[0.75rem] text-[var(--muted-fg)]">
+            {visitLines.map((line) => {
+              const day = selected.find((row) => row.id === line.id);
+              if (!day) return null;
+              const changed = line.paidPaise !== line.previousPaidPaise;
+              return (
+                <li key={line.id} className="flex justify-between gap-3 tabular-nums">
+                  <span>
+                    {formatDMY(day.dueOn)}
+                    {day.dueOn === today ? ' · today' : ''}
+                  </span>
+                  <span className={changed ? 'font-medium text-[var(--page-fg)]' : undefined}>
+                    ₹{inr(line.paidPaise)}
+                    {changed ? ` (was ₹${inr(line.previousPaidPaise)})` : ''}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
         <p className="mt-3 text-[0.8rem]">
-          Paying <span className="font-semibold tabular-nums">₹{inr(willPay)}</span>
-          {custom.trim() === '' && online.trim() === ''
-            ? ' — each ticked day in full'
-            : ' — onto the ticked days, oldest first'}
-          .
+          {visitReplace ? 'This visit ' : 'Paying '}
+          <span className="font-semibold tabular-nums">₹{inr(willPay)}</span>
+          {visitReplace
+            ? ' — replaces paid on the ticked days, oldest first. Unpaid leftover stays on those days.'
+            : custom.trim() === '' && online.trim() === ''
+              ? ' — each ticked day in full.'
+              : ' — onto the ticked days, oldest first.'}
         </p>
 
         <div className="mt-4 flex justify-end gap-2">
@@ -304,7 +415,14 @@ export function TakePaymentDialog({
                 onlineRupees: custom.trim() === '' && online.trim() === '' ? null : online.trim() || '0',
                 reference: reference.trim() || null,
                 reason: reason.trim() || null,
-                corrections,
+                replaceVisit: visitReplace,
+                corrections: corrections.map((row) => ({
+                  instalmentId: row.instalmentId,
+                  paidRupees: row.paidRupees,
+                  cashRupees: row.cashRupees,
+                  onlineRupees: row.onlineRupees,
+                  previousPaidRupees: row.previousPaidRupees,
+                })),
               })
             }
           >

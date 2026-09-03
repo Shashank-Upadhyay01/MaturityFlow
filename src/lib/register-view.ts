@@ -144,6 +144,99 @@ export function unpaidPayoutDays(days: readonly PayoutDayView[], asOf: string): 
     .sort((a, b) => (a.dueOn < b.dueOn ? -1 : a.dueOn > b.dueOn ? 1 : 0));
 }
 
+function asPaise(value: string | bigint): bigint {
+  return typeof value === 'bigint' ? value : BigInt(value);
+}
+
+/**
+ * One counter visit: a single amount split onto ticked days, oldest first, up to each day's plan.
+ * Remainder after filling those plans stays on the last ticked day (later unpaid days rebalance).
+ *
+ * This is a REPLACE of what those days should show as paid, not an add-on. If today was already
+ * recorded at the planned figure and the visit total is smaller, today can come out as ₹0.
+ */
+export function allocateVisitPaise(
+  days: readonly { id: string; amountPaise: string | bigint }[],
+  visitPaise: bigint,
+): { id: string; paidPaise: bigint }[] {
+  if (visitPaise < 0n || days.length === 0) return [];
+  let left = visitPaise;
+  return days.map((day, index) => {
+    const cap = asPaise(day.amountPaise);
+    const isLast = index === days.length - 1;
+    const take = isLast ? left : left < cap ? left : cap;
+    left -= take;
+    return { id: day.id, paidPaise: take };
+  });
+}
+
+export interface VisitReplaceLine {
+  id: string;
+  paidPaise: bigint;
+  previousPaidPaise: bigint;
+}
+
+/**
+ * HQ Taken: the custom amount is the whole visit for the ticked days.
+ * Apply decreasing paid figures first so a reverse of today's receipt frees room
+ * before missed days are written.
+ */
+export function visitReplacePlan(
+  tickedDays: readonly { id: string; amountPaise: string | bigint; paidPaise: string | bigint }[],
+  visitPaise: bigint,
+): VisitReplaceLine[] {
+  const alloc = allocateVisitPaise(tickedDays, visitPaise);
+  return alloc.map((row, i) => ({
+    id: row.id,
+    paidPaise: row.paidPaise,
+    previousPaidPaise: asPaise(tickedDays[i]!.paidPaise),
+  }));
+}
+
+export function orderPaidCorrections<T extends { paidPaise: bigint; previousPaidPaise: bigint }>(
+  rows: readonly T[],
+): T[] {
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      const deltaA = a.row.paidPaise - a.row.previousPaidPaise;
+      const deltaB = b.row.paidPaise - b.row.previousPaidPaise;
+      const aDown = deltaA < 0n;
+      const bDown = deltaB < 0n;
+      if (aDown !== bDown) return aDown ? -1 : 1;
+      if (aDown && bDown) {
+        return deltaA < deltaB ? -1 : deltaA > deltaB ? 1 : a.index - b.index;
+      }
+      return a.index - b.index;
+    })
+    .map((item) => item.row);
+}
+
+/** Put cash on the oldest allocated days first; leftover of each day is online. */
+export function splitVisitTender(
+  allocations: readonly { id: string; paidPaise: bigint }[],
+  cashPaise: bigint,
+): { id: string; cashPaise: bigint; onlinePaise: bigint }[] {
+  let cashLeft = cashPaise < 0n ? 0n : cashPaise;
+  return allocations.map((row) => {
+    const cash = row.paidPaise < cashLeft ? row.paidPaise : cashLeft;
+    cashLeft -= cash;
+    return { id: row.id, cashPaise: cash, onlinePaise: row.paidPaise - cash };
+  });
+}
+
+/** Paid already sitting on today when today is not in this visit — warn, or it stacks. */
+export function todayPaidUntickedPaise(
+  days: readonly PayoutDayView[],
+  ticked: Readonly<Record<string, boolean>>,
+  today: string,
+): bigint {
+  const day = days.find((row) => row.dueOn === today);
+  if (!day || ticked[day.id]) return 0n;
+  const paid = BigInt(day.paidPaise);
+  return paid > 0n ? paid : 0n;
+}
+
 /**
  * A withdrawal is "due today" when something is still to be handed over today and the case
  * still owes money.

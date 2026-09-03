@@ -1281,10 +1281,11 @@ export async function settleRegisterRow(
  * Record a Taken payment from the register dialog: the clerk ticked days, and optionally typed
  * a custom amount.
  *
- * This ADDS to what was already recorded today. Replacing a mistaken figure is a different act
- * (`settleRegisterRow`, Admin/CMD/CEO, with a reason). Two cashiers cannot both land a Taken
- * on the same leftover because the case is locked first and each instalment is re-read inside
- * that lock.
+ * This ADDS to what was already recorded on those days. Replacing a visit total — including
+ * reversing today's receipt so missed + today sum to one figure — is Admin/CMD/CEO
+ * `correctInstalmentPaid` via the Taken dialog (`replaceVisit`). Two cashiers cannot both land
+ * a Taken on the same leftover because the case is locked first and each instalment is re-read
+ * inside that lock.
  */
 export async function takeRegisterDays(
   actor: SessionUser,

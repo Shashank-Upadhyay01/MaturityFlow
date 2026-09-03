@@ -16,10 +16,15 @@ import {
   isTodayButUnset,
   nextDay,
   leftoverOnPayoutDay,
+  allocateVisitPaise,
+  orderPaidCorrections,
   plannedOnDate,
   prevDay,
   recommendedPerDay,
+  splitVisitTender,
+  todayPaidUntickedPaise,
   unpaidPayoutDays,
+  visitReplacePlan,
   resolveDatePreset,
   rowStateOf,
   rowInDateRange,
@@ -574,6 +579,83 @@ describe('recommendation on a selected payout day', () => {
     ];
     expect(unpaidPayoutDays(days, '2026-09-02').map((d) => d.id)).toEqual(['a', 'b']);
     expect(leftoverOnPayoutDay(days[1]!)).toBe(500000n);
+  });
+
+  it('splits one visit onto ticked days oldest first, leftover unpaid stays on later ticked days', () => {
+    const days = [
+      { id: 'a', amountPaise: '8800000' },
+      { id: 'b', amountPaise: '8800000' },
+      { id: 'c', amountPaise: '8800000' },
+    ];
+    const out = allocateVisitPaise(days, 10_000_000n);
+    expect(out.map((d) => d.paidPaise)).toEqual([8_800_000n, 1_200_000n, 0n]);
+  });
+
+  it('records a ₹1 lakh visit against three ₹88,000 days without stacking on today', () => {
+    // 1 Sep and 2 Sep missed; today already shows the planned ₹88,000 paid.
+    // Ops Head approved ₹1,00,000 for the whole visit, not ₹1,00,000 extra.
+    const days = [
+      { id: 'sep1', amountPaise: '8800000', paidPaise: '0' },
+      { id: 'sep2', amountPaise: '8800000', paidPaise: '0' },
+      { id: 'today', amountPaise: '8800000', paidPaise: '8800000' },
+    ];
+    const plan = visitReplacePlan(days, 10_000_000n);
+    expect(plan.map((row) => row.paidPaise)).toEqual([8_800_000n, 1_200_000n, 0n]);
+    const unpaid = days.map((day, i) => BigInt(day.amountPaise) - plan[i]!.paidPaise);
+    expect(unpaid).toEqual([0n, 7_600_000n, 8_800_000n]);
+    expect(unpaid.reduce((sum, row) => sum + row, 0n)).toBe(16_400_000n);
+
+    const ordered = orderPaidCorrections(plan);
+    expect(ordered.map((row) => row.id)).toEqual(['today', 'sep1', 'sep2']);
+
+    const stacked = todayPaidUntickedPaise(
+      [
+        { id: 'sep1', dueOn: '2026-09-01', amountPaise: '8800000', cashPaise: '8800000', onlinePaise: '0', paidPaise: '0', status: 'PENDING' },
+        { id: 'sep2', dueOn: '2026-09-02', amountPaise: '8800000', cashPaise: '8800000', onlinePaise: '0', paidPaise: '0', status: 'PENDING' },
+        { id: 'today', dueOn: '2026-09-03', amountPaise: '8800000', cashPaise: '8800000', onlinePaise: '0', paidPaise: '8800000', status: 'PAID' },
+      ],
+      { sep1: true, sep2: true },
+      '2026-09-03',
+    );
+    expect(stacked).toBe(8_800_000n);
+  });
+
+  it('puts cash on the oldest allocated days and online on what remains', () => {
+    const legs = splitVisitTender(
+      [
+        { id: 'a', paidPaise: 8_800_000n },
+        { id: 'b', paidPaise: 1_200_000n },
+        { id: 'c', paidPaise: 0n },
+      ],
+      10_000_000n,
+    );
+    expect(legs).toEqual([
+      { id: 'a', cashPaise: 8_800_000n, onlinePaise: 0n },
+      { id: 'b', cashPaise: 1_200_000n, onlinePaise: 0n },
+      { id: 'c', cashPaise: 0n, onlinePaise: 0n },
+    ]);
+  });
+
+  it('grows the last ticked day when the visit is larger than the ticked plans', () => {
+    const out = allocateVisitPaise(
+      [
+        { id: 'a', amountPaise: '1000000' },
+        { id: 'b', amountPaise: '1000000' },
+      ],
+      3_500_000n,
+    );
+    expect(out.map((d) => d.paidPaise)).toEqual([1_000_000n, 2_500_000n]);
+  });
+
+  it('zeros every ticked day when the visit amount is 0', () => {
+    const out = allocateVisitPaise(
+      [
+        { id: 'a', amountPaise: '8800000' },
+        { id: 'b', amountPaise: '8800000' },
+      ],
+      0n,
+    );
+    expect(out.map((d) => d.paidPaise)).toEqual([0n, 0n]);
   });
 
   it('returns zero on an alternate off-day and the exact amount on tomorrow', () => {
