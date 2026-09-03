@@ -170,6 +170,50 @@ describe('a real schedule is shown as fact', () => {
     const mixed = [inst({ caseId: 'other', seq: 1 }), inst({ caseId: 'c1', seq: 1 })];
     expect(buildPlanRow(mk(), mixed, cal, TODAY).days).toHaveLength(1);
   });
+
+  it('shows a cash visit as cash given, not leftover online from the old plan', () => {
+    const r = buildPlanRow(
+      mk({ approvedOn: '2026-09-01', paidCashPaise: '10000000' }),
+      [
+        inst({
+          seq: 1,
+          dueOn: '2026-09-01',
+          amountPaise: '8800000',
+          cashLegPaise: '2500000',
+          onlineLegPaise: '6300000',
+          paidCashPaise: '8800000',
+          paidOnlinePaise: '0',
+        }),
+        inst({
+          seq: 2,
+          dueOn: '2026-09-02',
+          amountPaise: '8800000',
+          cashLegPaise: '2500000',
+          onlineLegPaise: '6300000',
+          paidCashPaise: '1200000',
+          paidOnlinePaise: '0',
+        }),
+      ],
+      cal,
+      '2026-09-04',
+    );
+    expect(r.days[0]).toMatchObject({
+      givenCashPaise: 8_800_000n,
+      givenOnlinePaise: 0n,
+      paidPaise: 8_800_000n,
+      cashPaise: 0n,
+      onlinePaise: 0n,
+      state: 'PAID',
+    });
+    expect(r.days[1]).toMatchObject({
+      givenCashPaise: 1_200_000n,
+      givenOnlinePaise: 0n,
+      paidPaise: 1_200_000n,
+      cashPaise: 7_600_000n,
+      onlinePaise: 0n,
+      state: 'PARTIAL',
+    });
+  });
 });
 
 describe('the recommendation', () => {
@@ -328,8 +372,8 @@ describe('daily withdrawal requirements', () => {
       {
         dueOn: TODAY,
         totalPaise: 1_500_000n,
-        cashPaise: 1_000_000n,
-        onlinePaise: 500_000n,
+        cashPaise: 1_500_000n,
+        onlinePaise: 0n,
         committedPaise: 1_500_000n,
         projectedPaise: 0n,
         count: 1,

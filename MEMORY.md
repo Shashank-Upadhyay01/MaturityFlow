@@ -121,6 +121,10 @@ coming on 03/09 for missed days is recorded on 03/09, not on the day somebody ty
 Print, Paid today, Paid in cash and the cashbook follow that date. Filter the Register to that
 day before printing. Cashiers always record today.
 
+**Customer / agent statement.** Cash and By account are what was actually given, not the old
+plan split. A cash visit prints as cash. Paid amounts are green, the maturity total is blue,
+and remaining unpaid is red — including Save as PDF (`print-color-adjust: exact`).
+
 ---
 
 ## Import

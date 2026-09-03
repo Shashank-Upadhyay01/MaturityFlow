@@ -384,7 +384,7 @@ export function CustomerList({
                                                 Scheduled
                                               </th>
                                               <th className="py-1 pr-2 text-right font-medium">Cash</th>
-                                              <th className="py-1 pr-2 text-right font-medium">Online</th>
+                                              <th className="py-1 pr-2 text-right font-medium">By account</th>
                                               <th className="py-1 pr-2 text-right font-medium">Paid</th>
                                               <th className="py-1 text-left font-medium">State</th>
                                             </tr>
@@ -408,8 +408,8 @@ export function CustomerList({
                                                 <td className="py-1 pr-2 text-right tabular-nums">
                                                   {inr(d.amountPaise)}
                                                 </td>
-                                                <td className="py-1 pr-2 text-right tabular-nums">{inr(d.cashPaise)}</td>
-                                                <td className="py-1 pr-2 text-right tabular-nums">{inr(d.onlinePaise)}</td>
+                                                <td className="py-1 pr-2 text-right tabular-nums">{inr(d.givenCashPaise)}</td>
+                                                <td className="py-1 pr-2 text-right tabular-nums">{inr(d.givenOnlinePaise)}</td>
                                                 <td className="py-1 pr-2 text-right tabular-nums">{inr(d.paidPaise)}</td>
                                                 <td className="py-1 text-[0.6rem] uppercase tracking-wide">
                                                   {d.state === 'PAID'

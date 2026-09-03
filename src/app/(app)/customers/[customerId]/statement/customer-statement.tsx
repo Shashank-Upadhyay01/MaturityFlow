@@ -54,6 +54,14 @@ export function CustomerStatement({
   );
 
   const money = (v: bigint) => formatPaise(v, { decimals: false });
+  const cls = (kind: 'paid' | 'left' | 'maturity', value: bigint) => {
+    if (kind === 'paid' && value > 0n) return 'num amt-paid';
+    if (kind === 'left' && value > 0n) return 'num amt-left';
+    if (kind === 'maturity' && value > 0n) return 'num amt-maturity';
+    return 'num';
+  };
+  const rowTone = (state: string) =>
+    state === 'PAID' ? 'paid' : state === 'PARTIAL' ? 'partial' : state === 'DUE_TODAY' ? 'today' : state === 'OVERDUE' ? 'missed' : '';
   const head = cases[0];
   const totals = cases.reduce(
     (a, c) => {
@@ -84,10 +92,20 @@ export function CustomerStatement({
         .stmt tfoot td { background: #eee; font-weight: 700; }
         .stmt tbody tr { break-inside: avoid; }
         .stmt thead { display: table-header-group; }
-        .stmt .paid { background: #eaf6ec; }
+        .stmt .paid, .stmt .partial { background: #c6f0d0; }
         .stmt .today { background: #e8eefc; font-weight: 700; }
         .stmt .missed { background: #fdecec; }
-        @media print { .no-print { display: none !important; } html, body { background: #fff !important; } }
+        .stmt .amt-paid { background: #bbf7d0; color: #14532d; font-weight: 700; padding: 1px 5px; }
+        .stmt .amt-maturity { background: #bfdbfe; color: #1e3a8a; font-weight: 700; padding: 1px 5px; }
+        .stmt .amt-left { background: #fecaca; color: #7f1d1d; font-weight: 700; padding: 1px 5px; }
+        @media print {
+          .no-print { display: none !important; }
+          html, body { background: #fff !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+          .stmt .paid, .stmt .partial, .stmt .missed, .stmt .today,
+          .stmt .amt-paid, .stmt .amt-maturity, .stmt .amt-left {
+            print-color-adjust: exact; -webkit-print-color-adjust: exact;
+          }
+        }
         @media screen {
           .stmt { max-width: 297mm; margin: 0 auto; padding: 11mm 10mm; background: #fff;
                   box-shadow: 0 2px 24px rgba(0,0,0,.18); }
@@ -144,13 +162,13 @@ export function CustomerStatement({
                   <td>Maturities</td>
                   <td className="num">{cases.length}</td>
                   <td>Total</td>
-                  <td className="num">{money(totals.maturity)}</td>
+                  <td className={cls('maturity', totals.maturity)}>{money(totals.maturity)}</td>
                   <td>Received</td>
-                  <td className="num">{money(totals.paid)}</td>
+                  <td className={cls('paid', totals.paid)}>{money(totals.paid)}</td>
                 </tr>
                 <tr>
                   <td>Still owed</td>
-                  <td className="num" colSpan={5}>
+                  <td className={cls('left', totals.left)} colSpan={5}>
                     <strong>{money(totals.left)}</strong>
                   </td>
                 </tr>
@@ -178,8 +196,10 @@ export function CustomerStatement({
                         <td colSpan={8}>
                           {c.caseNumber}
                           {c.schemeName ? ` · ${c.schemeName}` : ''}
-                          {' '}· maturity {money(mat)} · {SETTLEMENT_LABEL[settlementOf(c)]}
-                          {' '}· received {money(paid)} · left {money(mat > paid ? mat - paid : 0n)}
+                          {' '}· maturity <span className="amt-maturity">{money(mat)}</span>
+                          {' '}· {SETTLEMENT_LABEL[settlementOf(c)]}
+                          {' '}· received <span className={paid > 0n ? 'amt-paid' : undefined}>{money(paid)}</span>
+                          {' '}· left <span className={mat > paid ? 'amt-left' : undefined}>{money(mat > paid ? mat - paid : 0n)}</span>
                         </td>
                       </tr>
                       <tr>
@@ -197,7 +217,7 @@ export function CustomerStatement({
                         <th>Payment date</th>
                         <th className="num">Scheduled</th>
                         <th className="num">Cash</th>
-                        <th className="num">Online</th>
+                        <th className="num">By account</th>
                         <th className="num">Paid</th>
                         <th className="num">Remaining</th>
                         <th>State</th>
@@ -209,26 +229,17 @@ export function CustomerStatement({
                         <td colSpan={8}>{plan.error}</td>
                       </tr>
                     ) : (
-                      plan.days.map((d) => (
-                          <tr
-                            key={`${c.caseId}-${d.seq}`}
-                            className={
-                              d.state === 'PAID'
-                                ? 'paid'
-                                : d.state === 'DUE_TODAY'
-                                  ? 'today'
-                                  : d.state === 'OVERDUE'
-                                    ? 'missed'
-                                    : ''
-                            }
-                          >
+                      plan.days.map((d) => {
+                          const left = d.amountPaise > d.paidPaise ? d.amountPaise - d.paidPaise : 0n;
+                          return (
+                          <tr key={`${c.caseId}-${d.seq}`} className={rowTone(d.state)}>
                             <td>{d.seq}</td>
                             <td>{formatDMY(d.dueOn)} · {weekdayShort(d.dueOn)}</td>
                             <td className="num">{money(d.amountPaise)}</td>
-                            <td className="num">{money(d.cashPaise)}</td>
-                            <td className="num">{money(d.onlinePaise)}</td>
-                            <td className="num">{money(d.paidPaise)}</td>
-                            <td className="num">{money(d.amountPaise > d.paidPaise ? d.amountPaise - d.paidPaise : 0n)}</td>
+                            <td className={cls('paid', d.givenCashPaise)}>{money(d.givenCashPaise)}</td>
+                            <td className={cls('paid', d.givenOnlinePaise)}>{money(d.givenOnlinePaise)}</td>
+                            <td className={cls('paid', d.paidPaise)}>{money(d.paidPaise)}</td>
+                            <td className={cls('left', left)}>{money(left)}</td>
                             <td>
                               {d.state === 'PAID'
                                 ? 'Given'
@@ -241,7 +252,8 @@ export function CustomerStatement({
                                       : 'Upcoming'}
                             </td>
                           </tr>
-                      ))
+                          );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -263,9 +275,10 @@ export function CustomerStatement({
                   <td colSpan={2}>
                     Total — {cases.length} maturit{cases.length === 1 ? 'y' : 'ies'}
                   </td>
-                  <td className="num">{money(totals.maturity)}</td>
+                  <td className={cls('maturity', totals.maturity)}>{money(totals.maturity)}</td>
                   <td colSpan={5}>
-                    received {money(totals.paid)} · still owed {money(totals.left)}
+                    received <span className={totals.paid > 0n ? 'amt-paid' : undefined}>{money(totals.paid)}</span>
+                    {' '}· still owed <span className={totals.left > 0n ? 'amt-left' : undefined}>{money(totals.left)}</span>
                   </td>
                 </tr>
               </tbody>

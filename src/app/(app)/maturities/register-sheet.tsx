@@ -3033,7 +3033,7 @@ export function RegisterSheet(props: {
                             cellKey={c.id}
                             ariaLabel={`${c.label} for ${r.customerName}`}
                             group
-                            className={num}
+                            className={cn(num, 'bg-[var(--color-brand-100)] text-[var(--color-brand-700)]')}
                             disabled={!edit}
                             value={amtDraft}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], amount: v } }))}
@@ -3049,7 +3049,7 @@ export function RegisterSheet(props: {
                             cellKey={c.id}
                             ariaLabel={`${c.label} for ${r.customerName}`}
                             group
-                            className={num}
+                            className={cn(num, paidP > 0n && 'bg-[var(--row-taken)] text-[var(--row-taken-fg)]')}
                             disabled={!edit}
                             value={paidDraft}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paid: v } }))}
@@ -3059,7 +3059,11 @@ export function RegisterSheet(props: {
                             }}
                           />
                         )}
-                        {c.id === 'remaining' && <span className="font-semibold">{inr(liveRemaining)}</span>}
+                        {c.id === 'remaining' && (
+                          <span className={cn('font-semibold', liveRemaining > 0n && 'rounded-[4px] bg-[var(--row-missed)] px-1 text-[var(--row-missed-fg)]')}>
+                            {inr(liveRemaining)}
+                          </span>
+                        )}
                         {c.id === 'agent' && (
                           <CellInput
                             rowKey={r.id}

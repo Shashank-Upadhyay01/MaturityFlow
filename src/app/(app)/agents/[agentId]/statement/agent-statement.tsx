@@ -67,6 +67,14 @@ export function AgentStatement({
   }, [ready]);
 
   const money = (v: bigint) => formatPaise(v, { decimals: false });
+  const cls = (kind: 'paid' | 'left' | 'maturity', value: bigint) => {
+    if (kind === 'paid' && value > 0n) return 'num amt-paid';
+    if (kind === 'left' && value > 0n) return 'num amt-left';
+    if (kind === 'maturity' && value > 0n) return 'num amt-maturity';
+    return 'num';
+  };
+  const rowTone = (state: string) =>
+    state === 'PAID' ? 'paid' : state === 'PARTIAL' ? 'partial' : state === 'DUE_TODAY' ? 'today' : state === 'OVERDUE' ? 'missed' : '';
 
   return (
     <>
@@ -85,16 +93,23 @@ export function AgentStatement({
         .stmt .case-block { break-inside: avoid; margin-top: 10px; }
         .stmt .case-title { background: #e8e8e8; border: 1px solid #888; border-bottom: 0; padding: 5px 7px; font-weight: 700; }
         .stmt .lifecycle { border: 1px solid #999; border-bottom: 0; padding: 5px 7px; font-size: 9.5px; background: #fafafa; }
-        .stmt .paid { background: #eaf6ec; }
+        .stmt .paid, .stmt .partial { background: #c6f0d0; }
         .stmt .today { background: #e8eefc; font-weight: 700; }
         .stmt .missed { background: #fdecec; }
+        .stmt .amt-paid { background: #bbf7d0; color: #14532d; font-weight: 700; padding: 1px 5px; }
+        .stmt .amt-maturity { background: #bfdbfe; color: #1e3a8a; font-weight: 700; padding: 1px 5px; }
+        .stmt .amt-left { background: #fecaca; color: #7f1d1d; font-weight: 700; padding: 1px 5px; }
         .stmt tfoot td { background: #eee; font-weight: 700; }
         /* A customer's rows are never split across a page break. */
         .stmt tbody tr { break-inside: avoid; }
         .stmt thead { display: table-header-group; }
         @media print {
           .no-print { display: none !important; }
-          html, body { background: #fff !important; }
+          html, body { background: #fff !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+          .stmt .paid, .stmt .partial, .stmt .missed, .stmt .today,
+          .stmt .amt-paid, .stmt .amt-maturity, .stmt .amt-left {
+            print-color-adjust: exact; -webkit-print-color-adjust: exact;
+          }
         }
         @media screen {
           .stmt {
@@ -202,9 +217,9 @@ export function AgentStatement({
                     <td colSpan={3}>
                       {g.cases.length} maturit{g.cases.length === 1 ? 'y' : 'ies'}
                     </td>
-                    <td className="num">{money(g.maturityPaise)}</td>
-                    <td className="num">{money(g.paidPaise)}</td>
-                    <td className="num">{money(g.remainingPaise)}</td>
+                    <td className={cls('maturity', g.maturityPaise)}>{money(g.maturityPaise)}</td>
+                    <td className={cls('paid', g.paidPaise)}>{money(g.paidPaise)}</td>
+                    <td className={cls('left', g.remainingPaise)}>{money(g.remainingPaise)}</td>
                     <td>{g.allReceived ? 'All received' : 'Outstanding'}</td>
                   </tr>
                   {g.cases.map((c) => (
@@ -214,9 +229,9 @@ export function AgentStatement({
                       <td style={{ fontVariantNumeric: 'tabular-nums' }}>{c.caseNumber}</td>
                       <td>{c.formSubmittedOn ? formatDMY(c.formSubmittedOn) : '—'}</td>
                       <td>{c.deadlineOn ? formatDMY(c.deadlineOn) : '—'}</td>
-                      <td className="num">{money(BigInt(c.maturityAmountPaise))}</td>
-                      <td className="num">{money(paidOf(c))}</td>
-                      <td className="num">{money(remainingOf(c))}</td>
+                      <td className={cls('maturity', BigInt(c.maturityAmountPaise))}>{money(BigInt(c.maturityAmountPaise))}</td>
+                      <td className={cls('paid', paidOf(c))}>{money(paidOf(c))}</td>
+                      <td className={cls('left', remainingOf(c))}>{money(remainingOf(c))}</td>
                       <td style={{ fontSize: 9.5 }}>{SETTLEMENT_LABEL[settlementOf(c)]}</td>
                     </tr>
                   ))}
@@ -229,9 +244,9 @@ export function AgentStatement({
                   Total — {summary.customers} customer{summary.customers === 1 ? '' : 's'},{' '}
                   {summary.cases} maturit{summary.cases === 1 ? 'y' : 'ies'}
                 </td>
-                <td className="num">{money(summary.maturityPaise)}</td>
-                <td className="num">{money(summary.paidPaise)}</td>
-                <td className="num">{money(summary.remainingPaise)}</td>
+                <td className={cls('maturity', summary.maturityPaise)}>{money(summary.maturityPaise)}</td>
+                <td className={cls('paid', summary.paidPaise)}>{money(summary.paidPaise)}</td>
+                <td className={cls('left', summary.remainingPaise)}>{money(summary.remainingPaise)}</td>
                 <td />
               </tr>
             </tfoot>
@@ -246,7 +261,7 @@ export function AgentStatement({
               <section className="case-block" key={`schedule-${c.caseId}`}>
                 <div className="case-title">
                   {c.customerName} · A/c {c.accountNumber ?? '—'} · {c.caseNumber}
-                  {c.schemeName ? ` · ${c.schemeName}` : ''} · {money(BigInt(c.maturityAmountPaise))}
+                  {c.schemeName ? ` · ${c.schemeName}` : ''} · <span className="amt-maturity">{money(BigInt(c.maturityAmountPaise))}</span>
                 </div>
                 <div className="lifecycle">
                   <strong>Maturity date:</strong> {c.instrumentMaturityOn ? formatDMY(c.instrumentMaturityOn) : '—'} ·{' '}
@@ -261,23 +276,26 @@ export function AgentStatement({
                     <thead>
                       <tr>
                         <th>#</th><th>Payment date</th><th className="num">Scheduled</th>
-                        <th className="num">Cash</th><th className="num">Online</th>
+                        <th className="num">Cash</th><th className="num">By account</th>
                         <th className="num">Paid</th><th className="num">Remaining</th><th>State</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {plan.days.map((d) => (
-                        <tr key={`${c.caseId}-${d.seq}`} className={d.state === 'PAID' ? 'paid' : d.state === 'DUE_TODAY' ? 'today' : d.state === 'OVERDUE' ? 'missed' : ''}>
+                      {plan.days.map((d) => {
+                        const left = d.amountPaise > d.paidPaise ? d.amountPaise - d.paidPaise : 0n;
+                        return (
+                        <tr key={`${c.caseId}-${d.seq}`} className={rowTone(d.state)}>
                           <td>{d.seq}</td>
                           <td>{formatDMY(d.dueOn)} · {weekdayShort(d.dueOn)}</td>
                           <td className="num">{money(d.amountPaise)}</td>
-                          <td className="num">{money(d.cashPaise)}</td>
-                          <td className="num">{money(d.onlinePaise)}</td>
-                          <td className="num">{money(d.paidPaise)}</td>
-                          <td className="num">{money(d.amountPaise > d.paidPaise ? d.amountPaise - d.paidPaise : 0n)}</td>
+                          <td className={cls('paid', d.givenCashPaise)}>{money(d.givenCashPaise)}</td>
+                          <td className={cls('paid', d.givenOnlinePaise)}>{money(d.givenOnlinePaise)}</td>
+                          <td className={cls('paid', d.paidPaise)}>{money(d.paidPaise)}</td>
+                          <td className={cls('left', left)}>{money(left)}</td>
                           <td>{d.state === 'PAID' ? 'Given' : d.state === 'PARTIAL' ? 'Part given' : d.state === 'DUE_TODAY' ? 'Due today' : d.state === 'OVERDUE' ? 'Missed' : 'Upcoming'}</td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 )}

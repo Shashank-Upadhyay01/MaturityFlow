@@ -136,7 +136,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           <p className="text-[0.6875rem] uppercase tracking-[0.1em] text-[var(--faint-fg)]">
             Maturity amount
           </p>
-          <p className="mt-2 text-[1.875rem] font-semibold leading-none tracking-[-0.02em]">
+          <p className="mt-2 inline-block rounded-[8px] bg-[var(--color-brand-100)] px-2 py-1 text-[1.875rem] font-semibold leading-none tracking-[-0.02em] text-[var(--color-brand-700)]">
             <Money paise={c.maturityAmountPaise} />
           </p>
           <Progress
@@ -148,16 +148,16 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           <div className="mt-4 grid grid-cols-2 gap-3 border-t pt-4 text-[0.875rem]">
             <div>
               <p className="text-[0.6875rem] uppercase tracking-[0.08em] text-[var(--faint-fg)]">Given</p>
-              <p className="mt-0.5 font-semibold">
-                <Money paise={paid} tone="money" />
+              <p className="mt-0.5 inline-block rounded-[6px] bg-[var(--row-taken)] px-1.5 font-semibold text-[var(--row-taken-fg)]">
+                <Money paise={paid} />
               </p>
             </div>
             <div>
               <p className="text-[0.6875rem] uppercase tracking-[0.08em] text-[var(--faint-fg)]">
                 Remaining
               </p>
-              <p className="mt-0.5 font-semibold">
-                <Money paise={remaining} tone={overdue ? 'danger' : 'default'} />
+              <p className="mt-0.5 inline-block rounded-[6px] bg-[var(--row-missed)] px-1.5 font-semibold text-[var(--row-missed-fg)]">
+                <Money paise={remaining} />
               </p>
             </div>
           </div>
@@ -308,7 +308,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
               <TH>Due</TH>
               <TH align="right">Planned</TH>
               <TH align="right">Cash</TH>
-              <TH align="right">Online</TH>
+              <TH align="right">By account</TH>
               <TH align="right">Paid</TH>
               <TH>Status</TH>
             </THead>
@@ -356,18 +356,18 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                     <TD align="right" className="font-semibold">
                       <Money paise={i.amountPaise} decimals={i.amountPaise % 100n !== 0n} />
                     </TD>
-                    <TD align="right" className="text-[var(--muted-fg)]">
-                      {i.cashLegPaise > 0n ? <Money paise={i.cashLegPaise} decimals={false} /> : '—'}
+                    <TD align="right" className={i.paidCashPaise > 0n ? 'bg-[var(--row-taken)] font-semibold text-[var(--row-taken-fg)]' : 'text-[var(--muted-fg)]'}>
+                      {i.paidCashPaise > 0n ? <Money paise={i.paidCashPaise} decimals={false} /> : '—'}
                     </TD>
-                    <TD align="right" className="text-[var(--muted-fg)]">
-                      {i.onlineLegPaise > 0n ? (
-                        <Money paise={i.onlineLegPaise} decimals={false} />
+                    <TD align="right" className={i.paidOnlinePaise > 0n ? 'bg-[var(--row-taken)] font-semibold text-[var(--row-taken-fg)]' : 'text-[var(--muted-fg)]'}>
+                      {i.paidOnlinePaise > 0n ? (
+                        <Money paise={i.paidOnlinePaise} decimals={false} />
                       ) : (
                         '—'
                       )}
                     </TD>
-                    <TD align="right">
-                      {instPaid > 0n ? <Money paise={instPaid} tone="money" /> : '—'}
+                    <TD align="right" className={instPaid > 0n ? 'bg-[var(--row-taken)] text-[var(--row-taken-fg)]' : undefined}>
+                      {instPaid > 0n ? <Money paise={instPaid} /> : '—'}
                     </TD>
                     <TD>
                       <InstalmentStatusBadge status={i.status} />

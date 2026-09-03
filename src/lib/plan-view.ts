@@ -26,6 +26,7 @@ import {
   strideFor,
   type Cadence,
 } from './payout-policy';
+import { legsAfterPayment } from './register-view';
 import type { WorkingDayCalendar } from './working-days';
 
 /** A case as the board receives it — money already serialised to strings. */
@@ -78,6 +79,10 @@ export interface PlanDay {
   dueOn: string;
   amountPaise: bigint;
   paidPaise: bigint;
+  /** Cash actually given on this day. */
+  givenCashPaise: bigint;
+  /** Online / by-account actually given on this day. */
+  givenOnlinePaise: bigint;
   /** Remaining physical-cash leg for this day. */
   cashPaise: bigint;
   /** Remaining online leg for this day. */
@@ -126,6 +131,43 @@ function stateOf(dueOn: string, amount: bigint, paid: bigint, today: string): Da
   if (dueOn === today) return 'DUE_TODAY';
   if (dueOn < today) return 'OVERDUE';
   return 'UPCOMING';
+}
+
+function remainingLegs(
+  amount: bigint,
+  givenCash: bigint,
+  givenOnline: bigint,
+  plannedCash: bigint,
+  plannedOnline: bigint,
+): { cashPaise: bigint; onlinePaise: bigint } {
+  const paid = givenCash + givenOnline;
+  const leftover = amount > paid ? amount - paid : 0n;
+  if (leftover === 0n) return { cashPaise: 0n, onlinePaise: 0n };
+  if (paid === 0n) return { cashPaise: plannedCash, onlinePaise: plannedOnline };
+  const aligned = legsAfterPayment(amount, givenCash, givenOnline);
+  const remainCash = aligned.cashPaise > givenCash ? aligned.cashPaise - givenCash : 0n;
+  return { cashPaise: remainCash, onlinePaise: leftover - remainCash };
+}
+
+function dayFromStored(i: PlanInstalment, today: string): PlanDay {
+  const amount = big(i.amountPaise);
+  const givenCash = big(i.paidCashPaise);
+  const givenOnline = big(i.paidOnlinePaise);
+  const paid = givenCash + givenOnline;
+  const plannedCash = big(i.cashLegPaise ?? i.amountPaise);
+  const plannedOnline = big(i.onlineLegPaise);
+  const remain = remainingLegs(amount, givenCash, givenOnline, plannedCash, plannedOnline);
+  return {
+    seq: i.seq,
+    dueOn: i.dueOn,
+    amountPaise: amount,
+    paidPaise: paid,
+    givenCashPaise: givenCash,
+    givenOnlinePaise: givenOnline,
+    cashPaise: remain.cashPaise,
+    onlinePaise: remain.onlinePaise,
+    state: stateOf(i.dueOn, amount, paid, today),
+  };
 }
 
 /**
@@ -192,23 +234,7 @@ export function buildPlanRow(
 
   if (customParts == null && real.length > 0) {
     return finish(
-      real.map((i) => {
-        const amount = big(i.amountPaise);
-        const paidCash = big(i.paidCashPaise);
-        const paidOnline = big(i.paidOnlinePaise);
-        const paid = paidCash + paidOnline;
-        const plannedCash = big(i.cashLegPaise ?? i.amountPaise);
-        const plannedOnline = big(i.onlineLegPaise);
-        return {
-          seq: i.seq,
-          dueOn: i.dueOn,
-          amountPaise: amount,
-          paidPaise: paid,
-          cashPaise: plannedCash > paidCash ? plannedCash - paidCash : 0n,
-          onlinePaise: plannedOnline > paidOnline ? plannedOnline - paidOnline : 0n,
-          state: stateOf(i.dueOn, amount, paid, today),
-        };
-      }),
+      real.map((i) => dayFromStored(i, today)),
       false,
       null,
     );
@@ -252,6 +278,8 @@ export function buildPlanRow(
         dueOn: i.dueDate,
         amountPaise: i.amountPaise,
         paidPaise: 0n,
+        givenCashPaise: 0n,
+        givenOnlinePaise: 0n,
         cashPaise: i.cashLegPaise,
         onlinePaise: i.onlineLegPaise,
         state: stateOf(i.dueDate, i.amountPaise, 0n, today),
