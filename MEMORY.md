@@ -77,8 +77,9 @@ Recommended must not drive Taken. Taken opens the payment list (tick days, custo
 confirm). **Taken and Not taken stay available on every unpaid day, including missed days.**
 Never hide or disable them just because a day was missed.
 
-Closed day and compiled “All branches” (read-only HQ view) are the only times Taken is off.
-HQ picks a **real branch** to pay.
+HQ opens **Azamgarh, ready to type and pay**. “All branches” is optional and read-only.
+Taken / Not taken stay on for every unpaid day, including missed. Admin / CMD / CEO are not
+locked out of a closed day.
 
 ---
 
@@ -117,8 +118,8 @@ Corrections are audited. Replacing a recorded payment still needs a **reason**.
 
 ## HQ default Register
 
-HQ lands on **All branches** so existing rows stay visible (read-only). Pick Azamgarh (or another
-branch) to type or pay. Azamgarh is first in the branch picker.
+HQ lands on **Azamgarh, editable**. The live book is visible and Taken / cells work immediately.
+“All branches” is still in the picker if they need a read-only combined view.
 
 ---
 

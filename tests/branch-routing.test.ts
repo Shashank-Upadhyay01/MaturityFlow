@@ -36,20 +36,17 @@ describe('HQ working branch', () => {
     expect(workingBranches(branches).map((branch) => branch.code)).toEqual(['AZM', 'AHI', 'MAU']);
   });
 
-  it('lands Admin on the compiled bank so existing rows stay visible', () => {
+  it('lands Admin on Azamgarh so the sheet is writable and the live book is visible', () => {
     expect(pickWorkingBranch(branches, { hq: true, sessionBranchId: null })).toEqual({
-      branchId: null,
-      compiled: true,
+      branchId: 'azm',
+      compiled: false,
     });
   });
 
-  it('does not hide the book behind a home branch or the first code in the list', () => {
+  it('keeps a home branch if HQ is assigned to one, without hiding Azamgarh as a pick', () => {
     expect(
       pickWorkingBranch(branches, { hq: true, sessionBranchId: 'ahi' }),
-    ).toEqual({ branchId: null, compiled: true });
-    expect(
-      pickWorkingBranch(branches, { hq: true, sessionBranchId: null, requested: 'AHI' }),
-    ).toEqual({ branchId: null, compiled: true });
+    ).toEqual({ branchId: 'ahi', compiled: false });
   });
 
   it('opens the branch Admin asked for, including a new empty one', () => {

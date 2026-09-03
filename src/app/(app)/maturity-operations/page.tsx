@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { getSession, toActor } from '@/lib/auth/session';
 import { pickWorkingBranch, workingBranches } from '@/lib/branch-routing';
 import { DEFAULT_OPERATIONS_MATURITY_ON } from '@/lib/maturity-operations';
-import { recommendedPerDay } from '@/lib/register-view';
+import { leftoverOnPayoutDay, parsePayoutDays, recommendedPerDay } from '@/lib/register-view';
 import { activeRole, ROLE_SCOPE, roleCan } from '@/lib/rbac';
 import { addDays, toISODateString, todayISO } from '@/lib/working-days';
 import { getFormOptions, listRegister } from '@/services/queries';
@@ -74,6 +74,10 @@ export default async function MaturityOperationsPage({
           const paymentOn = toISODateString(row.paymentOn) ?? toISODateString(row.firstPayoutOn) ?? '';
           const reviewDueOn = paymentOn ? addDays(paymentOn, -1) : '';
           const status = row.todayStatus;
+          const unpaid = parsePayoutDays(row.payoutDays).find(
+            (day) => leftoverOnPayoutDay(day) > 0n && day.dueOn <= today,
+          );
+          const takeId = row.todayInstalmentId ?? unpaid?.id ?? null;
           return {
             id: row.id,
             accountNumber: row.accountNumber ?? '',
@@ -89,9 +93,9 @@ export default async function MaturityOperationsPage({
             paidTodayPaise: row.paidTodayPaise,
             paidCashTodayPaise: row.paidTodayCashPaise,
             paidOnlineTodayPaise: row.paidTodayOnlinePaise,
-            todayInstalmentId: row.todayInstalmentId,
+            todayInstalmentId: takeId,
             todayOnlineDuePaise: row.todayOnlineDuePaise,
-            todayState: status === 'PAID' ? 'PAID' : status === 'MISSED' ? 'MISSED' : BigInt(row.todayDuePaise) > 0n ? 'DUE' : 'NONE',
+            todayState: status === 'PAID' && !unpaid ? 'PAID' : status === 'MISSED' || (unpaid && unpaid.dueOn < today) ? 'MISSED' : takeId ? 'DUE' : 'NONE',
             needsReview: !row.opsReviewedOn && Boolean(reviewDueOn) && reviewDueOn <= today,
           };
         })}

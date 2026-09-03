@@ -1604,7 +1604,7 @@ export function RegisterSheet(props: {
       .sort((a, b) => (a.dueOn < b.dueOn ? -1 : a.dueOn > b.dueOn ? 1 : 0));
   }
 
-  const locked = closed;
+  const locked = closed && !canOverrideDates(props.role);
   const editDates = props.canEdit && (!locked || canOverrideDates(props.role));
 
   /**
@@ -2826,7 +2826,6 @@ export function RegisterSheet(props: {
                 const scheduled = Boolean(selectedInstalment);
                 const rec = recommendedPerDay(liveRemaining, amtP, daysN);
                 const selectedInstalmentId = selectedInstalment?.id ?? null;
-                const isViewingToday = viewDay === props.today;
                 const recCash = scheduled ? planned.cash : BigInt(r.todayCashPaise);
                 const recOnline = scheduled ? planned.online : BigInt(r.todayOnlinePaise);
                 const edit = props.canEdit && !locked;
@@ -3142,7 +3141,7 @@ export function RegisterSheet(props: {
                           <CellInput
                             rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}
                             group className={cn(num, 'font-semibold')}
-                            disabled={!props.canPay || locked || !isViewingToday}
+                            disabled={!props.canPay}
                             title={
                               props.canCorrectPay
                                 ? 'Correct a recorded amount — you will be asked for a reason'
@@ -3164,7 +3163,7 @@ export function RegisterSheet(props: {
                           <CellInput
                             rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}
                             group className={num}
-                            disabled={!props.canCorrectPay || locked || !isViewingToday}
+                            disabled={!props.canCorrectPay}
                             value={d(r.id, 'paidCashActual', rupeesStr(BigInt(r.paidCashTodayPaise)))}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidCashActual: v.replace(/[^0-9]/g, '') } }))}
                             onCommit={(v) => {
@@ -3179,7 +3178,7 @@ export function RegisterSheet(props: {
                           <CellInput
                             rowKey={r.id} cellKey={c.id} ariaLabel={`${c.label} for ${r.customerName}`}
                             group className={num}
-                            disabled={!props.canCorrectPay || locked || !isViewingToday}
+                            disabled={!props.canCorrectPay}
                             value={d(r.id, 'paidOnlineActual', rupeesStr(BigInt(r.paidOnlineTodayPaise)))}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidOnlineActual: v.replace(/[^0-9]/g, '') } }))}
                             onCommit={(v) => {
@@ -3195,9 +3194,9 @@ export function RegisterSheet(props: {
                     <td className={cn(td, 'print:hidden')} colSpan={2}>
                       <DayMark
                         state={arrearsPay && !r.todayInstalmentId ? 'due' : dayState}
-                        instalmentId={isViewingToday ? (r.todayInstalmentId ?? arrearsPay?.id ?? null) : null}
+                        instalmentId={r.todayInstalmentId ?? arrearsPay?.id ?? null}
                         hasUnpaid={unpaidPayoutDays(r.payoutDays ?? [], props.today).length > 0}
-                        disabled={locked || !props.canPay}
+                        disabled={!props.canPay}
                         busy={paying && payRow?.id === r.id}
                         onPay={() => setPayRow(r)}
                         onNotTaken={(id, clear) => void onNotTaken(id, clear)}
@@ -3257,7 +3256,7 @@ export function RegisterSheet(props: {
                                 state={day.status === 'PAID' ? 'taken' : day.status === 'PARTIAL' ? 'partial' : 'due'}
                                 instalmentId={day.id}
                                 hasUnpaid={leftoverOnPayoutDay(day) > 0n}
-                                disabled={locked || !props.canPay}
+                                disabled={!props.canPay}
                                 busy={paying && payRow?.id === r.id}
                                 onPay={() => setPayRow(r)}
                                 onNotTaken={(id, clear) => void onNotTaken(id, clear)}

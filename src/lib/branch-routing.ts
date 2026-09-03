@@ -25,9 +25,8 @@ export function workingBranches<T extends { id: string; code: string; name?: str
 /**
  * Which branch's book HQ is working in.
  *
- * Admin/CMD/CEO can open any created branch as its own register. With no `?branch=`, HQ lands
- * on the compiled bank so existing rows stay visible. Typing still requires picking one branch
- * — the mixed view is read-only, so new rows cannot silently land on Azamgarh.
+ * Default is Azamgarh (or the first paying branch) so the Register and Maturities sheet open
+ * ready to type and pay. `branch=all` is the compiled bank, read-only on purpose.
  */
 export function pickWorkingBranch(
   branches: readonly { id: string; code: string; name?: string }[],
@@ -41,13 +40,15 @@ export function pickWorkingBranch(
         : list[0]?.id ?? null;
     return { branchId: id, compiled: false };
   }
-  if (opts.requested === COMPILED_BRANCH || !opts.requested) {
-    return { branchId: null, compiled: true };
-  }
-  if (list.some((branch) => branch.id === opts.requested)) {
+  if (opts.requested === COMPILED_BRANCH) return { branchId: null, compiled: true };
+  if (opts.requested && list.some((branch) => branch.id === opts.requested)) {
     return { branchId: opts.requested, compiled: false };
   }
-  return { branchId: null, compiled: true };
+  const home =
+    (opts.sessionBranchId && list.find((branch) => branch.id === opts.sessionBranchId)) ||
+    list.find((branch) => isAzamgarhHeadBranch({ code: branch.code, name: branchNameOf(branch) })) ||
+    list[0];
+  return { branchId: home?.id ?? null, compiled: list.length === 0 };
 }
 
 export interface ImportBranch {
