@@ -5,7 +5,6 @@ import { AppFooter } from '@/components/layout/app-footer';
 import { WorkspaceGuide } from '@/components/domain/workspace-guide';
 import { getSession, toActor } from '@/lib/auth/session';
 import { getNavBadges } from '@/services/queries';
-import { listAppUpdates } from '@/services/whats-new-service';
 import { formatISODate, todayISO, weekdayShort } from '@/lib/working-days';
 
 export const dynamic = 'force-dynamic';
@@ -17,15 +16,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const actor = toActor(session);
   const today = todayISO();
   const badges = await getNavBadges(actor, today);
-  const updates = await listAppUpdates();
-  const latest = updates[0]
-    ? {
-        id: updates[0].id,
-        title: updates[0].title,
-        kind: updates[0].kind,
-        publishedAt: updates[0].publishedAt.toISOString(),
-      }
-    : null;
 
   return (
     <div className="flex min-h-dvh min-w-0 flex-col">
@@ -37,7 +27,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <main className="min-w-0 flex-1 px-3 py-3 sm:px-4">
         {children}
       </main>
-      <WorkspaceGuide latestUpdate={latest} />
+      <WorkspaceGuide />
       <AppFooter />
     </div>
   );

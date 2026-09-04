@@ -35,7 +35,8 @@ export async function listAppUpdates() {
     .orderBy(desc(appUpdates.publishedAt));
   } catch (error) {
     if (isMissingTable(error)) return [];
-    throw error;
+    console.error('listAppUpdates failed', error);
+    return [];
   }
 }
 

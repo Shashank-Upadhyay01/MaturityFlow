@@ -10,10 +10,39 @@ import {
   createAppUpdate,
   createBugReport,
   deleteAppUpdate,
+  listAppUpdates,
   setBugReportStatus,
   updateAppUpdate,
 } from '@/services/whats-new-service';
 import { fail, ok, toActionError, type ActionResult } from './_result';
+
+function iso(value: Date | string | null | undefined): string {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'string' && value.length > 0) return value;
+  return '';
+}
+
+/** Latest What's new note for the Guide badge. Never throws — a missed badge must not blank the app. */
+export async function latestGuideUpdateAction(): Promise<{
+  id: string;
+  title: string;
+  kind: string;
+  publishedAt: string;
+} | null> {
+  try {
+    const rows = await listAppUpdates();
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      id: row.id,
+      title: row.title,
+      kind: String(row.kind),
+      publishedAt: iso(row.publishedAt),
+    };
+  } catch {
+    return null;
+  }
+}
 import type { BugReportStatus } from '@/db/schema';
 
 export async function publishUpdateAction(input: {

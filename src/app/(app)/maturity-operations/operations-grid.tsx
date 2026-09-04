@@ -370,7 +370,10 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
     ['due', 6], ['recommended', 7], ['paidToday', 5], ['paidCash', 5],
     ['paidOnline', 5], ['taken', 5.5], ['notTaken', 6.5],
   ];
-  const visibleWeight = widths.filter(([id]) => show(id)).reduce((total, [, weight]) => total + weight, 0);
+  const visibleWeight = Math.max(
+    1,
+    widths.filter(([id]) => show(id)).reduce((total, [, weight]) => total + weight, 0),
+  );
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">

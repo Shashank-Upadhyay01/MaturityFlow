@@ -3,8 +3,9 @@
 import { HelpCircle, Sparkles, X } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { Component, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react';
 
+import { latestGuideUpdateAction } from '@/actions/whats-new';
 import { searchTips } from '@/lib/workspace-guide';
 import { cn } from '@/lib/utils';
 
@@ -17,11 +18,48 @@ export interface GuideUpdate {
 
 const SEEN_KEY = 'kggnl.guide.seenUpdateId';
 
-export function WorkspaceGuide({ latestUpdate }: { latestUpdate: GuideUpdate | null }) {
+class GuideBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('WorkspaceGuide failed', error, info);
+  }
+  render() {
+    if (this.state.failed) return null;
+    return this.props.children;
+  }
+}
+
+export function WorkspaceGuide(props: { latestUpdate?: GuideUpdate | null }) {
+  return (
+    <GuideBoundary>
+      <GuideInner {...props} />
+    </GuideBoundary>
+  );
+}
+
+function GuideInner({ latestUpdate: latestFromServer = null }: { latestUpdate?: GuideUpdate | null }) {
   const pathname = usePathname() ?? '/';
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [latestUpdate, setLatestUpdate] = useState<GuideUpdate | null>(latestFromServer);
   const [unseen, setUnseen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void latestGuideUpdateAction()
+      .then((row) => {
+        if (!cancelled && row) setLatestUpdate(row);
+      })
+      .catch(() => {
+        /* A missed badge must never blank the page. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!latestUpdate) return;
