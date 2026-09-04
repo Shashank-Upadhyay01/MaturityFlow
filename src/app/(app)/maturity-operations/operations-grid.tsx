@@ -140,8 +140,18 @@ function EditableCell({ row, col, rowIndex, value, type = 'text', disabled, sele
   onGrowDown?: (nextIndex: number, col: string, shift: boolean) => void;
   onMove?: (nextIndex: number, col: string, shift: boolean) => void;
 }) {
+  /*
+    When the committed value changes underneath this cell — a save came back, a paste rewrote it,
+    an undo replayed it — the draft has to follow. Doing that in an effect means React renders the
+    stale value once, then re-renders; React's own guidance is to adjust the state during render
+    instead, which it re-runs immediately without committing the intermediate paint.
+  */
   const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
+  const [committedValue, setCommittedValue] = useState(value);
+  if (committedValue !== value) {
+    setCommittedValue(value);
+    setDraft(value);
+  }
   const commit = async () => { if (persist && draft !== value) await onCommit(draft); };
 
   return (
@@ -325,13 +335,25 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
   const redoRef = useRef<{ rowId: string; col: ColumnId; before: string; after: string }[]>([]);
   const pendingFocusRef = useRef<{ index: number; col: string; shift: boolean } | null>(null);
   const draggingRef = useRef(false);
-  const [sheetLength, setSheetLength] = useState(() => initialSheetLength(rows.length));
+  /*
+    How far the clerk has walked the sheet open. Only ever raised deliberately — arrowing off the
+    bottom, the scroll sentinel, opening the blank sheet — never by the row list changing under it.
+    The length the sheet actually renders is derived from this and the live rows, below.
+  */
+  const [revealed, setRevealed] = useState(() => initialSheetLength(rows.length));
   const revealSentinelRef = useRef<HTMLTableRowElement>(null);
   const sheetScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    /*
+      Reading the browser's store on mount is the one case the rule is not describing: this is
+      not state derived from props, it is a subscription to something outside React, and it
+      cannot move into `useState` because the server render has no `localStorage` and would
+      hydrate a different table to the one the Admin left behind.
+    */
     try {
       const stored = JSON.parse(localStorage.getItem('maturityflow.ops.hidden-columns') || '[]');
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (Array.isArray(stored)) setHidden(stored.filter((id): id is ColumnId => COLUMNS.some(([key]) => key === id)));
     } catch { /* Show the complete table if browser storage is invalid. */ }
   }, []);
@@ -357,20 +379,24 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
   const allowBlanks = Boolean(
     canEdit && addRowBranchId && (tab === 'blank' || (tab === 'work' && !query.trim())),
   );
-  useEffect(() => {
-    setSheetLength((len) => {
-      if (!allowBlanks) return Math.max(len, visible.length);
-      if (tab === 'blank' && len < INITIAL_SHEET_ROWS) return Math.max(len, INITIAL_SHEET_ROWS);
-      return Math.max(len, initialSheetLength(visible.length));
-    });
-  }, [visible.length, allowBlanks, tab]);
+  /*
+    Derived, not stored. This used to be an effect that pushed the new length into state every
+    time the row list changed, which renders the old length first and the right one a frame later
+    — and, because it is a setState inside an effect, stops the React compiler memoising the whole
+    grid. It is a pure function of what is on screen, so it is computed here.
+  */
+  const sheetLength = !allowBlanks
+    ? Math.max(revealed, visible.length)
+    : tab === 'blank'
+      ? Math.max(revealed, INITIAL_SHEET_ROWS)
+      : Math.max(revealed, initialSheetLength(visible.length));
   useEffect(() => {
     const sentinel = revealSentinelRef.current;
     const root = sheetScrollRef.current;
     if (!sentinel || !root || !allowBlanks) return;
     const io = new IntersectionObserver((entries) => {
       if (!entries.some((entry) => entry.isIntersecting)) return;
-      setSheetLength((len) => growSheetLength({
+      setRevealed((len) => growSheetLength({
         currentLength: len,
         filledCount: visible.length,
         targetIndex: len,
@@ -406,7 +432,7 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
 
   const growFromNav = useCallback((nextIndex: number, col: string, shift = false) => {
     if (!allowBlanks) return;
-    setSheetLength((current) => {
+    setRevealed((current) => {
       const next = growSheetLength({
         currentLength: current,
         filledCount: visible.length,
@@ -481,7 +507,7 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
     const already = tab === 'blank';
     setTab('blank');
     setQuery('');
-    setSheetLength((len) => Math.max(len, INITIAL_SHEET_ROWS));
+    setRevealed((len) => Math.max(len, INITIAL_SHEET_ROWS));
     setExtra(new Set());
     setAnchor({ r: 0, c: 0 });
     setFocus({ r: 0, c: 0 });
@@ -646,7 +672,7 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
     }
     const lastIndex = startR + grid.length - 1;
     if (allowBlanks) {
-      setSheetLength((current) => growSheetLength({
+      setRevealed((current) => growSheetLength({
         currentLength: current,
         filledCount: visible.length,
         targetIndex: lastIndex,
