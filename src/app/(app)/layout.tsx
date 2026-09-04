@@ -2,7 +2,6 @@ import { redirect } from 'next/navigation';
 
 import { Topbar } from '@/components/layout/topbar';
 import { AppFooter } from '@/components/layout/app-footer';
-import { WorkspaceGuide } from '@/components/domain/workspace-guide';
 import { getSession, toActor } from '@/lib/auth/session';
 import { getNavBadges } from '@/services/queries';
 import { formatISODate, todayISO, weekdayShort } from '@/lib/working-days';
@@ -27,7 +26,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <main className="min-w-0 flex-1 px-3 py-3 sm:px-4">
         {children}
       </main>
-      <WorkspaceGuide />
       <AppFooter />
     </div>
   );

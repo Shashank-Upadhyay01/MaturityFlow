@@ -614,13 +614,14 @@ export async function listRegister(actor: Actor, date = todayISO(), branchId?: s
         WHERE t.case_id = ${CASE_ID} AND t.value_date = ${date} AND t.reversed_at IS NULL
       ), '0')`,
       paidByDate: sql<unknown>`COALESCE((
-        SELECT jsonb_object_agg(d, jsonb_build_object('cash', cash, 'online', online))
+        SELECT COALESCE(jsonb_object_agg(paid_days.d, jsonb_build_object('cash', paid_days.cash, 'online', paid_days.online)), '{}'::jsonb)
         FROM (
           SELECT t.value_date::text AS d,
-                 SUM(t.cash_paise)::text AS cash,
-                 SUM(t.online_paise)::text AS online
+                 COALESCE(SUM(t.cash_paise), 0)::text AS cash,
+                 COALESCE(SUM(t.online_paise), 0)::text AS online
           FROM payout_transactions t
           WHERE t.case_id = ${CASE_ID} AND t.reversed_at IS NULL
+            AND t.value_date IS NOT NULL
           GROUP BY t.value_date
         ) paid_days
       ), '{}'::jsonb)`,

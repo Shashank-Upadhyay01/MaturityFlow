@@ -15,6 +15,7 @@ import {
   updateAppUpdate,
 } from '@/services/whats-new-service';
 import { fail, ok, toActionError, type ActionResult } from './_result';
+import type { BugReportStatus } from '@/db/schema';
 
 function iso(value: Date | string | null | undefined): string {
   if (value instanceof Date) return value.toISOString();
@@ -43,7 +44,6 @@ export async function latestGuideUpdateAction(): Promise<{
     return null;
   }
 }
-import type { BugReportStatus } from '@/db/schema';
 
 export async function publishUpdateAction(input: {
   title: string;

@@ -58,7 +58,13 @@ const COLUMNS = [
 ] as const;
 type ColumnId = (typeof COLUMNS)[number][0];
 
-const rupees = (paise: string) => (BigInt(paise || '0') / 100n).toString();
+const rupees = (paise: string) => {
+  try {
+    return (BigInt(paise || '0') / 100n).toString();
+  } catch {
+    return '0';
+  }
+};
 const inputClass = 'h-9 w-full min-w-0 rounded-none border-0 bg-transparent px-1.5 text-[0.7rem] font-medium leading-none text-[var(--page-fg)] outline-none focus:bg-[var(--color-brand-50)] focus:shadow-[inset_0_0_0_2px_var(--ring)] disabled:cursor-default disabled:opacity-75 xl:px-2 xl:text-[0.78rem]';
 const head = 'sticky top-0 z-20 h-11 border border-[var(--hairline)] bg-[color-mix(in_oklab,var(--color-brand-500)_8%,var(--surface-solid))] px-1 py-1.5 text-left text-[0.58rem] font-extrabold uppercase leading-[1.15] tracking-[0.015em] text-[var(--page-fg)] xl:px-1.5 xl:text-[0.65rem]';
 const cell = 'border border-[var(--hairline)] p-0 align-middle';
@@ -168,8 +174,8 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
     if (col === 'due') return rupees(row.duePaise);
     if (col === 'recommended') return rupees(row.recommendedPaise);
     if (col === 'paidToday') return rupees(row.paidTodayPaise);
-    if (col === 'paidCash') return (BigInt(row.paidCashTodayPaise) / 100n).toString();
-    if (col === 'paidOnline') return (BigInt(row.paidOnlineTodayPaise) / 100n).toString();
+    if (col === 'paidCash') return rupees(row.paidCashTodayPaise);
+    if (col === 'paidOnline') return rupees(row.paidOnlineTodayPaise);
     return '';
   }, []);
 
