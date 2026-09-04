@@ -343,16 +343,6 @@ function CellInput({
         setFocused(false);
         onCommit(e.target.value);
       }}
-      onPointerDown={(e) => {
-        // FocusEvent carries no modifier keys, so Shift/Ctrl-click has to be caught here for the
-        // selection to see them. Preventing default keeps the caret out of the cell while the
-        // clerk is drawing a block rather than editing one.
-        if (e.shiftKey || e.ctrlKey || e.metaKey) {
-          e.preventDefault();
-          const pos = cellFromEvent(e.currentTarget, nav.columns);
-          if (pos) nav.select(pos.r, nav.columns[pos.c] ?? cellKey, { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey });
-        }
-      }}
       onKeyDown={(e) => {
         if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.blur(); return; }
         if (e.ctrlKey || e.metaKey) return;
@@ -2075,6 +2065,37 @@ export function RegisterSheet(props: {
     };
   }, []);
 
+  /*
+    The drag is followed on the window, not on the table.
+
+    React delivers pointermove through one delegated listener, which fires only while the event's
+    target is still inside the mounted tree. Pressing a cell selects it, that re-renders the row,
+    and the browser keeps dispatching the rest of the gesture to the node it captured at
+    pointerdown — which React has since replaced. Measured on the Operations sheet, which had the
+    same shape: the table's handler ran once for a ten-step drag. Resolving the cell from
+    coordinates on the window sidesteps both the capture and the re-render.
+  */
+  const dragRef = useRef({ selectCell, colIds });
+  useEffect(() => { dragRef.current = { selectCell, colIds }; });
+
+  function beginDrag() {
+    draggingRef.current = true;
+    const onMove = (event: PointerEvent) => {
+      if (!draggingRef.current) return;
+      const pos = cellFromEvent(document.elementFromPoint(event.clientX, event.clientY), dragRef.current.colIds);
+      if (pos) dragRef.current.selectCell(pos.r, pos.c, { drag: true });
+    };
+    const onEnd = () => {
+      draggingRef.current = false;
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onEnd, true);
+      window.removeEventListener('pointercancel', onEnd, true);
+    };
+    window.addEventListener('pointermove', onMove, true);
+    window.addEventListener('pointerup', onEnd, true);
+    window.addEventListener('pointercancel', onEnd, true);
+  }
+
   function onSheetPointerDown(event: ReactPointerEvent<HTMLTableElement>) {
     if (event.button !== 0) return;
     const head = event.target instanceof Element ? event.target.closest('[data-register-rowhead]') : null;
@@ -2102,15 +2123,26 @@ export function RegisterSheet(props: {
     const pos = cellFromEvent(event.target, colIds);
     if (!pos) return;
     const ctrl = event.ctrlKey || event.metaKey;
-    if (event.shiftKey || ctrl) event.preventDefault();
-    selectCell(pos.r, pos.c, { shift: event.shiftKey, ctrl });
-    draggingRef.current = !ctrl;
-  }
+    const shift = event.shiftKey;
 
-  function onSheetPointerMove(event: ReactPointerEvent<HTMLTableElement>) {
-    if (!draggingRef.current) return;
-    const pos = cellFromEvent(document.elementFromPoint(event.clientX, event.clientY), colIds);
-    if (pos) selectCell(pos.r, pos.c, { drag: true });
+    /*
+      Take the press away from the input before it can start a text-selection drag.
+
+      `user-select: none` on the table does not reach an `<input>`, so pressing inside one and
+      moving begins the browser's own drag and Chrome answers with a pointercancel that ends the
+      gesture after a single move — which is why a dragged range never grew past its first cell.
+      Focusing a cell already selects its whole value, so no click-to-place-caret behaviour is
+      lost; focus is moved by hand below to keep it.
+    */
+    event.preventDefault();
+    selectCell(pos.r, pos.c, { shift, ctrl });
+    if (!ctrl) beginDrag();
+
+    const pressed = event.target;
+    if (pressed instanceof HTMLInputElement && !pressed.disabled) {
+      pressed.focus({ preventScroll: true });
+      if (!shift) pressed.select();
+    }
   }
 
   /**
@@ -3490,7 +3522,6 @@ export function RegisterSheet(props: {
           <table
             className="w-full table-fixed border-collapse text-[0.7rem] select-none"
             onPointerDown={onSheetPointerDown}
-            onPointerMove={onSheetPointerMove}
             onPointerUp={() => { draggingRef.current = false; }}
             onPaste={(event) => {
               const text = event.clipboardData.getData('text/plain');

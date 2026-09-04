@@ -527,6 +527,42 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
     return c < 0 ? null : { r, c };
   }
 
+  /*
+    The drag is followed on the window, not on the table.
+
+    React delivers pointermove through one delegated listener at the root, which only fires while
+    the event's target is still inside the mounted tree. Pressing a cell selects it, that
+    re-renders the row, and the browser goes on dispatching the rest of the gesture to the element
+    it captured at pointerdown — which is no longer the node React is watching. Measured: the
+    table's handler ran once for a ten-step drag, so a dragged range only ever selected the cell
+    it began in, while Shift-click (one event, no drag) worked perfectly and hid the problem.
+
+    Listening on the window sidesteps both the capture and the re-render: the cell under the
+    cursor is resolved from coordinates every time.
+  */
+  const dragRef = useRef({ selectCell, pointerCell: (t: EventTarget | null) => pointerCell(t) });
+  useEffect(() => {
+    dragRef.current = { selectCell, pointerCell: (t: EventTarget | null) => pointerCell(t) };
+  });
+
+  function beginDrag() {
+    draggingRef.current = true;
+    const onMove = (event: PointerEvent) => {
+      if (!draggingRef.current) return;
+      const pos = dragRef.current.pointerCell(document.elementFromPoint(event.clientX, event.clientY));
+      if (pos) dragRef.current.selectCell(pos.r, pos.c, { drag: true });
+    };
+    const onEnd = () => {
+      draggingRef.current = false;
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onEnd, true);
+      window.removeEventListener('pointercancel', onEnd, true);
+    };
+    window.addEventListener('pointermove', onMove, true);
+    window.addEventListener('pointerup', onEnd, true);
+    window.addEventListener('pointercancel', onEnd, true);
+  }
+
   function onSheetPointerDown(event: ReactPointerEvent<HTMLTableElement>) {
     if (event.button !== 0) return;
     const head = event.target instanceof Element ? event.target.closest('[data-ops-rowhead]') : null;
@@ -560,15 +596,28 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
     if (!pos) return;
     const ctrl = event.ctrlKey || event.metaKey;
     const shift = event.shiftKey;
-    if (shift || ctrl) event.preventDefault();
-    selectCell(pos.r, pos.c, { shift, ctrl });
-    draggingRef.current = !ctrl;
-  }
 
-  function onSheetPointerMove(event: ReactPointerEvent<HTMLTableElement>) {
-    if (!draggingRef.current) return;
-    const pos = pointerCell(document.elementFromPoint(event.clientX, event.clientY));
-    if (pos) selectCell(pos.r, pos.c, { drag: true });
+    /*
+      Take the press away from the input before it can start a text-selection drag.
+
+      `user-select: none` on the table does not reach an `<input>` — inputs stay selectable — so
+      pressing inside one and moving begins the browser's own drag, and Chrome answers with a
+      pointercancel that ends the gesture after a single move. Measured exactly that: one move,
+      then cancel, so a dragged range never grew past its first cell.
+
+      The caret is not lost by this: focusing a cell already selects its whole value, so there is
+      no click-to-place-caret behaviour to preserve. Focus is moved by hand below to keep it.
+    */
+    event.preventDefault();
+    selectCell(pos.r, pos.c, { shift, ctrl });
+    if (!ctrl) beginDrag();
+
+    const pressed = event.target;
+    if (pressed instanceof HTMLInputElement && !pressed.disabled) {
+      if (shift) pressed.dataset.opsSkipSelect = '1';
+      pressed.focus({ preventScroll: true });
+      if (!shift) pressed.select();
+    }
   }
 
   function onSheetPointerUp() {
@@ -1032,9 +1081,8 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
       <div className="overflow-hidden border border-[var(--hairline)] bg-[var(--surface-solid)]">
         <div ref={sheetScrollRef} className="max-h-[72vh] overflow-x-hidden overflow-y-auto overscroll-contain">
           <table
-            className="w-full table-fixed border-collapse text-[0.8125rem]"
+            className="w-full table-fixed border-collapse text-[0.8125rem] select-none"
             onPointerDown={onSheetPointerDown}
-            onPointerMove={onSheetPointerMove}
             onPointerUp={onSheetPointerUp}
             onPointerCancel={onSheetPointerUp}
             onPaste={(event) => {
