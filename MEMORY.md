@@ -68,12 +68,29 @@ that day and shrinks later unpaid days.
 Staff live on **Register** and **Maturities** (including Operations review). They expect
 Excel-like work:
 
-- Edit cells, rows and columns. Column letters (A, B, C…) and row numbers sit on the Operations
-  sheet. The box above the sheet shows the active cell (C7).
+- Edit cells, rows and columns. Column letters (A, B, C…) and row numbers sit on BOTH sheets.
+  The box above the sheet shows the active cell (C7).
+- **500 empty rows are always open** under whatever is on screen, on the Register and on
+  Operations — however long the book already is. Capacity is counted in EMPTY rows, never in
+  "rows on the sheet", or a branch past 500 cases has nowhere left to type. The Register
+  virtualises them, so all 500 exist while only the visible ones are in the page.
+- **There is no Add row button, on either sheet.** A row becomes real when somebody types in it
+  and leaves it. A button that writes a case per click produced six "New customer / Unassigned /
+  ₹1" rows in one morning; they burn case numbers and turn up in exports.
+- **A new row needs a customer name or an account number.** An amount or a date on its own
+  describes nobody, so nothing is created and the sheet says why. Enforced in the sheet and again
+  in the server action, because that action is the only path from typed cells to a case.
 - **Copy / paste** (Ctrl+C / Ctrl+V) from Excel or Google Sheets. A pasted block lands in the
-  same shape, starting at the cell you clicked. Each cell still saves the audited single-row path.
-- **Undo / redo** (Ctrl+Z / Ctrl+Y) for cell edits, not for Taken payments.
-- **Shift-click** a second cell to select a block.
+  same shape, starting at the cell you clicked. Each row still saves through the audited
+  single-row path; the Register batches the requests, never the writes.
+- **Undo / redo** (Ctrl+Z / Ctrl+Y) for cell edits, not for Taken payments. An undo replays the
+  earlier value through the same audited action, so reversing an edit leaves its own audit line.
+- **Select a block** by dragging, or Shift-click a second cell; Ctrl-click adds single cells; the
+  row number takes the whole row. Ctrl+D / Ctrl+R fill, Ctrl+Enter fills the selection, Ctrl+arrow
+  jumps to the edge of a block, Delete clears.
+- Bulk gestures (fill, clear, paste, undo) touch only the columns a clerk types into. **Paid
+  today, Paid in cash, Paid online, Taken and Not taken are never bulk-edited** — they move money
+  and ask for a reference and a reason a Ctrl+D cannot answer.
 - Filter the sheet by name, account or agent.
 - Do not break money locks to fake a formula engine. Taken stays a payment list.
 
@@ -171,4 +188,7 @@ HQ lands on **Azamgarh, editable**. The live book is visible and Taken / cells w
 - Do not dump a huge unrounded remainder on the last day **except** the true leftover after
   rounding (smooth days, last day takes residue).
 - Do not invent a second faster money path without case lock + audit.
+- Do not add an "Add row" button, or any control that writes a case before somebody has typed a
+  name or an account number into it.
+- Do not measure the sheet's capacity in total rows. Count empty rows, or the sheet runs out.
 - Do not ask the operator to repeat this spec. Update this file when the product rule changes.

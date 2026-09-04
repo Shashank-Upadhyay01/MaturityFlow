@@ -1,0 +1,23 @@
+# One line ending in the repository, whatever the checkout.
+#
+# This file exists because two commits in this project nearly went in as full-file rewrites: a
+# source file had been saved with CRLF while everything around it was LF, so git saw all 3,600
+# lines as changed and the real 200-line diff was invisible inside it. Normalising on the way in
+# means a Windows editor can do whatever it likes locally and the history stays readable.
+* text=auto eol=lf
+
+# Windows entry points have to keep CRLF or cmd.exe mis-parses them.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never touch bytes.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.xlsx binary
+*.xls binary
+*.woff binary
+*.woff2 binary

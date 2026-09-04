@@ -28,10 +28,8 @@ import {
   takeRegisterDays,
 } from '@/services/payout-service';
 import {
-  MAX_BLANK_ROWS_PER_CALL,
   confirmCloseDay,
   createBlankRegisterRow,
-  createBlankRegisterRows,
   reopenDay,
   requestCloseDay,
   setDayCash,
@@ -151,46 +149,6 @@ function bulkResult(outcome: BulkOutcome): ActionResult<BulkOutcome> {
 function bulkFailure(e: unknown): ActionResult<BulkOutcome> {
   if (e instanceof BulkInputError) return fail(e.message, 'VALIDATION');
   return toActionError(e);
-}
-
-export async function addRegisterRowAction(branchId: string): Promise<ActionResult<{ id: string }>> {
-  try {
-    const { session, actor } = await requireActor();
-    assertCanTypeRegister(actor);
-    assertCan(actor, 'case.create', { branchId });
-    const id = await createBlankRegisterRow(session, branchId);
-    revalidate();
-    return ok({ id });
-  } catch (e) {
-    return toActionError(e);
-  }
-}
-
-/**
- * Add several blank rows at once.
- *
- * The count comes from a text box, so it arrives as whatever the clerk typed. It is clamped
- * server-side as well as in the UI — never trust the browser with a loop bound.
- */
-export async function addRegisterRowsAction(
-  branchId: string,
-  count: number,
-): Promise<ActionResult<{ ids: string[]; added: number }>> {
-  try {
-    const { session, actor } = await requireActor();
-    assertCanTypeRegister(actor);
-    assertCan(actor, 'case.create', { branchId });
-    const n = Number.isFinite(count) ? Math.floor(count) : 1;
-    if (n < 1) return fail('Enter how many rows to add.', 'VALIDATION');
-    if (n > MAX_BLANK_ROWS_PER_CALL) {
-      return fail(`You can add at most ${MAX_BLANK_ROWS_PER_CALL} rows at a time.`, 'VALIDATION');
-    }
-    const ids = await createBlankRegisterRows(session, branchId, n);
-    revalidate();
-    return ok({ ids, added: ids.length });
-  } catch (e) {
-    return toActionError(e);
-  }
 }
 
 export async function saveRegisterFieldsAction(
