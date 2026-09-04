@@ -26,6 +26,7 @@ import {
   INITIAL_SHEET_ROWS,
   initialSheetLength,
   jumpToEdge,
+  identifiesNewRow,
   matchSheetShortcut,
   MAX_PASTE_ROWS,
   MAX_SHEET_ROWS,
@@ -122,6 +123,9 @@ function blankPatch(vals: Record<string, string>): RegisterPatch | null {
     if (iso) patch.paymentOn = iso;
   }
   if (Object.keys(patch).length === 0) return null;
+  // Amounts and dates alone do not make a case — see identifiesNewRow. Without this a pasted
+  // block with an empty name column quietly became a run of "New customer" rows.
+  if (!identifiesNewRow(patch)) return null;
   if (patch.instrumentMaturityOn == null) patch.instrumentMaturityOn = DEFAULT_OPERATIONS_MATURITY_ON;
   return patch;
 }
@@ -728,6 +732,7 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
       }));
     }
     let written = 0;
+    let nameless = 0;
     for (let i = 0; i < grid.length; i++) {
       const line = grid[i] ?? [];
       const live = visible[startR + i];
@@ -747,12 +752,23 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
         if (col) vals[col] = line[j] ?? '';
       }
       const patch = blankPatch(vals);
-      if (!patch) continue;
+      if (!patch) {
+        // Something was on the line but nothing that identifies a customer.
+        if (Object.values(vals).some((value) => (value ?? '').trim() !== '')) nameless++;
+        continue;
+      }
       const result = await createRegisterRowWithFieldsAction(addRowBranchId, patch);
       if (!result.ok) toast.error(result.error);
       else written += Object.keys(vals).filter((key) => (vals[key] ?? '').trim() !== '').length;
     }
     toast.success(`Pasted ${written} cell${written === 1 ? '' : 's'}`);
+    if (nameless > 0) {
+      toast.message(
+        nameless === 1
+          ? 'One line had no customer name or account number, so no row was created for it.'
+          : `${nameless} lines had no customer name or account number, so no rows were created for them.`,
+      );
+    }
     if (written > 0) router.refresh();
   }
 

@@ -296,6 +296,21 @@ export function blankRowCount(input: {
   return Math.max(0, input.sheetLength - input.filledCount);
 }
 
+/**
+ * Does this row carry enough to be a case?
+ *
+ * A maturity case is a person and their money. A pasted line that brought only an amount, or only
+ * a date, has no one attached to it — creating a row from it burns a case number and puts a
+ * placeholder name in the register, in exports and in the counts, which is exactly the litter the
+ * Add row button used to produce. Amounts and dates are things you fill in AFTER a row exists.
+ */
+export function identifiesNewRow(fields: {
+  customerName?: string | null;
+  accountNumber?: string | null;
+}): boolean {
+  return Boolean(fields.customerName?.trim() || fields.accountNumber?.trim());
+}
+
 export type SheetShortcut =
   | { action: 'copy' }
   | { action: 'cut' }

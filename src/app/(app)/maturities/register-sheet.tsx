@@ -61,6 +61,7 @@ import {
   cellKey,
   columnLetter,
   fillDownPairs,
+  identifiesNewRow,
   fillRightPairs,
   jumpToEdge,
   matchSheetShortcut,
@@ -597,6 +598,12 @@ function BlankRow({
       if (field && v.trim()) patch[field] = v.trim();
     }
     if (!Object.keys(patch).length) return;
+    // Amounts and dates alone do not make a case — see identifiesNewRow. Leaving a row that has
+    // only a figure in it should leave nothing behind, not a "New customer".
+    if (!identifiesNewRow(patch)) {
+      toast.message('That row needs a customer name or an account number before it can be saved.');
+      return;
+    }
     setSaving(true);
     await onCommit(patch);
     setVals({});
@@ -1507,6 +1514,7 @@ export function RegisterSheet(props: {
     type Line = { caseId: string | null; patch: Parameters<typeof saveRegisterFieldsAction>[1] };
     const lines: Line[] = [];
     let skippedLocked = 0;
+    let nameless = 0;
     for (let i = 0; i < grid.length; i++) {
       const cells = grid[i] ?? [];
       const patch: Record<string, string | number | null> = {};
@@ -1523,6 +1531,10 @@ export function RegisterSheet(props: {
         if (!props.canEdit || locked) { skippedLocked++; continue; }
         lines.push({ caseId: live.id, patch: typed });
       } else if (canTypeBlanks) {
+        if (!identifiesNewRow(typed as { customerName?: string | null; accountNumber?: string | null })) {
+          nameless++;
+          continue;
+        }
         lines.push({ caseId: null, patch: typed });
       } else {
         skippedLocked++;
@@ -1565,6 +1577,13 @@ export function RegisterSheet(props: {
     }
     if (problems.length > 0) {
       toast.error(problems.length === 1 ? problems[0]! : `${problems.length} rows could not be pasted — ${problems[0]}`);
+    }
+    if (nameless > 0) {
+      toast.message(
+        nameless === 1
+          ? 'One pasted line had no customer name or account number, so no row was created for it.'
+          : `${nameless} pasted lines had no customer name or account number, so no rows were created for them.`,
+      );
     }
   }
 

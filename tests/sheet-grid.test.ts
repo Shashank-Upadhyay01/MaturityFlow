@@ -14,6 +14,7 @@ import {
   matchSheetShortcut,
   MAX_PASTE_ROWS,
   BLANK_ROW_HEIGHT_PX,
+  identifiesNewRow,
   MAX_BLANK_ROWS,
   MAX_REGISTER_PASTE_ROWS,
   PASTE_CHUNK_ROWS,
@@ -114,6 +115,22 @@ describe('auto-growing empty rows', () => {
     expect(blankRowCount({ sheetLength: 500, filledCount: 80, allowBlanks: true })).toBe(420);
     expect(blankRowCount({ sheetLength: 500, filledCount: 80, allowBlanks: false })).toBe(0);
     expect(MAX_PASTE_ROWS).toBe(100);
+  });
+});
+
+describe('a new row has to identify somebody', () => {
+  it('accepts a name or an account number', () => {
+    expect(identifiesNewRow({ customerName: 'SUNITA DEVI' })).toBe(true);
+    expect(identifiesNewRow({ accountNumber: '1611937' })).toBe(true);
+    expect(identifiesNewRow({ customerName: 'SUNITA DEVI', accountNumber: '1611937' })).toBe(true);
+  });
+
+  it('refuses money and dates on their own', () => {
+    // This is the "New customer / Unassigned / Rs1" litter: a pasted line that carried an amount
+    // and a date but no name used to become a real case with a placeholder for a customer.
+    expect(identifiesNewRow({})).toBe(false);
+    expect(identifiesNewRow({ customerName: '   ', accountNumber: '' })).toBe(false);
+    expect(identifiesNewRow({ customerName: null, accountNumber: null })).toBe(false);
   });
 });
 

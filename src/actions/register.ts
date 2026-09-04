@@ -7,7 +7,7 @@ import { db } from '@/db';
 import { maturityCases, payoutInstalments } from '@/db/schema';
 import { requestMeta, requireActor } from '@/lib/auth/session';
 import { tryParseRupeesToPaise } from '@/lib/money';
-import { PASTE_CHUNK_ROWS } from '@/lib/sheet-grid';
+import { PASTE_CHUNK_ROWS, identifiesNewRow } from '@/lib/sheet-grid';
 import { assertCan, assertCanTypeRegister, canOverrideDates, roleCan, type Actor, type ResourceRef } from '@/lib/rbac';
 import type { BulkTodayMode } from '@/lib/register-view';
 import { cancelCase } from '@/services/case-service';
@@ -237,6 +237,11 @@ export async function createRegisterRowWithFieldsAction(
     const { session, actor } = await requireActor();
     assertCanTypeRegister(actor);
     assertCan(actor, 'case.create', { branchId });
+    // A row with no name and no account number is not a case, it is litter. Refused here as well
+    // as in the sheet, because this is the only path that turns typed cells into a new case.
+    if (!identifiesNewRow(patch as { customerName?: string | null; accountNumber?: string | null })) {
+      return fail('A new row needs a customer name or an account number.', 'VALIDATION');
+    }
     const id = await createBlankRegisterRow(session, branchId);
     await updateRegisterRow(session, id, patch);
     revalidate();
@@ -304,6 +309,10 @@ export async function pasteRegisterRowsAction(
           await updateRegisterRow(session, line.caseId, line.patch);
         } else {
           assertCan(actor, 'case.create', { branchId });
+          if (!identifiesNewRow(line.patch as { customerName?: string | null; accountNumber?: string | null })) {
+            failed.push({ line: at, error: 'Needs a customer name or an account number' });
+            continue;
+          }
           const id = await createBlankRegisterRow(session, branchId);
           await updateRegisterRow(session, id, line.patch);
           created += 1;
