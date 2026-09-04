@@ -1,13 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, Columns3, ExternalLink, Plus, Search, ShieldAlert, X } from 'lucide-react';
+import { Check, Columns3, ExternalLink, FileSpreadsheet, Search, ShieldAlert, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { setInstalmentAmountAction } from '@/actions/cases';
 import {
-  addMaturityOperationsRowAction,
+  createRegisterRowWithFieldsAction,
   markNotTakenAction,
   markTakenAction,
   saveRegisterFieldsAction,
@@ -15,14 +15,30 @@ import {
 } from '@/actions/register';
 import { DEFAULT_OPERATIONS_MATURITY_ON } from '@/lib/maturity-operations';
 import {
+  blankRowCount,
   cellAddress,
+  cellInSelection,
+  cellKey,
   columnLetter,
+  fillDownPairs,
+  fillRightPairs,
+  growSheetLength,
+  INITIAL_SHEET_ROWS,
+  initialSheetLength,
+  jumpToEdge,
+  matchSheetShortcut,
+  MAX_PASTE_ROWS,
+  MAX_SHEET_ROWS,
   normalizeRange,
   parseClipboardGrid,
   pasteIsoDate,
   pasteRupees,
+  rangeKeys,
   rowMatchesFilter,
+  selectionBounds,
   serializeClipboardGrid,
+  toggleCellInSelection,
+  unionSelection,
   type SheetRange,
 } from '@/lib/sheet-grid';
 import { cn } from '@/lib/utils';
@@ -58,6 +74,14 @@ const COLUMNS = [
 ] as const;
 type ColumnId = (typeof COLUMNS)[number][0];
 
+/** Identity and date fields bulk shortcuts may write. Paid / Taken move money — not Delete or Ctrl+D. */
+const BULK_EDIT = new Set<ColumnId>(['account', 'customer', 'agent', 'amount', 'maturity', 'form', 'review', 'payment']);
+
+function wholeCellSelected(input: HTMLInputElement) {
+  if (input.value === '') return true;
+  return input.selectionStart === 0 && input.selectionEnd === input.value.length;
+}
+
 const rupees = (paise: string) => {
   try {
     return (BigInt(paise || '0') / 100n).toString();
@@ -69,42 +93,103 @@ const inputClass = 'h-9 w-full min-w-0 rounded-none border-0 bg-transparent px-1
 const head = 'sticky top-0 z-20 h-11 border border-[var(--hairline)] bg-[color-mix(in_oklab,var(--color-brand-500)_8%,var(--surface-solid))] px-1 py-1.5 text-left text-[0.58rem] font-extrabold uppercase leading-[1.15] tracking-[0.015em] text-[var(--page-fg)] xl:px-1.5 xl:text-[0.65rem]';
 const cell = 'border border-[var(--hairline)] p-0 align-middle';
 
-function EditableCell({ row, col, value, type = 'text', disabled, selected, onFocusCell, onCommit }: {
+type RegisterPatch = Parameters<typeof saveRegisterFieldsAction>[1];
+
+function blankPatch(vals: Record<string, string>): RegisterPatch | null {
+  const patch: RegisterPatch = {};
+  const account = vals.account?.trim();
+  if (account) patch.accountNumber = account;
+  const customer = vals.customer?.trim();
+  if (customer) patch.customerName = customer;
+  const agent = vals.agent?.trim();
+  if (agent) patch.agentName = agent;
+  const amount = pasteRupees(vals.amount ?? '');
+  if (amount) patch.maturityRupees = amount;
+  if (vals.maturity?.trim()) {
+    const iso = pasteIsoDate(vals.maturity);
+    if (iso) patch.instrumentMaturityOn = iso;
+  }
+  if (vals.form?.trim()) {
+    const iso = pasteIsoDate(vals.form);
+    if (iso) patch.formSubmittedOn = iso;
+  }
+  if (vals.review?.trim()) {
+    const iso = pasteIsoDate(vals.review);
+    if (iso) patch.opsReviewedOn = iso;
+  }
+  if (vals.payment?.trim()) {
+    const iso = pasteIsoDate(vals.payment);
+    if (iso) patch.paymentOn = iso;
+  }
+  if (Object.keys(patch).length === 0) return null;
+  if (patch.instrumentMaturityOn == null) patch.instrumentMaturityOn = DEFAULT_OPERATIONS_MATURITY_ON;
+  return patch;
+}
+
+function EditableCell({ row, col, rowIndex, value, type = 'text', disabled, selected, persist = true, onCommit, onDraftChange, onGrowDown, onMove }: {
   row: string;
   col: string;
+  rowIndex: number;
   value: string;
   type?: 'text' | 'date' | 'money';
   disabled: boolean;
   selected?: boolean;
-  onFocusCell?: (shift: boolean) => void;
+  persist?: boolean;
   onCommit: (value: string) => Promise<void>;
+  onDraftChange?: (value: string) => void;
+  onGrowDown?: (nextIndex: number, col: string, shift: boolean) => void;
+  onMove?: (nextIndex: number, col: string, shift: boolean) => void;
 }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
-  const commit = async () => { if (draft !== value) await onCommit(draft); };
+  const commit = async () => { if (persist && draft !== value) await onCommit(draft); };
 
   return (
     <input
-      data-ops-cell="true" data-ops-row={row} data-ops-col={col}
+      data-ops-cell="true" data-ops-row={row} data-ops-col={col} data-ops-index={rowIndex} data-ops-committed={value} data-ops-selected={selected ? 'true' : undefined}
       className={cn(
         inputClass,
         type === 'money' && 'font-mono text-[0.64rem] font-semibold text-right tabular-nums xl:text-[0.72rem]',
         type === 'date' && 'px-1 font-mono text-[0.625rem] tabular-nums xl:text-[0.6875rem]',
         col === 'account' && 'font-mono text-[0.65rem] tabular-nums xl:text-[0.72rem]',
-        selected && 'bg-[color-mix(in_oklab,var(--color-brand-500)_16%,transparent)]',
+        selected && 'bg-[color-mix(in_oklab,var(--color-brand-500)_22%,transparent)]',
       )}
       type={type === 'date' ? 'date' : 'text'} inputMode={type === 'money' ? 'numeric' : undefined}
       value={draft} title={draft} disabled={disabled}
-      onFocus={(event) => {
-        event.currentTarget.select();
-        const shift = event.nativeEvent instanceof MouseEvent ? event.nativeEvent.shiftKey : false;
-        onFocusCell?.(shift);
+      onPointerDown={(event) => {
+        // FocusEvent has no shiftKey — capture modifiers here so Shift/Ctrl-click can select.
+        if (event.shiftKey || event.ctrlKey || event.metaKey) event.preventDefault();
       }}
-      onChange={(event) => setDraft(type === 'money' ? event.target.value.replace(/[^0-9]/g, '') : event.target.value)}
+      onFocus={(event) => {
+        if (event.currentTarget.dataset.opsSkipSelect === '1') {
+          delete event.currentTarget.dataset.opsSkipSelect;
+          return;
+        }
+        event.currentTarget.select();
+      }}
+      onChange={(event) => {
+        const next = type === 'money' ? event.target.value.replace(/[^0-9]/g, '') : event.target.value;
+        setDraft(next);
+        onDraftChange?.(next);
+      }}
       onBlur={() => void commit()}
       onKeyDown={(event) => {
-        if (event.key === 'Escape') { event.preventDefault(); setDraft(value); return; }
+        if (event.key === 'Escape') { event.preventDefault(); setDraft(value); onDraftChange?.(value); return; }
+        if (event.ctrlKey || event.metaKey) return;
         const direction = event.key === 'Enter' ? 'ArrowDown' : event.key;
+        if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(event.key) && event.key !== 'Enter') return;
+        if (event.key === 'Tab') {
+          // Tab stays native (next input). From the last cell, grow a row so Tab does not leave the sheet.
+          const table = event.currentTarget.closest('table');
+          if (!table || event.shiftKey) return;
+          const all = Array.from(table.querySelectorAll<HTMLInputElement>('input[data-ops-cell="true"]:not(:disabled)'));
+          const at = all.indexOf(event.currentTarget);
+          if (at >= 0 && at === all.length - 1) {
+            event.preventDefault();
+            onGrowDown?.(rowIndex + 1, col, false);
+          }
+          return;
+        }
         if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(direction)) return;
         event.preventDefault();
         event.stopPropagation();
@@ -116,11 +201,106 @@ function EditableCell({ row, col, value, type = 'text', disabled, selected, onFo
           : all.filter((el) => el.dataset.opsRow === row);
         const delta = direction === 'ArrowUp' || direction === 'ArrowLeft' ? -1 : 1;
         const next = peers[peers.indexOf(event.currentTarget) + delta];
-        next?.focus({ preventScroll: true });
-        next?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-        next?.select();
+        if (!next && direction === 'ArrowDown') {
+          onGrowDown?.(rowIndex + 1, col, event.shiftKey);
+          return;
+        }
+        if (!next) return;
+        const nextIndex = Number(next.dataset.opsIndex);
+        const nextCol = next.dataset.opsCol ?? col;
+        onMove?.(Number.isFinite(nextIndex) ? nextIndex : rowIndex + delta, nextCol, event.shiftKey);
+        if (event.shiftKey) next.dataset.opsSkipSelect = '1';
+        next.focus({ preventScroll: true });
+        next.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        if (!event.shiftKey) next.select();
       }}
     />
+  );
+}
+
+function BlankOpsRow({
+  rowIndex,
+  visColIds,
+  show,
+  disabled,
+  isSelected,
+  onGrowDown,
+  onMove,
+  onCommit,
+}: {
+  rowIndex: number;
+  visColIds: ColumnId[];
+  show: (id: ColumnId) => boolean;
+  disabled: boolean;
+  isSelected: (r: number, c: number) => boolean;
+  onGrowDown: (nextIndex: number, col: string, shift: boolean) => void;
+  onMove: (nextIndex: number, col: string, shift: boolean) => void;
+  onCommit: (patch: RegisterPatch) => Promise<void>;
+}) {
+  const [vals, setVals] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const rowKey = `blank:${rowIndex}`;
+  const setField = (col: string) => (value: string) => setVals((prev) => ({ ...prev, [col]: value }));
+
+  const commit = async () => {
+    const patch = blankPatch(vals);
+    if (!patch) return;
+    setSaving(true);
+    await onCommit(patch);
+    setVals({});
+    setSaving(false);
+  };
+
+  const cellFor = (col: ColumnId, type: 'text' | 'date' | 'money' = 'text') => (
+    <EditableCell
+      row={rowKey}
+      col={col}
+      rowIndex={rowIndex}
+      type={type}
+      value={vals[col] ?? ''}
+      disabled={disabled || saving}
+      persist={false}
+      selected={isSelected(rowIndex, visColIds.indexOf(col))}
+      onDraftChange={setField(col)}
+      onGrowDown={onGrowDown}
+      onMove={onMove}
+      onCommit={async () => {}}
+    />
+  );
+
+  const wrap = (col: ColumnId, child: ReactNode) => (
+    <td className={cell} data-ops-index={rowIndex} data-ops-col={col}>{child}</td>
+  );
+
+  return (
+    <tr
+      data-ops-blank="true"
+      className={cn(
+        'group hover:bg-[color-mix(in_oklab,var(--color-brand-500)_7%,var(--surface-solid))]',
+        rowIndex % 2 === 0 ? 'bg-[var(--surface-solid)]' : 'bg-[var(--glass-bg-subtle)]',
+      )}
+      onBlur={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        void commit();
+      }}
+    >
+      <td data-ops-rowhead={rowIndex} className={cn(cell, 'cursor-pointer bg-[color-mix(in_oklab,var(--color-brand-500)_6%,var(--surface-solid))] px-1 text-center font-mono text-[0.62rem] font-semibold text-[var(--faint-fg)]')}>{rowIndex + 1}</td>
+      {show('account') && wrap('account', cellFor('account'))}
+      {show('customer') && wrap('customer', cellFor('customer'))}
+      {show('agent') && wrap('agent', cellFor('agent'))}
+      {show('amount') && wrap('amount', cellFor('amount', 'money'))}
+      {show('maturity') && wrap('maturity', cellFor('maturity', 'date'))}
+      {show('form') && wrap('form', cellFor('form', 'date'))}
+      {show('review') && wrap('review', cellFor('review', 'date'))}
+      {show('payment') && wrap('payment', cellFor('payment', 'date'))}
+      {show('due') && wrap('due', cellFor('due', 'money'))}
+      {show('recommended') && wrap('recommended', null)}
+      {show('paidToday') && wrap('paidToday', cellFor('paidToday', 'money'))}
+      {show('paidCash') && wrap('paidCash', cellFor('paidCash', 'money'))}
+      {show('paidOnline') && wrap('paidOnline', cellFor('paidOnline', 'money'))}
+      {show('taken') && wrap('taken', null)}
+      {show('notTaken') && wrap('notTaken', null)}
+    </tr>
   );
 }
 
@@ -133,15 +313,21 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
   addRowBranchId: string | null;
 }) {
   const router = useRouter();
-  const [tab, setTab] = useState<'work' | 'unreviewed'>('work');
+  const [tab, setTab] = useState<'work' | 'unreviewed' | 'blank'>('work');
   const [busy, setBusy] = useState<string | null>(null);
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [hidden, setHidden] = useState<ColumnId[]>([]);
   const [query, setQuery] = useState('');
   const [anchor, setAnchor] = useState<{ r: number; c: number } | null>(null);
   const [focus, setFocus] = useState<{ r: number; c: number } | null>(null);
+  const [extra, setExtra] = useState<Set<string>>(() => new Set());
   const undoRef = useRef<{ rowId: string; col: ColumnId; before: string; after: string }[]>([]);
   const redoRef = useRef<{ rowId: string; col: ColumnId; before: string; after: string }[]>([]);
+  const pendingFocusRef = useRef<{ index: number; col: string; shift: boolean } | null>(null);
+  const draggingRef = useRef(false);
+  const [sheetLength, setSheetLength] = useState(() => initialSheetLength(rows.length));
+  const revealSentinelRef = useRef<HTMLTableRowElement>(null);
+  const sheetScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     try {
@@ -150,17 +336,120 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
     } catch { /* Show the complete table if browser storage is invalid. */ }
   }, []);
 
+  useEffect(() => {
+    const endDrag = () => { draggingRef.current = false; };
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
+    return () => {
+      window.removeEventListener('pointerup', endDrag);
+      window.removeEventListener('pointercancel', endDrag);
+    };
+  }, []);
+
   const visible = useMemo(() => {
+    if (tab === 'blank') return [];
     const base = tab === 'unreviewed' ? rows.filter((row) => row.needsReview) : rows;
     if (!query.trim()) return base;
     return base.filter((row) =>
       rowMatchesFilter([row.accountNumber, row.customerName, row.agentName, row.maturityRupees], query),
     );
   }, [rows, tab, query]);
+  const allowBlanks = Boolean(
+    canEdit && addRowBranchId && (tab === 'blank' || (tab === 'work' && !query.trim())),
+  );
+  useEffect(() => {
+    setSheetLength((len) => {
+      if (!allowBlanks) return Math.max(len, visible.length);
+      if (tab === 'blank' && len < INITIAL_SHEET_ROWS) return Math.max(len, INITIAL_SHEET_ROWS);
+      return Math.max(len, initialSheetLength(visible.length));
+    });
+  }, [visible.length, allowBlanks, tab]);
+  useEffect(() => {
+    const sentinel = revealSentinelRef.current;
+    const root = sheetScrollRef.current;
+    if (!sentinel || !root || !allowBlanks) return;
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      setSheetLength((len) => growSheetLength({
+        currentLength: len,
+        filledCount: visible.length,
+        targetIndex: len,
+      }));
+    }, { root, rootMargin: '240px' });
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [allowBlanks, sheetLength, visible.length]);
+  const blanks = blankRowCount({ sheetLength, filledCount: visible.length, allowBlanks });
   const show = (id: ColumnId) => !hidden.includes(id);
   const visColIds = useMemo(() => COLUMNS.filter(([id]) => show(id)).map(([id]) => id), [hidden]);
   const selection: SheetRange | null = anchor && focus ? normalizeRange(anchor, focus) : null;
+  const selectedCells = useMemo(() => unionSelection(selection, extra), [selection, extra]);
   const activeAddr = focus ? cellAddress(focus.c, focus.r) : '';
+
+  const selectCell = useCallback((r: number, c: number, mods: { shift?: boolean; ctrl?: boolean; drag?: boolean }) => {
+    if (c < 0) return;
+    if (mods.ctrl) {
+      setExtra((prev) => toggleCellInSelection(prev, anchor && focus ? normalizeRange(anchor, focus) : null, r, c));
+      setAnchor({ r, c });
+      setFocus({ r, c });
+      return;
+    }
+    if (mods.shift || mods.drag) {
+      setFocus({ r, c });
+      setAnchor((current) => current ?? { r, c });
+      return;
+    }
+    setExtra(new Set());
+    setAnchor({ r, c });
+    setFocus({ r, c });
+  }, [anchor, focus]);
+
+  const growFromNav = useCallback((nextIndex: number, col: string, shift = false) => {
+    if (!allowBlanks) return;
+    setSheetLength((current) => {
+      const next = growSheetLength({
+        currentLength: current,
+        filledCount: visible.length,
+        targetIndex: nextIndex,
+      });
+      if (next > current) pendingFocusRef.current = { index: nextIndex, col, shift };
+      return next;
+    });
+  }, [allowBlanks, visible.length]);
+
+  const moveHighlight = useCallback((nextIndex: number, col: string, shift: boolean) => {
+    const c = visColIds.indexOf(col as ColumnId);
+    if (c < 0) return;
+    selectCell(nextIndex, c, { shift });
+  }, [selectCell, visColIds]);
+
+  useEffect(() => {
+    const pending = pendingFocusRef.current;
+    if (!pending) return;
+    const focusPending = () => {
+      const el =
+        document.querySelector<HTMLInputElement>(
+          `input[data-ops-index="${pending.index}"][data-ops-col="${pending.col}"]:not(:disabled)`,
+        )
+        ?? document.querySelector<HTMLInputElement>(
+          `input[data-ops-index="${pending.index}"]:not(:disabled)`,
+        );
+      if (!el) return false;
+      pendingFocusRef.current = null;
+      if (pending.shift) el.dataset.opsSkipSelect = '1';
+      el.focus({ preventScroll: true });
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      if (!pending.shift) el.select();
+      const c = visColIds.indexOf(pending.col as ColumnId);
+      if (c >= 0) selectCell(pending.index, c, { shift: pending.shift });
+      return true;
+    };
+    if (!focusPending()) {
+      requestAnimationFrame(() => {
+        if (!focusPending()) requestAnimationFrame(focusPending);
+      });
+    }
+  }, [sheetLength, visColIds, selectCell]);
 
   const valueOf = useCallback((row: OperationsRow, col: ColumnId): string => {
     if (col === 'account') return row.accountNumber;
@@ -180,13 +469,84 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
   }, []);
 
   function isSelected(r: number, c: number) {
-    if (!selection) return false;
-    return r >= selection.r0 && r <= selection.r1 && c >= selection.c0 && c <= selection.c1;
+    if (c < 0) return false;
+    return cellInSelection(r, c, selection, extra);
   }
 
-  function focusCell(r: number, c: number, shift: boolean) {
-    setFocus({ r, c });
-    setAnchor((a) => (shift && a ? a : { r, c }));
+  function openBlankSheet() {
+    if (!addRowBranchId) {
+      toast.error('Choose a branch first — a blank sheet has to belong to one register.');
+      return;
+    }
+    const already = tab === 'blank';
+    setTab('blank');
+    setQuery('');
+    setSheetLength((len) => Math.max(len, INITIAL_SHEET_ROWS));
+    setExtra(new Set());
+    setAnchor({ r: 0, c: 0 });
+    setFocus({ r: 0, c: 0 });
+    pendingFocusRef.current = { index: 0, col: visColIds[0] ?? 'account', shift: false };
+    if (!already) {
+      toast.success(`Blank sheet — ${MAX_SHEET_ROWS} rows, like the cashbook. Type or paste from Excel. Existing cases stay on Operations work.`);
+    }
+  }
+
+  function pointerCell(target: EventTarget | null): { r: number; c: number } | null {
+    const el = target instanceof Element ? target.closest('[data-ops-index][data-ops-col]') : null;
+    if (!el || !(el instanceof HTMLElement)) return null;
+    const r = Number(el.dataset.opsIndex);
+    const col = el.dataset.opsCol as ColumnId | undefined;
+    if (!col || !Number.isFinite(r)) return null;
+    const c = visColIds.indexOf(col);
+    return c < 0 ? null : { r, c };
+  }
+
+  function onSheetPointerDown(event: ReactPointerEvent<HTMLTableElement>) {
+    if (event.button !== 0) return;
+    const head = event.target instanceof Element ? event.target.closest('[data-ops-rowhead]') : null;
+    if (head instanceof HTMLElement) {
+      event.preventDefault();
+      const r = Number(head.dataset.opsRowhead);
+      if (!Number.isFinite(r)) return;
+      const lastC = Math.max(0, visColIds.length - 1);
+      if (event.ctrlKey || event.metaKey) {
+        setExtra((prev) => {
+          const next = new Set(prev);
+          if (selection) for (const key of rangeKeys(selection)) next.add(key);
+          for (let c = 0; c <= lastC; c++) next.add(cellKey(r, c));
+          return next;
+        });
+        setAnchor({ r, c: 0 });
+        setFocus({ r, c: lastC });
+        return;
+      }
+      setExtra(new Set());
+      if (event.shiftKey && anchor) {
+        setAnchor({ r: anchor.r, c: 0 });
+        setFocus({ r, c: lastC });
+      } else {
+        setAnchor({ r, c: 0 });
+        setFocus({ r, c: lastC });
+      }
+      return;
+    }
+    const pos = pointerCell(event.target);
+    if (!pos) return;
+    const ctrl = event.ctrlKey || event.metaKey;
+    const shift = event.shiftKey;
+    if (shift || ctrl) event.preventDefault();
+    selectCell(pos.r, pos.c, { shift, ctrl });
+    draggingRef.current = !ctrl;
+  }
+
+  function onSheetPointerMove(event: ReactPointerEvent<HTMLTableElement>) {
+    if (!draggingRef.current) return;
+    const pos = pointerCell(document.elementFromPoint(event.clientX, event.clientY));
+    if (pos) selectCell(pos.r, pos.c, { drag: true });
+  }
+
+  function onSheetPointerUp() {
+    draggingRef.current = false;
   }
   const toggleColumn = (id: ColumnId) => {
     const next = hidden.includes(id) ? hidden.filter((key) => key !== id) : [...hidden, id];
@@ -229,14 +589,6 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
     if (replacing && !reason?.trim()) return;
     const result = await settleRegisterRowAction(row.id, cash.toString(), online.toString(), reference?.trim() || null, reason?.trim() || null);
     if (!result.ok) toast.error(result.error); else router.refresh();
-  }
-
-  async function addRow() {
-    if (!addRowBranchId || busy) return;
-    setBusy('add-row');
-    const result = await addMaturityOperationsRowAction(addRowBranchId);
-    setBusy(null);
-    if (!result.ok) toast.error(result.error); else { toast.success('A new editable row was added.'); router.refresh(); }
   }
 
   async function mark(row: OperationsRow, taken: boolean) {
@@ -288,83 +640,288 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
   async function pasteAt(startR: number, startC: number, text: string) {
     const grid = parseClipboardGrid(text);
     if (grid.length === 0) return;
-    if (grid.length > 80) {
-      toast.error('Paste at most 80 rows at a time — each cell is saved with its own audit line.');
+    if (grid.length > MAX_PASTE_ROWS) {
+      toast.error(`Paste at most ${MAX_PASTE_ROWS} rows at a time — each cell is saved with its own audit line.`);
       return;
+    }
+    const lastIndex = startR + grid.length - 1;
+    if (allowBlanks) {
+      setSheetLength((current) => growSheetLength({
+        currentLength: current,
+        filledCount: visible.length,
+        targetIndex: lastIndex,
+      }));
     }
     let written = 0;
     for (let i = 0; i < grid.length; i++) {
-      const row = visible[startR + i];
-      if (!row) continue;
       const line = grid[i] ?? [];
+      const live = visible[startR + i];
+      if (live) {
+        for (let j = 0; j < line.length; j++) {
+          const col = visColIds[startC + j];
+          if (!col) continue;
+          await applyCell(live, col, line[j] ?? '');
+          written++;
+        }
+        continue;
+      }
+      if (!allowBlanks || !addRowBranchId) continue;
+      const vals: Record<string, string> = {};
       for (let j = 0; j < line.length; j++) {
         const col = visColIds[startC + j];
-        if (!col) continue;
-        await applyCell(row, col, line[j] ?? '');
-        written++;
+        if (col) vals[col] = line[j] ?? '';
       }
+      const patch = blankPatch(vals);
+      if (!patch) continue;
+      const result = await createRegisterRowWithFieldsAction(addRowBranchId, patch);
+      if (!result.ok) toast.error(result.error);
+      else written += Object.keys(vals).filter((key) => (vals[key] ?? '').trim() !== '').length;
     }
     toast.success(`Pasted ${written} cell${written === 1 ? '' : 's'}`);
+    if (written > 0) router.refresh();
   }
 
+  const lastSheetRow = Math.max(0, visible.length + blanks - 1);
+  const lastSheetCol = Math.max(0, visColIds.length - 1);
+
   function copySelection() {
-    if (!selection) return;
+    const cells = selectedCells.length > 0 ? selectedCells : (focus ? [focus] : []);
+    if (cells.length === 0) return;
+    const bounds = selectionBounds(cells);
+    if (!bounds) return;
+    const picked = new Set(cells.map((pos) => cellKey(pos.r, pos.c)));
     const block: string[][] = [];
-    for (let r = selection.r0; r <= selection.r1; r++) {
+    for (let r = bounds.r0; r <= bounds.r1; r++) {
       const row = visible[r];
-      if (!row) continue;
       const line: string[] = [];
-      for (let c = selection.c0; c <= selection.c1; c++) {
+      for (let c = bounds.c0; c <= bounds.c1; c++) {
+        if (!picked.has(cellKey(r, c))) {
+          line.push('');
+          continue;
+        }
         const col = visColIds[c];
-        line.push(col ? valueOf(row, col) : '');
+        line.push(row && col ? valueOf(row, col) : '');
       }
       block.push(line);
     }
     void navigator.clipboard.writeText(serializeClipboardGrid(block));
-    toast.success('Copied');
+    toast.success(cells.length === 1 ? 'Copied' : `Copied ${cells.length} cells`);
+  }
+
+  function focusSheetCell(r: number, c: number, shift = false) {
+    const nextR = Math.max(0, Math.min(lastSheetRow, r));
+    const nextC = Math.max(0, Math.min(lastSheetCol, c));
+    const col = visColIds[nextC];
+    if (!col) return;
+    selectCell(nextR, nextC, { shift });
+    const el = document.querySelector<HTMLInputElement>(
+      `input[data-ops-index="${nextR}"][data-ops-col="${col}"]`,
+    );
+    if (el) {
+      if (shift) el.dataset.opsSkipSelect = '1';
+      el.focus({ preventScroll: true });
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      if (!shift) el.select();
+    } else if (nextR >= visible.length) {
+      growFromNav(nextR, col, shift);
+    }
+  }
+
+  async function clearSelected() {
+    if (!canEdit) return;
+    const cells = selectedCells.length > 0 ? selectedCells : (focus ? [focus] : []);
+    let n = 0;
+    for (const pos of cells) {
+      const col = visColIds[pos.c];
+      if (!col || !BULK_EDIT.has(col)) continue;
+      const row = visible[pos.r];
+      if (!row) continue;
+      await applyCell(row, col, '');
+      n++;
+    }
+    if (n > 0) toast.success(n === 1 ? 'Cleared' : `Cleared ${n} cells`);
+  }
+
+  async function applyFillPairs(pairs: { from: { r: number; c: number }; to: { r: number; c: number } }[]) {
+    if (!canEdit) return;
+    let n = 0;
+    for (const pair of pairs) {
+      const fromCol = visColIds[pair.from.c];
+      const toCol = visColIds[pair.to.c];
+      if (!fromCol || !toCol || !BULK_EDIT.has(toCol)) continue;
+      const src = visible[pair.from.r];
+      const dest = visible[pair.to.r];
+      if (!src || !dest) continue;
+      await applyCell(dest, toCol, valueOf(src, fromCol));
+      n++;
+    }
+    if (n > 0) toast.success(n === 1 ? 'Filled 1 cell' : `Filled ${n} cells`);
+  }
+
+  function undoSheet() {
+    const item = undoRef.current.pop();
+    if (!item) return false;
+    const row = rows.find((r) => r.id === item.rowId);
+    if (row) {
+      redoRef.current.push(item);
+      void applyCell(row, item.col, item.before, false);
+    }
+    return true;
+  }
+
+  function redoSheet() {
+    const item = redoRef.current.pop();
+    if (!item) return false;
+    const row = rows.find((r) => r.id === item.rowId);
+    if (row) {
+      undoRef.current.push(item);
+      void applyCell(row, item.col, item.after, false);
+    }
+    return true;
   }
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const meta = event.ctrlKey || event.metaKey;
-      if (meta && event.key.toLowerCase() === 'c') {
-        const tag = (event.target as HTMLElement | null)?.tagName;
-        if (tag === 'INPUT' && window.getSelection()?.toString()) return;
-        if (selection) {
-          event.preventDefault();
-          copySelection();
-        }
+      const shortcut = matchSheetShortcut(event);
+      if (!shortcut) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const inCell = Boolean(target?.closest('[data-ops-cell]'));
+      const inSheet = Boolean(target?.closest('table')?.querySelector('[data-ops-cell]'));
+      const inFilter = Boolean(target?.closest('input.mf-input') && !inCell);
+      if (inFilter) return;
+      if (!inSheet && !inCell && shortcut.action !== 'undo' && shortcut.action !== 'redo' && shortcut.action !== 'find') {
+        return;
       }
-      if (meta && event.key.toLowerCase() === 'v') {
+      const input = target instanceof HTMLInputElement && inCell ? target : null;
+      const block = selectedCells.length > 1;
+      const range = selection ?? (focus ? { r0: focus.r, c0: focus.c, r1: focus.r, c1: focus.c } : null);
+
+      if (shortcut.action === 'copy') {
+        if (!block && input && window.getSelection()?.toString() && !wholeCellSelected(input)) return;
+        event.preventDefault();
+        copySelection();
+        return;
+      }
+      if (shortcut.action === 'cut') {
+        if (!canEdit) return;
+        if (!block && input && window.getSelection()?.toString() && !wholeCellSelected(input)) return;
+        event.preventDefault();
+        copySelection();
+        void clearSelected();
+        return;
+      }
+      if (shortcut.action === 'paste') {
         if (!focus || !canEdit) return;
-        const tag = (event.target as HTMLElement | null)?.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
         event.preventDefault();
         void navigator.clipboard.readText().then((text) => pasteAt(focus.r, focus.c, text));
+        return;
       }
-      if (meta && event.key.toLowerCase() === 'z' && !event.shiftKey) {
-        const item = undoRef.current.pop();
-        if (!item) return;
-        event.preventDefault();
-        const row = rows.find((r) => r.id === item.rowId);
-        if (row) {
-          redoRef.current.push(item);
-          void applyCell(row, item.col, item.before, false);
+      if (shortcut.action === 'undo') {
+        if (input && input.value !== (input.dataset.opsCommitted ?? '')) {
+          event.preventDefault();
+          input.value = input.dataset.opsCommitted ?? '';
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          return;
         }
+        if (!undoSheet()) return;
+        event.preventDefault();
+        return;
       }
-      if (meta && (event.key.toLowerCase() === 'y' || (event.shiftKey && event.key.toLowerCase() === 'z'))) {
-        const item = redoRef.current.pop();
-        if (!item) return;
+      if (shortcut.action === 'redo') {
+        if (!redoSheet()) return;
         event.preventDefault();
-        const row = rows.find((r) => r.id === item.rowId);
-        if (row) {
-          undoRef.current.push(item);
-          void applyCell(row, item.col, item.after, false);
-        }
+        return;
+      }
+      if (shortcut.action === 'selectAll') {
+        event.preventDefault();
+        setExtra(new Set());
+        setAnchor({ r: 0, c: 0 });
+        setFocus({ r: lastSheetRow, c: lastSheetCol });
+        return;
+      }
+      if (shortcut.action === 'selectRow' && focus) {
+        event.preventDefault();
+        setExtra(new Set());
+        setAnchor({ r: focus.r, c: 0 });
+        setFocus({ r: focus.r, c: lastSheetCol });
+        return;
+      }
+      if (shortcut.action === 'selectColumn' && focus) {
+        event.preventDefault();
+        setExtra(new Set());
+        setAnchor({ r: 0, c: focus.c });
+        setFocus({ r: lastSheetRow, c: focus.c });
+        return;
+      }
+      if (shortcut.action === 'clear' || shortcut.action === 'backspace') {
+        if (!canEdit) return;
+        if (!block && input && !wholeCellSelected(input) && shortcut.action === 'backspace') return;
+        if (!block && input && !wholeCellSelected(input) && shortcut.action === 'clear' && input.value !== '') return;
+        event.preventDefault();
+        void clearSelected();
+        return;
+      }
+      if (shortcut.action === 'fillDown' && range) {
+        event.preventDefault();
+        void applyFillPairs(fillDownPairs(range));
+        return;
+      }
+      if (shortcut.action === 'fillRight' && range) {
+        event.preventDefault();
+        void applyFillPairs(fillRightPairs(range));
+        return;
+      }
+      if (shortcut.action === 'fillSelection' && focus) {
+        event.preventDefault();
+        void applyFillPairs(
+          selectedCells
+            .filter((pos) => pos.r !== focus.r || pos.c !== focus.c)
+            .map((pos) => ({ from: focus, to: pos })),
+        );
+        return;
+      }
+      if (shortcut.action === 'home' && focus) {
+        if (shortcut.extent === 'row' && input && !wholeCellSelected(input)) return;
+        event.preventDefault();
+        focusSheetCell(shortcut.extent === 'sheet' ? 0 : focus.r, 0, shortcut.shift);
+        return;
+      }
+      if (shortcut.action === 'end' && focus) {
+        if (shortcut.extent === 'row' && input && !wholeCellSelected(input)) return;
+        event.preventDefault();
+        const r = shortcut.extent === 'sheet' ? Math.max(0, visible.length - 1) : focus.r;
+        focusSheetCell(r, lastSheetCol, shortcut.shift);
+        return;
+      }
+      if (shortcut.action === 'jump' && focus) {
+        event.preventDefault();
+        const next = jumpToEdge({
+          from: focus,
+          dir: shortcut.dir,
+          lastRow: lastSheetRow,
+          lastCol: lastSheetCol,
+          filled: (r, c) => {
+            const col = visColIds[c];
+            const row = visible[r];
+            return Boolean(col && row && valueOf(row, col).trim() !== '');
+          },
+        });
+        if (next.r > lastSheetRow - 1 && shortcut.dir === 'down') growFromNav(next.r, visColIds[next.c] ?? 'account', shortcut.shift);
+        focusSheetCell(next.r, next.c, shortcut.shift);
+        return;
+      }
+      if (shortcut.action === 'find') {
+        event.preventDefault();
+        document.querySelector<HTMLInputElement>('input[aria-label="Filter this sheet"]')?.focus();
+        return;
+      }
+      if (shortcut.action === 'save') {
+        event.preventDefault();
+        toast.message('Cells save when you leave them — there is no separate Save.');
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   });
 
   const colCount = COLUMNS.filter(([id]) => show(id)).length;
@@ -386,6 +943,15 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
         <div className="inline-flex border border-[var(--hairline)] bg-[var(--surface-solid)] p-0.5">
           <button type="button" onClick={() => setTab('work')} className={cn('px-3 py-2 text-[0.8125rem] font-medium', tab === 'work' && 'bg-[var(--color-brand-700)] font-semibold text-white dark:text-[var(--color-brand-950)]')}>Operations work · {rows.length}</button>
           <button type="button" onClick={() => setTab('unreviewed')} className={cn('px-3 py-2 text-[0.8125rem] font-medium', tab === 'unreviewed' && 'bg-[var(--color-brand-700)] font-semibold text-white dark:text-[var(--color-brand-950)]')}>Not reviewed · {rows.filter((row) => row.needsReview).length}</button>
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => openBlankSheet()}
+              className={cn('px-3 py-2 text-[0.8125rem] font-medium', tab === 'blank' && 'bg-[var(--color-brand-700)] font-semibold text-white dark:text-[var(--color-brand-950)]')}
+            >
+              Blank sheet
+            </button>
+          )}
         </div>
         <label className="relative min-w-[12rem] flex-1 max-w-sm">
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--faint-fg)]" />
@@ -397,35 +963,54 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
             aria-label="Filter this sheet"
           />
         </label>
-        {isAdmin && (
+        {(canEdit || isAdmin) && (
           <div className="relative flex flex-wrap items-center gap-1 text-xs">
-            <button type="button" disabled={!addRowBranchId || busy === 'add-row'} onClick={() => void addRow()} className="inline-flex items-center gap-1 border border-[var(--hairline)] bg-[var(--surface-solid)] px-2 py-1.5 font-semibold hover:bg-[var(--glass-bg-strong)] disabled:opacity-50"><Plus className="h-3.5 w-3.5" />Add row</button>
-            <button type="button" onClick={() => setColumnsOpen((open) => !open)} className="inline-flex items-center gap-1 border border-[var(--hairline)] bg-[var(--surface-solid)] px-2 py-1.5 font-semibold hover:bg-[var(--glass-bg-strong)]"><Columns3 className="h-3.5 w-3.5" />Columns</button>
-            {columnsOpen && (
-              <div className="absolute right-0 top-full z-30 mt-1 w-56 border border-[var(--hairline)] bg-[var(--surface-solid)] p-2 shadow-xl">
-                <p className="mb-1.5 text-[0.68rem] font-bold uppercase tracking-wide text-[var(--muted-fg)]">Visible columns</p>
-                {COLUMNS.map(([id, label]) => <label key={id} className="flex cursor-pointer items-center gap-2 px-1 py-1 hover:bg-[var(--glass-bg-subtle)]"><input type="checkbox" checked={show(id)} onChange={() => toggleColumn(id)} />{label}</label>)}
-                <button type="button" onClick={() => { setHidden([]); localStorage.removeItem('maturityflow.ops.hidden-columns'); }} className="mt-2 w-full border border-[var(--hairline)] py-1 font-semibold">Show all</button>
-              </div>
+            {canEdit && (
+              <button
+                type="button"
+                disabled={!addRowBranchId}
+                title={!addRowBranchId ? 'Choose a branch first' : `Open ${MAX_SHEET_ROWS} empty rows to type or paste`}
+                onClick={() => openBlankSheet()}
+                className="inline-flex items-center gap-1 border border-[var(--hairline)] bg-[var(--surface-solid)] px-2 py-1.5 font-semibold hover:bg-[var(--glass-bg-strong)] disabled:opacity-50"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" />Blank sheet
+              </button>
             )}
-            {[[ '/maturities', 'Register' ], [ '/import', 'Import' ], [ '/audit', 'Audit' ], [ '/settings', 'Settings' ]].map(([href, label]) => <a key={href} href={href} className="inline-flex items-center gap-1 border border-[var(--hairline)] bg-[var(--surface-solid)] px-2 py-1.5 text-[var(--muted-fg)] hover:text-[var(--page-fg)]">{label}<ExternalLink className="h-3 w-3" /></a>)}
+            {isAdmin && (
+              <>
+                <button type="button" onClick={() => setColumnsOpen((open) => !open)} className="inline-flex items-center gap-1 border border-[var(--hairline)] bg-[var(--surface-solid)] px-2 py-1.5 font-semibold hover:bg-[var(--glass-bg-strong)]"><Columns3 className="h-3.5 w-3.5" />Columns</button>
+                {columnsOpen && (
+                  <div className="absolute right-0 top-full z-30 mt-1 w-56 border border-[var(--hairline)] bg-[var(--surface-solid)] p-2 shadow-xl">
+                    <p className="mb-1.5 text-[0.68rem] font-bold uppercase tracking-wide text-[var(--muted-fg)]">Visible columns</p>
+                    {COLUMNS.map(([id, label]) => <label key={id} className="flex cursor-pointer items-center gap-2 px-1 py-1 hover:bg-[var(--glass-bg-subtle)]"><input type="checkbox" checked={show(id)} onChange={() => toggleColumn(id)} />{label}</label>)}
+                    <button type="button" onClick={() => { setHidden([]); localStorage.removeItem('maturityflow.ops.hidden-columns'); }} className="mt-2 w-full border border-[var(--hairline)] py-1 font-semibold">Show all</button>
+                  </div>
+                )}
+                {[[ '/maturities', 'Register' ], [ '/import', 'Import' ], [ '/audit', 'Audit' ], [ '/settings', 'Settings' ]].map(([href, label]) => <a key={href} href={href} className="inline-flex items-center gap-1 border border-[var(--hairline)] bg-[var(--surface-solid)] px-2 py-1.5 text-[var(--muted-fg)] hover:text-[var(--page-fg)]">{label}<ExternalLink className="h-3 w-3" /></a>)}
+              </>
+            )}
           </div>
         )}
       </div>
 
       {tab === 'unreviewed' && <div className="flex items-start gap-2 border border-[color-mix(in_oklab,var(--color-warn-600)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-warn-600)_8%,transparent)] px-3 py-2 text-xs text-[var(--muted-fg)]"><ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-warn-600)]" />These cases progressed automatically so payment was not delayed. Enter the actual Operations approval date when review is completed.</div>}
+      {tab === 'blank' && <div className="flex items-start gap-2 border border-[var(--hairline)] bg-[var(--surface-solid)] px-3 py-2 text-xs text-[var(--muted-fg)]"><FileSpreadsheet className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-brand-700)]" />Empty rows only — existing cases stay on Operations work. Type or paste, then leave a row to create it. Nothing is written if you leave a row empty.</div>}
 
       <div className="flex flex-wrap items-center gap-2 text-[0.75rem] text-[var(--muted-fg)]">
         <span className="inline-flex h-8 min-w-[4.5rem] items-center justify-center rounded-[8px] border border-[var(--hairline)] bg-[var(--surface-solid)] px-2 font-mono font-semibold text-[var(--page-fg)]" title="Active cell">
           {activeAddr || '—'}
         </span>
-        <span>Click a cell and type. Shift-click a second cell to select a block. Ctrl+C copies, Ctrl+V pastes from Excel, Ctrl+Z undoes a cell.</span>
+        <span>500-row sheet like the cashbook — type or paste from Excel, no Add row needed. Ctrl+C/X/V · Ctrl+Z/Y · Ctrl+A · Delete · Ctrl+D/R · Ctrl+Home. Shift-click a block, Ctrl-click a cell.</span>
       </div>
 
       <div className="overflow-hidden border border-[var(--hairline)] bg-[var(--surface-solid)]">
-        <div className="max-h-[72vh] overflow-x-hidden overflow-y-auto overscroll-contain">
+        <div ref={sheetScrollRef} className="max-h-[72vh] overflow-x-hidden overflow-y-auto overscroll-contain">
           <table
             className="w-full table-fixed border-collapse text-[0.8125rem]"
+            onPointerDown={onSheetPointerDown}
+            onPointerMove={onSheetPointerMove}
+            onPointerUp={onSheetPointerUp}
+            onPointerCancel={onSheetPointerUp}
             onPaste={(event) => {
               const text = event.clipboardData.getData('text/plain');
               if (!text.includes('\t') && !text.includes('\n')) return;
@@ -456,31 +1041,54 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
                 const rowSurface = rowIndex % 2 === 0 ? 'bg-[var(--surface-solid)]' : 'bg-[var(--glass-bg-subtle)]';
                 return (
                   <tr key={row.id} className={cn('group hover:bg-[color-mix(in_oklab,var(--color-brand-500)_7%,var(--surface-solid))]', rowSurface)}>
-                    <td className={cn(cell, 'bg-[color-mix(in_oklab,var(--color-brand-500)_6%,var(--surface-solid))] px-1 text-center font-mono text-[0.62rem] font-semibold text-[var(--muted-fg)]')}>{rowIndex + 1}</td>
-                    {show('account') && <td className={cn(cell, row.needsReview && 'shadow-[inset_3px_0_0_var(--color-warn-500)]')}><EditableCell row={row.id} col="account" value={row.accountNumber} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('account'))} onFocusCell={(shift) => focusCell(rowIndex, visColIds.indexOf('account'), shift)} onCommit={(v) => { pushUndo({ rowId: row.id, col: 'account', before: row.accountNumber, after: v }); return save(row.id, { accountNumber: v }).then(() => undefined); }} /></td>}
-                    {show('customer') && <td className={cell}><EditableCell row={row.id} col="customer" value={row.customerName} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('customer'))} onFocusCell={(shift) => focusCell(rowIndex, visColIds.indexOf('customer'), shift)} onCommit={(v) => { pushUndo({ rowId: row.id, col: 'customer', before: row.customerName, after: v }); return save(row.id, { customerName: v }).then(() => undefined); }} /></td>}
-                    {show('agent') && <td className={cell}><EditableCell row={row.id} col="agent" value={row.agentName} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('agent'))} onFocusCell={(shift) => focusCell(rowIndex, visColIds.indexOf('agent'), shift)} onCommit={(v) => { pushUndo({ rowId: row.id, col: 'agent', before: row.agentName, after: v }); return save(row.id, { agentName: v }).then(() => undefined); }} /></td>}
-                    {show('amount') && <td className={cell}><EditableCell row={row.id} col="amount" type="money" value={row.maturityRupees} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('amount'))} onFocusCell={(shift) => focusCell(rowIndex, visColIds.indexOf('amount'), shift)} onCommit={(v) => { pushUndo({ rowId: row.id, col: 'amount', before: row.maturityRupees, after: v }); return save(row.id, { maturityRupees: v }).then(() => undefined); }} /></td>}
-                    {show('maturity') && <td className={cell}><EditableCell row={row.id} col="maturity" type="date" value={row.maturityOn || DEFAULT_OPERATIONS_MATURITY_ON} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('maturity'))} onFocusCell={(shift) => focusCell(rowIndex, visColIds.indexOf('maturity'), shift)} onCommit={(v) => save(row.id, { instrumentMaturityOn: v || null }).then(() => undefined)} /></td>}
-                    {show('form') && <td className={cell}><EditableCell row={row.id} col="form" type="date" value={row.formSubmittedOn} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('form'))} onFocusCell={(shift) => focusCell(rowIndex, visColIds.indexOf('form'), shift)} onCommit={(v) => save(row.id, { formSubmittedOn: v }).then(() => undefined)} /></td>}
-                    {show('review') && <td className={cell}><EditableCell row={row.id} col="review" type="date" value={row.opsReviewedOn} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('review'))} onFocusCell={(shift) => focusCell(rowIndex, visColIds.indexOf('review'), shift)} onCommit={(v) => save(row.id, { opsReviewedOn: v || null }).then(() => undefined)} /></td>}
-                    {show('payment') && <td className={cell}><EditableCell row={row.id} col="payment" type="date" value={row.paymentOn} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('payment'))} onFocusCell={(shift) => focusCell(rowIndex, visColIds.indexOf('payment'), shift)} onCommit={(v) => save(row.id, { paymentOn: v || null }).then(() => undefined)} /></td>}
-                    {show('due') && <td className={cell}><EditableCell row={row.id} col="due" type="money" value={rupees(row.duePaise)} disabled={!canSchedule && !canEdit} selected={isSelected(rowIndex, visColIds.indexOf('due'))} onFocusCell={(shift) => focusCell(rowIndex, visColIds.indexOf('due'), shift)} onCommit={(v) => savePlanned(row, v)} /></td>}
-                    {show('recommended') && <td className={cell}><EditableCell row={row.id} col="recommended" type="money" value={rupees(row.recommendedPaise)} disabled selected={isSelected(rowIndex, visColIds.indexOf('recommended'))} onFocusCell={(shift) => focusCell(rowIndex, visColIds.indexOf('recommended'), shift)} onCommit={async () => {}} /></td>}
-                    {show('paidToday') && <td className={cell}><EditableCell row={row.id} col="paidToday" type="money" value={rupees(row.paidTodayPaise)} disabled={!canPay} selected={isSelected(rowIndex, visColIds.indexOf('paidToday'))} onFocusCell={(shift) => focusCell(rowIndex, visColIds.indexOf('paidToday'), shift)} onCommit={(v) => { const total = BigInt(v || '0'); const online = paidOnline > total ? 0n : paidOnline; return savePaid(row, total - online, online); }} /></td>}
-                    {show('paidCash') && <td className={cell}><EditableCell row={row.id} col="paidCash" type="money" value={paidCash.toString()} disabled={!canPay} selected={isSelected(rowIndex, visColIds.indexOf('paidCash'))} onFocusCell={(shift) => focusCell(rowIndex, visColIds.indexOf('paidCash'), shift)} onCommit={(v) => savePaid(row, BigInt(v || '0'), paidOnline)} /></td>}
-                    {show('paidOnline') && <td className={cell}><EditableCell row={row.id} col="paidOnline" type="money" value={paidOnline.toString()} disabled={!canPay} selected={isSelected(rowIndex, visColIds.indexOf('paidOnline'))} onFocusCell={(shift) => focusCell(rowIndex, visColIds.indexOf('paidOnline'), shift)} onCommit={(v) => savePaid(row, paidCash, BigInt(v || '0'))} /></td>}
-                    {show('taken') && <td className={cell}><button type="button" title="Mark as taken" aria-label="Mark as taken" disabled={!canPay || !row.todayInstalmentId || row.todayState === 'PAID' || busy === row.id} onClick={() => void mark(row, true)} className="flex h-9 w-full items-center justify-center gap-0.5 rounded-none bg-[var(--row-taken)] text-[0.65rem] font-bold text-[var(--row-taken-fg)] hover:bg-[var(--row-taken-strong)] disabled:cursor-not-allowed disabled:opacity-40 xl:text-[0.7rem]"><Check className="h-3 w-3 shrink-0" /><span className="hidden xl:inline">Taken</span></button></td>}
-                    {show('notTaken') && <td className={cell}><button type="button" title="Mark as not taken" aria-label="Mark as not taken" disabled={!canPay || !row.todayInstalmentId || row.todayState === 'PAID' || busy === row.id} onClick={() => void mark(row, false)} className="flex h-9 w-full items-center justify-center gap-0.5 rounded-none bg-[var(--row-missed)] text-[0.65rem] font-bold text-[var(--row-missed-fg)] hover:bg-[var(--row-missed-strong)] disabled:cursor-not-allowed disabled:opacity-40 xl:text-[0.7rem]"><X className="h-3 w-3 shrink-0" /><span className="hidden xl:inline">Not taken</span></button></td>}
+                    <td data-ops-rowhead={rowIndex} className={cn(cell, 'cursor-pointer bg-[color-mix(in_oklab,var(--color-brand-500)_6%,var(--surface-solid))] px-1 text-center font-mono text-[0.62rem] font-semibold text-[var(--muted-fg)]')}>{rowIndex + 1}</td>
+                    {show('account') && <td className={cn(cell, row.needsReview && 'shadow-[inset_3px_0_0_var(--color-warn-500)]')} data-ops-index={rowIndex} data-ops-col="account"><EditableCell row={row.id} col="account" value={row.accountNumber} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('account'))}  onCommit={(v) => { pushUndo({ rowId: row.id, col: 'account', before: row.accountNumber, after: v }); return save(row.id, { accountNumber: v }).then(() => undefined); }} /></td>}
+                    {show('customer') && <td className={cell} data-ops-index={rowIndex} data-ops-col="customer"><EditableCell row={row.id} col="customer" value={row.customerName} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('customer'))}  onCommit={(v) => { pushUndo({ rowId: row.id, col: 'customer', before: row.customerName, after: v }); return save(row.id, { customerName: v }).then(() => undefined); }} /></td>}
+                    {show('agent') && <td className={cell} data-ops-index={rowIndex} data-ops-col="agent"><EditableCell row={row.id} col="agent" value={row.agentName} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('agent'))}  onCommit={(v) => { pushUndo({ rowId: row.id, col: 'agent', before: row.agentName, after: v }); return save(row.id, { agentName: v }).then(() => undefined); }} /></td>}
+                    {show('amount') && <td className={cell} data-ops-index={rowIndex} data-ops-col="amount"><EditableCell row={row.id} col="amount" type="money" value={row.maturityRupees} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('amount'))}  onCommit={(v) => { pushUndo({ rowId: row.id, col: 'amount', before: row.maturityRupees, after: v }); return save(row.id, { maturityRupees: v }).then(() => undefined); }} /></td>}
+                    {show('maturity') && <td className={cell} data-ops-index={rowIndex} data-ops-col="maturity"><EditableCell row={row.id} col="maturity" type="date" value={row.maturityOn || DEFAULT_OPERATIONS_MATURITY_ON} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('maturity'))}  onCommit={(v) => save(row.id, { instrumentMaturityOn: v || null }).then(() => undefined)} /></td>}
+                    {show('form') && <td className={cell} data-ops-index={rowIndex} data-ops-col="form"><EditableCell row={row.id} col="form" type="date" value={row.formSubmittedOn} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('form'))}  onCommit={(v) => save(row.id, { formSubmittedOn: v }).then(() => undefined)} /></td>}
+                    {show('review') && <td className={cell} data-ops-index={rowIndex} data-ops-col="review"><EditableCell row={row.id} col="review" type="date" value={row.opsReviewedOn} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('review'))}  onCommit={(v) => save(row.id, { opsReviewedOn: v || null }).then(() => undefined)} /></td>}
+                    {show('payment') && <td className={cell} data-ops-index={rowIndex} data-ops-col="payment"><EditableCell row={row.id} col="payment" type="date" value={row.paymentOn} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('payment'))}  onCommit={(v) => save(row.id, { paymentOn: v || null }).then(() => undefined)} /></td>}
+                    {show('due') && <td className={cell} data-ops-index={rowIndex} data-ops-col="due"><EditableCell row={row.id} col="due" type="money" value={rupees(row.duePaise)} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canSchedule && !canEdit} selected={isSelected(rowIndex, visColIds.indexOf('due'))}  onCommit={(v) => savePlanned(row, v)} /></td>}
+                    {show('recommended') && <td className={cell} data-ops-index={rowIndex} data-ops-col="recommended"><EditableCell row={row.id} col="recommended" type="money" value={rupees(row.recommendedPaise)} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled selected={isSelected(rowIndex, visColIds.indexOf('recommended'))}  onCommit={async () => {}} /></td>}
+                    {show('paidToday') && <td className={cell} data-ops-index={rowIndex} data-ops-col="paidToday"><EditableCell row={row.id} col="paidToday" type="money" value={rupees(row.paidTodayPaise)} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canPay} selected={isSelected(rowIndex, visColIds.indexOf('paidToday'))}  onCommit={(v) => { const total = BigInt(v || '0'); const online = paidOnline > total ? 0n : paidOnline; return savePaid(row, total - online, online); }} /></td>}
+                    {show('paidCash') && <td className={cell} data-ops-index={rowIndex} data-ops-col="paidCash"><EditableCell row={row.id} col="paidCash" type="money" value={paidCash.toString()} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canPay} selected={isSelected(rowIndex, visColIds.indexOf('paidCash'))}  onCommit={(v) => savePaid(row, BigInt(v || '0'), paidOnline)} /></td>}
+                    {show('paidOnline') && <td className={cell} data-ops-index={rowIndex} data-ops-col="paidOnline"><EditableCell row={row.id} col="paidOnline" type="money" value={paidOnline.toString()} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canPay} selected={isSelected(rowIndex, visColIds.indexOf('paidOnline'))}  onCommit={(v) => savePaid(row, paidCash, BigInt(v || '0'))} /></td>}
+                    {show('taken') && <td className={cell} data-ops-index={rowIndex} data-ops-col="taken"><button type="button" title="Mark as taken" aria-label="Mark as taken" disabled={!canPay || !row.todayInstalmentId || row.todayState === 'PAID' || busy === row.id} onClick={(event) => { if (event.shiftKey || event.ctrlKey || event.metaKey) return; void mark(row, true); }} className="flex h-9 w-full items-center justify-center gap-0.5 rounded-none bg-[var(--row-taken)] text-[0.65rem] font-bold text-[var(--row-taken-fg)] hover:bg-[var(--row-taken-strong)] disabled:cursor-not-allowed disabled:opacity-40 xl:text-[0.7rem]"><Check className="h-3 w-3 shrink-0" /><span className="hidden xl:inline">Taken</span></button></td>}
+                    {show('notTaken') && <td className={cell} data-ops-index={rowIndex} data-ops-col="notTaken"><button type="button" title="Mark as not taken" aria-label="Mark as not taken" disabled={!canPay || !row.todayInstalmentId || row.todayState === 'PAID' || busy === row.id} onClick={(event) => { if (event.shiftKey || event.ctrlKey || event.metaKey) return; void mark(row, false); }} className="flex h-9 w-full items-center justify-center gap-0.5 rounded-none bg-[var(--row-missed)] text-[0.65rem] font-bold text-[var(--row-missed-fg)] hover:bg-[var(--row-missed-strong)] disabled:cursor-not-allowed disabled:opacity-40 xl:text-[0.7rem]"><X className="h-3 w-3 shrink-0" /><span className="hidden xl:inline">Not taken</span></button></td>}
                   </tr>
                 );
               })}
-              {visible.length === 0 && <tr><td colSpan={colCount + 1} className="px-4 py-12 text-center text-sm text-[var(--muted-fg)]">No cases in this list. Add a row or clear the filter.</td></tr>}
+              {blanks > 0 && Array.from({ length: blanks }, (_, i) => (
+                <BlankOpsRow
+                  key={`blank-${visible.length + i}`}
+                  rowIndex={visible.length + i}
+                  visColIds={visColIds}
+                  show={show}
+                  disabled={!canEdit || !addRowBranchId}
+                  isSelected={isSelected}
+                  onGrowDown={growFromNav}
+                  onMove={moveHighlight}
+                  onCommit={async (patch) => {
+                    if (!addRowBranchId) return;
+                    const result = await createRegisterRowWithFieldsAction(addRowBranchId, patch);
+                    if (!result.ok) toast.error(result.error);
+                    else router.refresh();
+                  }}
+                />
+              ))}
+              {blanks > 0 && sheetLength < MAX_SHEET_ROWS && (
+                <tr ref={revealSentinelRef} aria-hidden className="h-0">
+                  <td colSpan={colCount + 1} />
+                </tr>
+              )}
+              {visible.length === 0 && blanks === 0 && <tr><td colSpan={colCount + 1} className="px-4 py-12 text-center text-sm text-[var(--muted-fg)]">No cases in this list. Type into a blank row or paste from Excel.</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
-      <p className="text-xs text-[var(--faint-fg)]">This sheet is the workspace — you do not need to format an Excel file and upload it. Paste from Excel or Google Sheets into the cell where the block should start. Taken and Not taken stay buttons because they move money.</p>
+      <p className="text-xs text-[var(--faint-fg)]">500 rows, like the cashbook. Type or paste a block from Excel into the cell where it should start — you do not need Add row or an import file. Empty rows are not saved until you type and leave them. Taken and Not taken stay buttons because they move money.</p>
     </div>
   );
 }
