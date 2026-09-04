@@ -122,12 +122,76 @@ export function normalizeRange(a: { r: number; c: number }, b: { r: number; c: n
   };
 }
 
-export function cellsInRange(range: SheetRange): { r: number; c: number }[] {
-  const out: { r: number; c: number }[] = [];
+export type CellPos = { r: number; c: number };
+
+export function cellsInRange(range: SheetRange): CellPos[] {
+  const out: CellPos[] = [];
   for (let r = range.r0; r <= range.r1; r++) {
     for (let c = range.c0; c <= range.c1; c++) out.push({ r, c });
   }
   return out;
+}
+
+export function cellKey(r: number, c: number): string {
+  return `${r}:${c}`;
+}
+
+export function parseCellKey(key: string): CellPos | null {
+  const match = /^(\d+):(\d+)$/.exec(key);
+  if (!match) return null;
+  return { r: Number(match[1]), c: Number(match[2]) };
+}
+
+export function rangeKeys(range: SheetRange): string[] {
+  return cellsInRange(range).map((pos) => cellKey(pos.r, pos.c));
+}
+
+/** Ctrl-click: keep the current block, then add or remove this cell. */
+export function toggleCellInSelection(
+  extra: Iterable<string>,
+  range: SheetRange | null,
+  r: number,
+  c: number,
+): Set<string> {
+  const next = new Set(extra);
+  if (range) for (const key of rangeKeys(range)) next.add(key);
+  const key = cellKey(r, c);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  return next;
+}
+
+export function unionSelection(range: SheetRange | null, extra: Iterable<string>): CellPos[] {
+  const keys = new Set(extra);
+  if (range) for (const key of rangeKeys(range)) keys.add(key);
+  const out: CellPos[] = [];
+  for (const key of keys) {
+    const pos = parseCellKey(key);
+    if (pos) out.push(pos);
+  }
+  out.sort((a, b) => a.r - b.r || a.c - b.c);
+  return out;
+}
+
+export function selectionBounds(cells: readonly CellPos[]): SheetRange | null {
+  if (cells.length === 0) return null;
+  let r0 = cells[0]!.r;
+  let c0 = cells[0]!.c;
+  let r1 = r0;
+  let c1 = c0;
+  for (const pos of cells) {
+    if (pos.r < r0) r0 = pos.r;
+    if (pos.c < c0) c0 = pos.c;
+    if (pos.r > r1) r1 = pos.r;
+    if (pos.c > c1) c1 = pos.c;
+  }
+  return { r0, c0, r1, c1 };
+}
+
+export function cellInSelection(r: number, c: number, range: SheetRange | null, extra: ReadonlySet<string>): boolean {
+  if (extra.has(cellKey(r, c))) return true;
+  if (!range) return false;
+  return r >= range.r0 && r <= range.r1 && c >= range.c0 && c <= range.c1;
 }
 
 export function rowMatchesFilter(
@@ -137,4 +201,239 @@ export function rowMatchesFilter(
   const q = query.trim().toLowerCase();
   if (q === '') return true;
   return haystack.some((part) => part.toLowerCase().includes(q));
+}
+
+/**
+ * Spreadsheet capacity, same ceiling as the daily cashbook.
+ *
+ * 500 rows are always available to type or paste into. The DOM only renders what has been
+ * reached so a quiet day does not mount thousands of empty inputs. Live cases are never hidden
+ * if the register is already longer than 500.
+ */
+export const MAX_SHEET_ROWS = 500;
+export const INITIAL_SHEET_ROWS = 20;
+export const ROW_REVEAL_BUFFER = 10;
+/**
+ * Each pasted row is still the audited single-row write, so a paste is a loop, not one UPDATE.
+ * The loop runs on the server in chunks: one request per `PASTE_CHUNK_ROWS` rows, so a big
+ * paste is a handful of round-trips instead of one per row, and no single request runs long
+ * enough to hit a serverless timeout.
+ */
+export const MAX_PASTE_ROWS = 100;
+
+/**
+ * The register sheet pastes through one batched server action per chunk rather than one call
+ * per row, so it can afford the whole 500-row capacity in a single paste.
+ */
+export const MAX_REGISTER_PASTE_ROWS = 500;
+export const PASTE_CHUNK_ROWS = 25;
+
+/**
+ * Empty rows on the register sheet.
+ *
+ * The register is a book that grows: unlike a cashbook day it can already hold hundreds of live
+ * rows, so capacity measured as "500 rows in total" quietly becomes "no empty rows at all" on a
+ * branch that passed 500 cases — which is what sent clerks back to the Add rows button. Capacity
+ * is therefore counted in EMPTY rows: 500 of them are always available underneath whatever is on
+ * screen, however long the live list is.
+ *
+ * The DOM still only holds what has been reached. 500 blank rows across a dozen typed columns is
+ * six thousand inputs, and mounting them up front costs a visibly slower keystroke on every
+ * quiet day that never reaches row 60.
+ */
+export const MAX_BLANK_ROWS = 500;
+export const INITIAL_BLANK_ROWS = 50;
+export const BLANK_REVEAL_BUFFER = 50;
+
+/** How many empty rows to mount on first paint. */
+export function initialBlankRows(max = MAX_BLANK_ROWS): number {
+  return Math.max(0, Math.min(max, INITIAL_BLANK_ROWS));
+}
+
+/**
+ * How many empty rows the sheet should hold once `targetIndex` (0-based, counted from the first
+ * empty row) has to exist — because the caret walked into it, the scroll sentinel came into
+ * view, or a paste is about to write there. Never shrinks; never passes `max`.
+ */
+export function growBlankRows(input: {
+  current: number;
+  targetIndex: number;
+  max?: number;
+  buffer?: number;
+}): number {
+  const max = input.max ?? MAX_BLANK_ROWS;
+  const buffer = input.buffer ?? BLANK_REVEAL_BUFFER;
+  const current = Math.max(0, input.current);
+  const needed = Math.max(0, input.targetIndex) + 1;
+  if (needed <= current) return Math.min(max, current);
+  return Math.min(max, Math.max(current, needed + buffer));
+}
+
+/**
+ * How many rows to show on first paint: live cases plus a runway of empty rows, capped at 500.
+ */
+export function initialSheetLength(filledCount: number, max = MAX_SHEET_ROWS): number {
+  const filled = Math.max(0, filledCount);
+  if (filled >= max) return filled;
+  return Math.min(max, Math.max(INITIAL_SHEET_ROWS, filled + INITIAL_SHEET_ROWS));
+}
+
+/**
+ * How many rows the sheet should show after the highlighted cell moves onto `targetIndex`.
+ *
+ * Empty rows exist only in the browser. Walking off the bottom (or scrolling into it) reveals
+ * another buffer of rows, up to `max` (500). Never shorter than the live rows; never shrinks.
+ */
+export function growSheetLength(input: {
+  currentLength: number;
+  filledCount: number;
+  targetIndex: number;
+  max?: number;
+  buffer?: number;
+}): number {
+  const max = input.max ?? MAX_SHEET_ROWS;
+  const buffer = input.buffer ?? ROW_REVEAL_BUFFER;
+  const filled = Math.max(0, input.filledCount);
+  const cap = Math.max(filled, max);
+  const current = Math.max(filled, input.currentLength);
+  const needed = Math.max(0, input.targetIndex) + 1;
+  if (needed <= current) return Math.min(cap, current);
+  return Math.min(cap, Math.max(current, needed + buffer));
+}
+
+export function blankRowCount(input: {
+  sheetLength: number;
+  filledCount: number;
+  allowBlanks: boolean;
+}): number {
+  if (!input.allowBlanks) return 0;
+  return Math.max(0, input.sheetLength - input.filledCount);
+}
+
+export type SheetShortcut =
+  | { action: 'copy' }
+  | { action: 'cut' }
+  | { action: 'paste' }
+  | { action: 'undo' }
+  | { action: 'redo' }
+  | { action: 'selectAll' }
+  | { action: 'selectRow' }
+  | { action: 'selectColumn' }
+  | { action: 'clear' }
+  | { action: 'backspace' }
+  | { action: 'fillDown' }
+  | { action: 'fillRight' }
+  | { action: 'fillSelection' }
+  | { action: 'home'; extent: 'row' | 'sheet'; shift: boolean }
+  | { action: 'end'; extent: 'row' | 'sheet'; shift: boolean }
+  | { action: 'jump'; dir: 'up' | 'down' | 'left' | 'right'; shift: boolean }
+  | { action: 'find' }
+  | { action: 'save' };
+
+/**
+ * Spreadsheet keys. Alt is ignored. The grid decides whether to steal a key from a focused
+ * input (for example Backspace only clears a cell when the whole value is selected).
+ */
+export function matchSheetShortcut(event: {
+  key: string;
+  code?: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  altKey?: boolean;
+}): SheetShortcut | null {
+  if (event.altKey) return null;
+  const meta = event.ctrlKey || event.metaKey;
+  const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+
+  if (meta && key === 'c' && !event.shiftKey) return { action: 'copy' };
+  if (meta && key === 'x' && !event.shiftKey) return { action: 'cut' };
+  if (meta && key === 'v' && !event.shiftKey) return { action: 'paste' };
+  if (meta && key === 'z' && !event.shiftKey) return { action: 'undo' };
+  if (meta && (key === 'y' || (key === 'z' && event.shiftKey))) return { action: 'redo' };
+  if (meta && key === 'a' && !event.shiftKey) return { action: 'selectAll' };
+  if (meta && key === 'd' && !event.shiftKey) return { action: 'fillDown' };
+  if (meta && key === 'r' && !event.shiftKey) return { action: 'fillRight' };
+  if (meta && key === 'f' && !event.shiftKey) return { action: 'find' };
+  if (meta && key === 's' && !event.shiftKey) return { action: 'save' };
+  if (meta && key === 'Enter') return { action: 'fillSelection' };
+  if (meta && (event.key === ' ' || event.code === 'Space')) return { action: 'selectColumn' };
+  if (!meta && event.shiftKey && (event.key === ' ' || event.code === 'Space')) return { action: 'selectRow' };
+  if (key === 'Delete') return { action: 'clear' };
+  if (key === 'Backspace') return { action: 'backspace' };
+  if (key === 'Home') return { action: 'home', extent: meta ? 'sheet' : 'row', shift: event.shiftKey };
+  if (key === 'End') return { action: 'end', extent: meta ? 'sheet' : 'row', shift: event.shiftKey };
+  if (meta && (key === 'ArrowUp' || key === 'ArrowDown' || key === 'ArrowLeft' || key === 'ArrowRight')) {
+    const dir = key === 'ArrowUp' ? 'up' : key === 'ArrowDown' ? 'down' : key === 'ArrowLeft' ? 'left' : 'right';
+    return { action: 'jump', dir, shift: event.shiftKey };
+  }
+  return null;
+}
+
+export function jumpToEdge(input: {
+  from: CellPos;
+  dir: 'up' | 'down' | 'left' | 'right';
+  lastRow: number;
+  lastCol: number;
+  filled: (r: number, c: number) => boolean;
+}): CellPos {
+  const dr = input.dir === 'down' ? 1 : input.dir === 'up' ? -1 : 0;
+  const dc = input.dir === 'right' ? 1 : input.dir === 'left' ? -1 : 0;
+  const { lastRow, lastCol, filled } = input;
+  let r = input.from.r + dr;
+  let c = input.from.c + dc;
+  if (r < 0 || c < 0 || r > lastRow || c > lastCol) return input.from;
+  const lookingForFilled = !filled(r, c);
+  while (r >= 0 && c >= 0 && r <= lastRow && c <= lastCol) {
+    const nr = r + dr;
+    const nc = c + dc;
+    const atEdge = nr < 0 || nc < 0 || nr > lastRow || nc > lastCol;
+    if (lookingForFilled) {
+      if (filled(r, c) || atEdge) return { r, c };
+    } else if (!filled(r, c)) {
+      return { r: r - dr, c: c - dc };
+    } else if (atEdge) {
+      return { r, c };
+    }
+    r = nr;
+    c = nc;
+  }
+  return {
+    r: Math.max(0, Math.min(lastRow, r)),
+    c: Math.max(0, Math.min(lastCol, c)),
+  };
+}
+
+export function fillDownPairs(range: SheetRange): { from: CellPos; to: CellPos }[] {
+  const pairs: { from: CellPos; to: CellPos }[] = [];
+  if (range.r0 === range.r1) {
+    if (range.r0 === 0) return pairs;
+    for (let c = range.c0; c <= range.c1; c++) {
+      pairs.push({ from: { r: range.r0 - 1, c }, to: { r: range.r0, c } });
+    }
+    return pairs;
+  }
+  for (let c = range.c0; c <= range.c1; c++) {
+    for (let r = range.r0 + 1; r <= range.r1; r++) {
+      pairs.push({ from: { r: range.r0, c }, to: { r, c } });
+    }
+  }
+  return pairs;
+}
+
+export function fillRightPairs(range: SheetRange): { from: CellPos; to: CellPos }[] {
+  const pairs: { from: CellPos; to: CellPos }[] = [];
+  if (range.c0 === range.c1) {
+    if (range.c0 === 0) return pairs;
+    for (let r = range.r0; r <= range.r1; r++) {
+      pairs.push({ from: { r, c: range.c0 - 1 }, to: { r, c: range.c0 } });
+    }
+    return pairs;
+  }
+  for (let r = range.r0; r <= range.r1; r++) {
+    for (let c = range.c0 + 1; c <= range.c1; c++) {
+      pairs.push({ from: { r, c: range.c0 }, to: { r, c } });
+    }
+  }
+  return pairs;
 }

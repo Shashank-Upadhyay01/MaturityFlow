@@ -21,7 +21,7 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
@@ -30,6 +30,7 @@ import { setInstalmentAmountAction, setInstalmentLegsAction } from '@/actions/ca
 import { importRegisterAction } from '@/actions/import';
 import {
   createRegisterRowWithFieldsAction,
+  pasteRegisterRowsAction,
   bulkAssignAgentAction,
   bulkSetFormSubmittedAction,
   bulkSetTodayAction,
@@ -50,6 +51,16 @@ import { Input } from '@/components/ui/field';
 import { Glass } from '@/components/ui/glass';
 import { Callout } from '@/components/ui/misc';
 import { PRODUCT_NAME } from '@/lib/brand';
+import {
+  growBlankRows,
+  initialBlankRows,
+  MAX_BLANK_ROWS,
+  MAX_REGISTER_PASTE_ROWS,
+  PASTE_CHUNK_ROWS,
+  parseClipboardGrid,
+  pasteIsoDate,
+  pasteRupees,
+} from '@/lib/sheet-grid';
 import { excelCellRaw } from '@/lib/excel-register';
 import {
   BULK_TODAY_LABEL,
@@ -214,6 +225,8 @@ function SortTh({
   );
 }
 
+const RegisterGrowContext = createContext<(column: string) => void>(() => {});
+
 function CellInput({
   value,
   disabled,
@@ -243,6 +256,7 @@ function CellInput({
   // 1000000 and 10,00,000 in adjacent columns made the sheet hard to scan, but grouping a cell
   // that someone is typing into fights the caret. So: grouped at rest, raw the moment it has focus.
   const [focused, setFocused] = useState(false);
+  const growSheet = useContext(RegisterGrowContext);
   return (
     <input
       className={cn(cell, className)}
@@ -283,7 +297,10 @@ function CellInput({
         const at = peers.indexOf(current);
         const delta = direction === 'ArrowUp' || direction === 'ArrowLeft' ? -1 : 1;
         const next = peers[at + delta];
-        if (!next) return;
+        if (!next) {
+          if (delta > 0) growSheet(cellKey);
+          return;
+        }
         next.focus({ preventScroll: true });
         next.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         next.select();
@@ -479,15 +496,6 @@ type BulkMenu = 'today' | 'agent' | 'remove' | null;
 const MAX_ADD_ROWS = 100;
 
 /**
- * How many rows the sheet shows when nobody has asked for more.
- *
- * Counting the rows that already exist: with 80 real rows a clerk gets 20 empty ones to type
- * into, not 100 on top. They cost nothing — an empty row lives in the browser until somebody
- * types in it, and only then becomes a case.
- */
-const DEFAULT_SHEET_LENGTH = 100;
-
-/**
  * One of the sheet's empty rows.
  *
  * It holds its own drafts and writes nothing until the clerk leaves the row — tabbing between
@@ -501,11 +509,13 @@ function BlankRow({
   cols,
   extrasCol,
   disabled,
+  rowIndex,
   onCommit,
 }: {
   cols: RegisterColDef[];
   extrasCol: boolean;
   disabled: boolean;
+  rowIndex: number;
   onCommit: (patch: Record<string, string>) => Promise<void>;
 }) {
   const [vals, setVals] = useState<Record<string, string>>({});
@@ -528,7 +538,8 @@ function BlankRow({
   return (
     <tr
       data-register-row={rowKey}
-      className="border-b border-[var(--hairline)] hover:bg-[var(--glass-bg-subtle)]"
+      data-register-index={rowIndex}
+      className="border-b border-[var(--hairline)] hover:bg-[var(--glass-bg-subtle)] print:hidden"
       onBlur={(e) => {
         // Only when focus actually leaves this row — not when it moves to the next cell in it.
         if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
@@ -580,6 +591,29 @@ const COL_PATCH_FIELD: Partial<Record<RegisterColId, string>> = {
   cash: 'todayCashRupees',
   online: 'todayOnlineRupees',
 };
+
+function pasteCellPatch(col: RegisterColId, raw: string): Record<string, string | number | null> | null {
+  const field = COL_PATCH_FIELD[col];
+  if (!field) return null;
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  if (col === 'days') {
+    const n = Number(trimmed);
+    if (!Number.isInteger(n)) return null;
+    return { windowDays: n };
+  }
+  if (col === 'amount' || col === 'paid' || col === 'today' || col === 'cash' || col === 'online') {
+    const rupees = pasteRupees(trimmed);
+    if (!rupees) return null;
+    return { [field]: rupees };
+  }
+  if (col === 'maturityDate' || col === 'formDate' || col === 'paymentDate') {
+    const iso = pasteIsoDate(trimmed);
+    if (!iso) return null;
+    return { [field]: iso };
+  }
+  return { [field]: trimmed };
+}
 
 /** Mirrors MAX_BULK_ROWS in register-bulk. The server enforces the real limit. */
 const MAX_BULK = 500;
@@ -809,6 +843,7 @@ export function RegisterSheet(props: {
   const [onlinePlan, setOnlinePlan] = useState(rupeesStr(BigInt(props.plannedOnlinePaise)));
   const [draft, setDraft] = useState<Record<string, Partial<Record<string, string>>>>({});
   const restoreFocusRef = useRef<{ row: string; column: string } | null>(null);
+  const pendingGrow = useRef<{ column: string; index: number } | null>(null);
   const initialSort = autoSortFor(initialTab, '', 'payment');
   const [sortKey, setSortKey] = useState<SortKey>(initialSort.key);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(initialSort.dir);
@@ -832,14 +867,16 @@ export function RegisterSheet(props: {
   }, [props.rows]);
 
   /**
-   * How long the sheet should be, counting the rows that already exist.
+   * How many EMPTY rows sit under the live ones.
    *
-   * A register with 80 real rows shows 20 empty ones after them; "Add rows" raises this number
-   * and the empty block grows immediately, because an empty row costs nothing until it is typed
-   * in. Rows already in the database never come out of the count — 100 means a hundred-row sheet,
-   * not a hundred blanks on top of what is there.
+   * Counted in blanks, not in "rows on the sheet". A register that has passed 500 live cases
+   * would otherwise have no room left to type in — which is exactly how the sheet ended up
+   * needing the Add rows button before anyone could enter anything. There are always 500 empty
+   * rows available here, however long the book already is; 50 of them are mounted up front and
+   * the rest appear as the caret, the scrollbar or a paste reaches them, so a quiet day does
+   * not carry six thousand idle inputs.
    */
-  const [sheetLength, setSheetLength] = useState(DEFAULT_SHEET_LENGTH);
+  const [blankRows, setBlankRows] = useState(() => initialBlankRows());
 
   /** Rows whose off-screen columns are expanded. */
   const [openExtras, setOpenExtras] = useState<Record<string, boolean>>({});
@@ -851,6 +888,7 @@ export function RegisterSheet(props: {
    * narrow screen; on a wide one the observer corrects it before the browser paints.
    */
   const gridRef = useRef<HTMLDivElement>(null);
+  const revealSentinelRef = useRef<HTMLTableRowElement>(null);
   const [gridWidth, setGridWidth] = useState(0);
   useEffect(() => {
     const el = gridRef.current;
@@ -1257,6 +1295,102 @@ export function RegisterSheet(props: {
     }
   }
 
+  /**
+   * Paste a block copied out of Excel, starting at the cell that has focus.
+   *
+   * A paste is a rectangle: rows go down from the cell it started in, columns go right along the
+   * columns currently on screen. Lines that land on live rows edit those rows; lines that run off
+   * the end of the book land on the empty rows and open a case each — the same two audited steps
+   * as typing into a blank row by hand.
+   *
+   * The writes go out in chunks of `PASTE_CHUNK_ROWS` through one server action per chunk, not
+   * one call per row. Forty rows used to be forty round trips with a full cache sweep after each
+   * one, which is what made pasting a real day's list feel like the sheet had hung.
+   */
+  async function pasteRegister(startRow: number, startColId: string, text: string) {
+    const grid = parseClipboardGrid(text);
+    if (grid.length === 0) return;
+    if (grid.length > MAX_REGISTER_PASTE_ROWS) {
+      toast.error(`Paste at most ${MAX_REGISTER_PASTE_ROWS} rows at a time — each row is saved with its own audit line.`);
+      return;
+    }
+    const colIds = shownCols.map((c) => c.id);
+    const startC = colIds.indexOf(startColId as RegisterColId);
+    if (startC < 0) return;
+
+    // Open enough empty rows to hold the block before anything is written, so the rows the paste
+    // lands in are on screen when the refresh comes back.
+    if (canTypeBlanks) {
+      const lastBlank = startRow + grid.length - 1 - visible.length;
+      if (lastBlank >= 0) {
+        setBlankRows((n) => growBlankRows({ current: n, targetIndex: lastBlank }));
+      }
+    }
+
+    type Line = { caseId: string | null; patch: Parameters<typeof saveRegisterFieldsAction>[1] };
+    const lines: Line[] = [];
+    let skippedLocked = 0;
+    for (let i = 0; i < grid.length; i++) {
+      const cells = grid[i] ?? [];
+      const patch: Record<string, string | number | null> = {};
+      for (let j = 0; j < cells.length; j++) {
+        const col = colIds[startC + j];
+        if (!col) continue;
+        const piece = pasteCellPatch(col, cells[j] ?? '');
+        if (piece) Object.assign(patch, piece);
+      }
+      if (Object.keys(patch).length === 0) continue;
+      const typed = patch as Parameters<typeof saveRegisterFieldsAction>[1];
+      const live = visible[startRow + i];
+      if (live) {
+        if (!props.canEdit || locked) { skippedLocked++; continue; }
+        lines.push({ caseId: live.id, patch: typed });
+      } else if (canTypeBlanks) {
+        lines.push({ caseId: null, patch: typed });
+      } else {
+        skippedLocked++;
+      }
+    }
+
+    if (lines.length === 0) {
+      if (skippedLocked > 0) toast.error('These rows cannot be edited from this view.');
+      return;
+    }
+
+    rememberGridFocus();
+    setBusy('paste');
+    let written = 0;
+    let created = 0;
+    const problems: string[] = [];
+    try {
+      for (let at = 0; at < lines.length; at += PASTE_CHUNK_ROWS) {
+        const chunk = lines.slice(at, at + PASTE_CHUNK_ROWS);
+        const res = await pasteRegisterRowsAction(props.branchId, chunk, at);
+        if (!res.ok) {
+          problems.push(res.error);
+          break;
+        }
+        written += res.data.written;
+        created += res.data.created;
+        for (const f of res.data.failed) problems.push(`Row ${f.line}: ${f.error}`);
+      }
+    } finally {
+      setBusy(null);
+    }
+
+    if (written > 0) {
+      toast.success(
+        created > 0
+          ? `Pasted ${written} row${written === 1 ? '' : 's'} (${created} new)`
+          : `Pasted ${written} row${written === 1 ? '' : 's'}`,
+      );
+      router.refresh();
+    }
+    if (problems.length > 0) {
+      toast.error(problems.length === 1 ? problems[0]! : `${problems.length} rows could not be pasted — ${problems[0]}`);
+    }
+  }
+
   function rememberGridFocus() {
     const active = document.activeElement as HTMLInputElement | null;
     if (active?.dataset.registerRow && active.dataset.registerColumn) {
@@ -1651,18 +1785,72 @@ export function RegisterSheet(props: {
   const editDates = props.canEdit && (!locked || canOverrideDates(props.role));
 
   /**
-   * Blank rows belong on an unfiltered sheet and nowhere else.
+   * Empty rows sit under whatever live list is on screen, like the cashbook's 500-row grid.
    *
-   * "Due today" padded out to a hundred rows would be ninety-odd empty ones under a heading that
-   * says how much cash the branch must open with — the filter would stop meaning anything. So
-   * they appear on All, with no search, agent or date narrowing, and only for someone who could
-   * have created the row anyway.
+   * Search and agent filters hide them so a name search is not padded with blanks. Compiled
+   * "All branches" cannot take new rows. Due today's cash figure lives on the desk, not in
+   * these empty rows.
    */
-  const sheetUnfiltered = tab === 'all' && !q.trim() && !agentId && !isRangeActive(range);
-  const blankRowCount =
-    sheetUnfiltered && props.canEdit && props.canCreate && !locked
-      ? Math.max(0, sheetLength - props.rows.length)
-      : 0;
+  const sheetUnfiltered = !q.trim() && !agentId && !props.compiledView;
+  const canTypeBlanks = sheetUnfiltered && props.canEdit && props.canCreate && !locked;
+  const blankRowCount = canTypeBlanks ? blankRows : 0;
+
+  /*
+    `growSheet` goes down the tree in a context, so its identity has to be stable or every cell
+    on the sheet re-renders each time the live list changes. What it needs to read — whether
+    blanks are allowed at all, and how many live rows sit above them — is kept in a ref rather
+    than in the dependency list: `visible` is rebuilt (and sorted) on every render, and naming it
+    as a dependency is what stops the React compiler memoizing this component.
+  */
+  const growGate = useRef({ allowed: false, filled: 0 });
+  useEffect(() => {
+    growGate.current = { allowed: canTypeBlanks, filled: visible.length };
+  });
+  const growSheet = useCallback((column: string) => {
+    const gate = growGate.current;
+    if (!gate.allowed) return;
+    setBlankRows((n) => {
+      const next = growBlankRows({ current: n, targetIndex: n });
+      // Where the caret should land: the first row that did not exist a moment ago, counted
+      // down this column across the live rows and the empty ones already under them.
+      if (next > n) pendingGrow.current = { column, index: gate.filled + n };
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const pending = pendingGrow.current;
+    if (!pending) return;
+    const tryFocus = () => {
+      const table = gridRef.current?.querySelector('table');
+      if (!table) return false;
+      const peers = Array.from(table.querySelectorAll<HTMLInputElement>(
+        `input[data-register-column="${CSS.escape(pending.column)}"]:not(:disabled)`,
+      ));
+      const el = peers[pending.index];
+      if (!el) return false;
+      pendingGrow.current = null;
+      el.focus({ preventScroll: true });
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      el.select();
+      return true;
+    };
+    requestAnimationFrame(() => {
+      if (!tryFocus()) requestAnimationFrame(tryFocus);
+    });
+  }, [blankRows]);
+
+  useEffect(() => {
+    const root = gridRef.current;
+    const sentinel = revealSentinelRef.current;
+    if (!root || !sentinel || !sheetUnfiltered || !props.canCreate) return;
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      setBlankRows((n) => growBlankRows({ current: n, targetIndex: n }));
+    }, { root, rootMargin: '240px' });
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [sheetUnfiltered, blankRows, props.canCreate]);
 
   /** Both desk money fields write the same row, so they commit through one call. */
   async function commitDayCash() {
@@ -1674,6 +1862,7 @@ export function RegisterSheet(props: {
   const liveCount = props.rows.filter((r) => BigInt(r.remainingPaise) > 0n).length;
 
   return (
+    <RegisterGrowContext.Provider value={growSheet}>
     <div className="space-y-3 print:space-y-2">
       {printScope && (
         <style>{`
@@ -1712,6 +1901,7 @@ export function RegisterSheet(props: {
                     <button
                       key={t}
                       type="button"
+                      data-register-tab={t}
                       onClick={() =>
                         applyFilter(
                           t === 'due'
@@ -1894,7 +2084,7 @@ export function RegisterSheet(props: {
                         className="rounded-[12px] border border-[var(--glass-border)] bg-[var(--page-bg)] p-3 shadow-[0_16px_40px_-12px_rgb(0_0_0/0.35)]"
                       >
                       <p className="mb-2 text-[0.75rem] text-[var(--muted-fg)]">
-                        How many blank rows?
+                        {MAX_BLANK_ROWS} empty rows are always waiting under the live ones — type or paste straight into them. This just brings more of them into view at once.
                       </p>
                       <div className="mb-2 flex gap-1">
                         {[1, 5, 10, 25].map((n) => (
@@ -1923,7 +2113,7 @@ export function RegisterSheet(props: {
                           // Lengthen the sheet rather than writing n DRAFT cases. Each row
                           // becomes real the moment somebody types in it, so this is instant
                           // and costs nothing if the clerk asked for more than they needed.
-                          setSheetLength((len) => Math.max(len, props.rows.length) + n);
+                          setBlankRows((len) => Math.min(MAX_BLANK_ROWS, len + n));
                           // The blank rows only render unfiltered, so go where they are.
                           setTab('all');
                           setQ('');
@@ -1946,7 +2136,7 @@ export function RegisterSheet(props: {
                         </Button>
                       </form>
                       <p className="mt-2 text-[0.68rem] text-[var(--faint-fg)]">
-                        Up to {MAX_ADD_ROWS} at once. They appear as blank draft rows.
+                        Or just type or paste from Excel into an empty row — nothing is saved until you leave it.
                       </p>
                       </div>
                     </div>
@@ -2795,7 +2985,23 @@ export function RegisterSheet(props: {
           left edge exactly when the clerk is reading the cash figure.
         */}
         <div ref={gridRef} className="min-h-[18rem] max-h-[min(66vh,46rem)] overflow-y-auto overflow-x-hidden overscroll-contain">
-          <table className="w-full table-fixed border-collapse text-[0.7rem]">
+          <table
+            className="w-full table-fixed border-collapse text-[0.7rem]"
+            onPaste={(event) => {
+              const text = event.clipboardData.getData('text/plain');
+              if (!text.includes('\t') && !text.includes('\n')) return;
+              const input = event.target instanceof HTMLElement
+                ? event.target.closest('input[data-register-cell]')
+                : null;
+              if (!(input instanceof HTMLInputElement)) return;
+              const rowEl = input.closest('tr');
+              const startRow = Number(rowEl?.dataset.registerIndex ?? input.dataset.registerIndex);
+              const startCol = input.dataset.registerColumn;
+              if (!startCol || !Number.isFinite(startRow)) return;
+              event.preventDefault();
+              void pasteRegister(startRow, startCol, text);
+            }}
+          >
             <thead className="sticky top-0 z-10 bg-[var(--surface-solid)]">
               <tr>
                 <th className={cn(th, 'w-7 print:hidden')}>
@@ -2835,7 +3041,7 @@ export function RegisterSheet(props: {
               </tr>
             </thead>
             <tbody>
-              {tableRows.length === 0 && (
+              {tableRows.length === 0 && blankRowCount === 0 && (
                 <tr>
                   <td className="px-4 py-10 text-center text-[var(--muted-fg)]" colSpan={18}>
                     {dateFilterOn
@@ -2856,11 +3062,11 @@ export function RegisterSheet(props: {
                               ? 'No rows in the register.'
                               : props.branchSwitch
                                 ? 'No rows in this branch. Choose All branches to see the existing register, or type a new row here.'
-                                : 'No rows. Add a row or import the Excel template.'}
+                                : 'No rows. Type into a blank row or paste from Excel.'}
                   </td>
                 </tr>
               )}
-              {tableRows.map((r) => {
+              {tableRows.map((r, rowIndex) => {
                 const arrears = missedDaysOf(r);
                 const missedDays = tab === 'missed' ? arrears : [];
                 const arrearsPay = arrears[0] ?? null;
@@ -2928,6 +3134,7 @@ export function RegisterSheet(props: {
                   <tr
                     key={r.id}
                     data-register-row={r.id}
+                    data-register-index={rowIndex}
                     className={cn(
                       'odd:bg-[var(--surface-solid)] even:bg-[var(--glass-bg-subtle)] hover:bg-[color-mix(in_oklab,var(--color-brand-500)_7%,var(--surface-solid))]',
                       tint,
@@ -3356,12 +3563,15 @@ export function RegisterSheet(props: {
               {/*
                 The empty rows. They exist only here — nothing reaches the database until a clerk
                 types in one and leaves it. Shown only on the unfiltered "All" view: padding a
-                filtered sheet with blanks would put 100 empty rows under "Due today".
+                filtered sheet with blanks would put hundreds of empty rows under "Due today".
+                Capacity is 500, same as the cashbook; more rows are revealed as you type, arrow
+                or scroll down.
               */}
               {blankRowCount > 0 &&
                 Array.from({ length: blankRowCount }, (_, i) => (
                   <BlankRow
                     key={`blank-${i}`}
+                    rowIndex={tableRows.length + i}
                     cols={shownCols}
                     extrasCol={hasExtras}
                     disabled={!props.canEdit || locked || !props.canCreate}
@@ -3372,6 +3582,11 @@ export function RegisterSheet(props: {
                     }}
                   />
                 ))}
+              {blankRowCount > 0 && blankRows < MAX_BLANK_ROWS && (
+                <tr ref={revealSentinelRef} aria-hidden className="h-0 print:hidden">
+                  <td colSpan={shownCols.length + 4} />
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -3425,5 +3640,6 @@ export function RegisterSheet(props: {
         />
       )}
     </div>
+    </RegisterGrowContext.Provider>
   );
 }

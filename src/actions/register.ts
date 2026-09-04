@@ -8,6 +8,7 @@ import { maturityCases, payoutInstalments } from '@/db/schema';
 import { requestMeta, requireActor } from '@/lib/auth/session';
 import { DEFAULT_OPERATIONS_MATURITY_ON } from '@/lib/maturity-operations';
 import { tryParseRupeesToPaise } from '@/lib/money';
+import { PASTE_CHUNK_ROWS } from '@/lib/sheet-grid';
 import { assertCan, assertCanTypeRegister, canOverrideDates, roleCan, type Actor, type ResourceRef } from '@/lib/rbac';
 import type { BulkTodayMode } from '@/lib/register-view';
 import { cancelCase } from '@/services/case-service';
@@ -260,6 +261,81 @@ export async function createRegisterRowWithFieldsAction(
     await updateRegisterRow(session, id, patch);
     revalidate();
     return ok({ id });
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+/** One line of a pasted block: an existing row to edit, or `null` to open a new one. */
+export interface PasteRegisterLine {
+  caseId: string | null;
+  patch: Parameters<typeof updateRegisterRow>[2];
+}
+
+export interface PasteRegisterOutcome {
+  written: number;
+  created: number;
+  failed: { line: number; error: string }[];
+}
+
+/**
+ * Write one chunk of a paste from Excel.
+ *
+ * Still one audited write per row — `updateRegisterRow` for a line that landed on a live row,
+ * create-then-update for a line that landed on an empty one, exactly as if the clerk had typed
+ * it. What this action removes is the NETWORK loop: pasting forty rows used to be forty round
+ * trips and forty `revalidatePath` sweeps, which is what made a real paste feel broken. The
+ * chunk is walked here, sequentially (see the note in register-bulk on why not concurrently),
+ * and the caches are swept once at the end.
+ *
+ * Failures are collected per line rather than thrown, because the realistic paste is "these
+ * thirty rows, two of which have a date Excel wrote in a format nobody expected".
+ */
+export async function pasteRegisterRowsAction(
+  branchId: string,
+  lines: PasteRegisterLine[],
+  lineOffset = 0,
+): Promise<ActionResult<PasteRegisterOutcome>> {
+  try {
+    const { session, actor } = await requireActor();
+    assertCanTypeRegister(actor);
+    if (!Array.isArray(lines) || lines.length === 0) {
+      return fail('Nothing to paste.', 'VALIDATION');
+    }
+    if (lines.length > PASTE_CHUNK_ROWS) {
+      return fail(`Paste is written ${PASTE_CHUNK_ROWS} rows at a time.`, 'VALIDATION');
+    }
+
+    const failed: PasteRegisterOutcome['failed'] = [];
+    let written = 0;
+    let created = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      const at = lineOffset + i + 1;
+      try {
+        if (line.caseId) {
+          const c = await scope(line.caseId);
+          if (!c) {
+            failed.push({ line: at, error: 'Row no longer exists' });
+            continue;
+          }
+          assertCanTypeRow(actor, c);
+          await updateRegisterRow(session, line.caseId, line.patch);
+        } else {
+          assertCan(actor, 'case.create', { branchId });
+          const id = await createBlankRegisterRow(session, branchId);
+          await updateRegisterRow(session, id, line.patch);
+          created += 1;
+        }
+        written += 1;
+      } catch (e) {
+        failed.push({ line: at, error: e instanceof Error ? e.message : 'Could not write this row' });
+      }
+    }
+
+    revalidate();
+    return ok({ written, created, failed });
   } catch (e) {
     return toActionError(e);
   }
