@@ -13,12 +13,10 @@ import {
   jumpToEdge,
   matchSheetShortcut,
   MAX_PASTE_ROWS,
+  BLANK_ROW_HEIGHT_PX,
   MAX_BLANK_ROWS,
   MAX_REGISTER_PASTE_ROWS,
-  INITIAL_BLANK_ROWS,
   PASTE_CHUNK_ROWS,
-  initialBlankRows,
-  growBlankRows,
   MAX_SHEET_ROWS,
   normalizeRange,
   parseClipboardGrid,
@@ -120,27 +118,16 @@ describe('auto-growing empty rows', () => {
 });
 
 describe('the register sheet always keeps 500 empty rows under the book', () => {
-  it('opens a runway of empty rows however long the live list already is', () => {
-    // The whole point of counting blanks instead of total rows: a branch past 500 live cases
-    // still gets somewhere to type, which is what sent clerks back to the Add rows button.
-    expect(initialBlankRows()).toBe(INITIAL_BLANK_ROWS);
-    expect(initialBlankRows()).toBeLessThanOrEqual(MAX_BLANK_ROWS);
+  it('counts capacity in empty rows, not in rows on the sheet', () => {
+    // The whole point of counting blanks: a branch past 500 live cases still gets somewhere to
+    // type, which is what sent clerks back to the Add rows button.
     expect(MAX_BLANK_ROWS).toBe(500);
   });
 
-  it('does not grow while the caret stays inside the empty rows already mounted', () => {
-    expect(growBlankRows({ current: 50, targetIndex: 0 })).toBe(50);
-    expect(growBlankRows({ current: 50, targetIndex: 49 })).toBe(50);
-  });
-
-  it('reveals another buffer when the caret walks off the bottom, and stops at 500', () => {
-    expect(growBlankRows({ current: 50, targetIndex: 50, buffer: 50 })).toBe(101);
-    expect(growBlankRows({ current: 480, targetIndex: 480, buffer: 50 })).toBe(500);
-    expect(growBlankRows({ current: 500, targetIndex: 900 })).toBe(500);
-  });
-
-  it('never shrinks', () => {
-    expect(growBlankRows({ current: 200, targetIndex: 5 })).toBe(200);
+  it('gives the virtualiser a fixed height, so the scrollbar is honest on the first paint', () => {
+    expect(BLANK_ROW_HEIGHT_PX).toBeGreaterThan(0);
+    // 500 uniform rows must add up to a scrollable sheet rather than a few hundred pixels.
+    expect(MAX_BLANK_ROWS * BLANK_ROW_HEIGHT_PX).toBeGreaterThan(10_000);
   });
 
   it('lets one paste cover the whole capacity, written in chunks', () => {

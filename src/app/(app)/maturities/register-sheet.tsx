@@ -21,7 +21,8 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
-import { Fragment, createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
@@ -52,14 +53,28 @@ import { Glass } from '@/components/ui/glass';
 import { Callout } from '@/components/ui/misc';
 import { PRODUCT_NAME } from '@/lib/brand';
 import {
-  growBlankRows,
-  initialBlankRows,
+  BLANK_ROW_HEIGHT_PX,
   MAX_BLANK_ROWS,
   MAX_REGISTER_PASTE_ROWS,
   PASTE_CHUNK_ROWS,
+  cellInSelection,
+  cellKey,
+  columnLetter,
+  fillDownPairs,
+  fillRightPairs,
+  jumpToEdge,
+  matchSheetShortcut,
+  normalizeRange,
   parseClipboardGrid,
   pasteIsoDate,
   pasteRupees,
+  rangeKeys,
+  selectionBounds,
+  serializeClipboardGrid,
+  toggleCellInSelection,
+  unionSelection,
+  type CellPos,
+  type SheetRange,
 } from '@/lib/sheet-grid';
 import { excelCellRaw } from '@/lib/excel-register';
 import {
@@ -180,6 +195,7 @@ const cell =
 
 function SortTh({
   label,
+  letter,
   hint,
   col,
   sortKey,
@@ -189,6 +205,8 @@ function SortTh({
   className,
 }: {
   label: string;
+  /** The spreadsheet letter for this column — A, B, C — shown above the heading. */
+  letter?: string;
   /**
    * What this column is for, on hover.
    *
@@ -207,6 +225,17 @@ function SortTh({
   const active = sortKey === col;
   return (
     <th className={cn(th, right && num, className)} title={hint}>
+      {letter && (
+        <span
+          className={cn(
+            'block font-mono text-[0.58rem] font-bold text-[var(--color-brand-700)] print:hidden',
+            right && 'text-right',
+          )}
+          aria-hidden
+        >
+          {letter}
+        </span>
+      )}
       <button
         type="button"
         onClick={() => onSort(col)}
@@ -225,7 +254,46 @@ function SortTh({
   );
 }
 
-const RegisterGrowContext = createContext<(column: string) => void>(() => {});
+/**
+ * What a cell needs to know about the sheet around it.
+ *
+ * Arrow keys used to walk the DOM — `querySelectorAll` for the inputs in this column, then step
+ * to the next one. That stops working the moment the empty rows are virtualised, because the row
+ * below the viewport is not in the document to be found. So movement is expressed in COORDINATES
+ * and the sheet resolves them: it scrolls the row into existence first, then puts the caret in it.
+ */
+interface RegisterSheetNav {
+  columns: string[];
+  lastRow: number;
+  moveTo: (rowIndex: number, column: string, shift: boolean) => void;
+  select: (rowIndex: number, column: string, mods: { shift?: boolean; ctrl?: boolean }) => void;
+}
+
+const RegisterSheetContext = createContext<RegisterSheetNav>({
+  columns: [],
+  lastRow: 0,
+  moveTo: () => {},
+  select: () => {},
+});
+
+/** The cell a pointer or keyboard event happened in, read off the `<td>` it bubbled through. */
+function cellFromEvent(target: EventTarget | null, columns: string[]): CellPos | null {
+  const el = target instanceof Element ? target.closest('[data-register-index][data-register-col]') : null;
+  if (!(el instanceof HTMLElement)) return null;
+  const r = Number(el.dataset.registerIndex);
+  const col = el.dataset.registerCol;
+  if (!col || !Number.isFinite(r)) return null;
+  const c = columns.indexOf(col);
+  return c < 0 ? null : { r, c };
+}
+
+/** True when the caret is not inside a partly-selected value — i.e. the whole cell is up. */
+function wholeCellSelected(input: HTMLInputElement): boolean {
+  return input.selectionStart === 0 && input.selectionEnd === input.value.length;
+}
+
+/** The tint for a cell inside the selected block. One class, so nothing layers over the row tint. */
+const SELECTED_CELL = 'bg-[color-mix(in_oklab,var(--color-brand-500)_22%,transparent)]';
 
 function CellInput({
   value,
@@ -256,7 +324,7 @@ function CellInput({
   // 1000000 and 10,00,000 in adjacent columns made the sheet hard to scan, but grouping a cell
   // that someone is typing into fights the caret. So: grouped at rest, raw the moment it has focus.
   const [focused, setFocused] = useState(false);
-  const growSheet = useContext(RegisterGrowContext);
+  const nav = useContext(RegisterSheetContext);
   return (
     <input
       className={cn(cell, className)}
@@ -275,7 +343,19 @@ function CellInput({
         setFocused(false);
         onCommit(e.target.value);
       }}
+      onPointerDown={(e) => {
+        // FocusEvent carries no modifier keys, so Shift/Ctrl-click has to be caught here for the
+        // selection to see them. Preventing default keeps the caret out of the cell while the
+        // clerk is drawing a block rather than editing one.
+        if (e.shiftKey || e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          const pos = cellFromEvent(e.currentTarget, nav.columns);
+          if (pos) nav.select(pos.r, nav.columns[pos.c] ?? cellKey, { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey });
+        }
+      }}
       onKeyDown={(e) => {
+        if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.blur(); return; }
+        if (e.ctrlKey || e.metaKey) return;
         const direction = e.key === 'Enter' ? 'ArrowDown' : e.key;
         if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(direction)) return;
 
@@ -284,26 +364,16 @@ function CellInput({
         e.preventDefault();
         e.stopPropagation();
 
-        const current = e.currentTarget;
-        const table = current.closest('table');
-        if (!table) return;
-        const all = Array.from(
-          table.querySelectorAll<HTMLInputElement>('input[data-register-cell="true"]:not(:disabled)'),
-        );
+        const here = cellFromEvent(e.currentTarget, nav.columns);
+        if (!here) return;
         const vertical = direction === 'ArrowUp' || direction === 'ArrowDown';
-        const peers = vertical
-          ? all.filter((el) => el.dataset.registerColumn === cellKey)
-          : all.filter((el) => el.dataset.registerRow === rowKey);
-        const at = peers.indexOf(current);
         const delta = direction === 'ArrowUp' || direction === 'ArrowLeft' ? -1 : 1;
-        const next = peers[at + delta];
-        if (!next) {
-          if (delta > 0) growSheet(cellKey);
-          return;
-        }
-        next.focus({ preventScroll: true });
-        next.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-        next.select();
+        const nextR = vertical ? here.r + delta : here.r;
+        const nextC = vertical ? here.c : here.c + delta;
+        if (nextR < 0 || nextR > nav.lastRow) return;
+        const column = nav.columns[nextC];
+        if (!column) return;
+        nav.moveTo(nextR, column, e.shiftKey);
       }}
     />
   );
@@ -492,9 +562,6 @@ type ExtraMode = 'today' | 'all';
 /** Which bulk popover is open, if any. */
 type BulkMenu = 'today' | 'agent' | 'remove' | null;
 
-/** Mirrors MAX_BLANK_ROWS_PER_CALL in register-service. The server enforces the real limit. */
-const MAX_ADD_ROWS = 100;
-
 /**
  * One of the sheet's empty rows.
  *
@@ -505,17 +572,28 @@ const MAX_ADD_ROWS = 100;
  *
  * `onCommitted` refreshes the sheet; the new row then arrives as a normal row from the server.
  */
+/**
+ * One of the empty rows.
+ *
+ * It holds its own drafts and writes nothing until focus leaves the row, so a clerk filling four
+ * cells across creates ONE case rather than four. Rendered by the virtualiser, which means it can
+ * be unmounted while off screen — the drafts live with the row, so scrolling a half-typed row out
+ * of view and back loses it. That is the same bargain the cashbook makes, and the reason the row
+ * commits on the way out rather than on a timer.
+ */
 function BlankRow({
   cols,
   extrasCol,
   disabled,
   rowIndex,
+  isSelected,
   onCommit,
 }: {
   cols: RegisterColDef[];
   extrasCol: boolean;
   disabled: boolean;
   rowIndex: number;
+  isSelected: (r: number, c: number) => boolean;
   onCommit: (patch: Record<string, string>) => Promise<void>;
 }) {
   const [vals, setVals] = useState<Record<string, string>>({});
@@ -546,11 +624,23 @@ function BlankRow({
         void commit();
       }}
     >
+      <td
+        data-register-rowhead={rowIndex}
+        className={cn(td, 'cursor-pointer bg-[color-mix(in_oklab,var(--color-brand-500)_6%,var(--surface-solid))] px-1 text-center font-mono text-[0.62rem] font-semibold text-[var(--faint-fg)] print:hidden')}
+        title="Click to select this whole row"
+      >
+        {rowIndex + 1}
+      </td>
       <td className={cn(td, 'print:hidden')} />
-      {cols.map((c) => {
+      {cols.map((c, colIndex) => {
         const typed = COL_PATCH_FIELD[c.id] != null;
         return (
-          <td key={c.id} className={cn(td, c.right && num)}>
+          <td
+            key={c.id}
+            data-register-index={rowIndex}
+            data-register-col={c.id}
+            className={cn(td, c.right && num, isSelected(rowIndex, colIndex) && SELECTED_CELL)}
+          >
             {typed && !disabled ? (
               <CellInput
                 rowKey={rowKey}
@@ -573,6 +663,88 @@ function BlankRow({
       <td className={cn(td, 'print:hidden')} />
       {extrasCol && <td className={cn(td, 'print:hidden')} />}
     </tr>
+  );
+}
+
+/**
+ * The five hundred empty rows, of which about twenty are ever in the DOM.
+ *
+ * `useVirtualizer` measures the scroll container the sheet already has and reports the window of
+ * rows that would be visible in it. Everything above and below that window is replaced by a
+ * single spacer row of the right height, which is what keeps the scrollbar honest without paying
+ * for six thousand inputs.
+ *
+ * The component also publishes a `scrollTo` into `registerScrollTo`, because the keyboard has to
+ * be able to send the caret to a row that does not exist yet: arrowing off the bottom, Ctrl+End,
+ * or a paste that runs past the last visible row all scroll the row into being first.
+ */
+function BlankRows({
+  count,
+  offset,
+  cols,
+  extrasCol,
+  disabled,
+  scrollRef,
+  registerScrollTo,
+  isSelected,
+  onCommit,
+}: {
+  count: number;
+  offset: number;
+  cols: RegisterColDef[];
+  extrasCol: boolean;
+  disabled: boolean;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  registerScrollTo: React.RefObject<((index: number) => void) | null>;
+  isSelected: (r: number, c: number) => boolean;
+  onCommit: (patch: Record<string, string>) => Promise<void>;
+}) {
+  const virtualizer = useVirtualizer({
+    count,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => BLANK_ROW_HEIGHT_PX,
+    overscan: 12,
+  });
+
+  useEffect(() => {
+    registerScrollTo.current = (index: number) => {
+      if (index < 0 || index >= count) return;
+      virtualizer.scrollToIndex(index, { align: 'center' });
+    };
+    return () => { registerScrollTo.current = null; };
+  }, [virtualizer, count, registerScrollTo]);
+
+  const items = virtualizer.getVirtualItems();
+  const first = items[0];
+  const last = items[items.length - 1];
+  const padTop = first ? first.start : 0;
+  const padBottom = last ? virtualizer.getTotalSize() - last.end : 0;
+  const span = cols.length + 3 + (extrasCol ? 1 : 0);
+
+  return (
+    <>
+      {padTop > 0 && (
+        <tr aria-hidden className="print:hidden">
+          <td colSpan={span} style={{ height: padTop, padding: 0, border: 0 }} />
+        </tr>
+      )}
+      {items.map((item) => (
+        <BlankRow
+          key={item.key}
+          rowIndex={offset + item.index}
+          cols={cols}
+          extrasCol={extrasCol}
+          disabled={disabled}
+          isSelected={isSelected}
+          onCommit={onCommit}
+        />
+      ))}
+      {padBottom > 0 && (
+        <tr aria-hidden className="print:hidden">
+          <td colSpan={span} style={{ height: padBottom, padding: 0, border: 0 }} />
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -843,7 +1015,31 @@ export function RegisterSheet(props: {
   const [onlinePlan, setOnlinePlan] = useState(rupeesStr(BigInt(props.plannedOnlinePaise)));
   const [draft, setDraft] = useState<Record<string, Partial<Record<string, string>>>>({});
   const restoreFocusRef = useRef<{ row: string; column: string } | null>(null);
-  const pendingGrow = useRef<{ column: string; index: number } | null>(null);
+  /** A cell the sheet has been asked to put the caret in once its row exists in the DOM. */
+  const pendingFocusRef = useRef<{ r: number; column: string; shift: boolean } | null>(null);
+  const draggingRef = useRef(false);
+
+  /*
+    The selected block, in sheet coordinates.
+
+    `anchor` is where the block started and `focus` is the live corner, so Shift-click and
+    drag-select both reduce to "move the focus". `extra` holds cells added with Ctrl-click, which
+    do not form a rectangle and so cannot be described by the two corners alone.
+  */
+  const [anchor, setAnchor] = useState<CellPos | null>(null);
+  const [focusCell, setFocusCell] = useState<CellPos | null>(null);
+  const [extra, setExtra] = useState<Set<string>>(() => new Set());
+
+  /*
+    Undo history.
+
+    Each entry is one cell's before/after, which is exactly the granularity the writes happen at
+    — undoing replays the earlier value back through the SAME audited server action, so a reversal
+    leaves its own audit line rather than quietly rewriting history. Kept in refs because nothing
+    on screen renders from them and every push would otherwise re-render the whole sheet.
+  */
+  const undoRef = useRef<{ rowId: string; col: RegisterColId; before: string; after: string }[]>([]);
+  const redoRef = useRef<{ rowId: string; col: RegisterColId; before: string; after: string }[]>([]);
   const initialSort = autoSortFor(initialTab, '', 'payment');
   const [sortKey, setSortKey] = useState<SortKey>(initialSort.key);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(initialSort.dir);
@@ -866,17 +1062,16 @@ export function RegisterSheet(props: {
     });
   }, [props.rows]);
 
-  /**
-   * How many EMPTY rows sit under the live ones.
-   *
-   * Counted in blanks, not in "rows on the sheet". A register that has passed 500 live cases
-   * would otherwise have no room left to type in — which is exactly how the sheet ended up
-   * needing the Add rows button before anyone could enter anything. There are always 500 empty
-   * rows available here, however long the book already is; 50 of them are mounted up front and
-   * the rest appear as the caret, the scrollbar or a paste reaches them, so a quiet day does
-   * not carry six thousand idle inputs.
-   */
-  const [blankRows, setBlankRows] = useState(() => initialBlankRows());
+  /*
+    The empty rows are all there, all the time.
+
+    Counted in blanks rather than in "rows on the sheet": a register that has passed 500 live
+    cases would otherwise have no room left to type in, which is how this sheet ended up needing
+    the Add rows button before anybody could enter anything. All 500 exist from the first paint —
+    the virtualiser below keeps only the ones on screen in the DOM, so the cost of holding them is
+    a number, not six thousand inputs.
+  */
+  const blankRows = MAX_BLANK_ROWS;
 
   /** Rows whose off-screen columns are expanded. */
   const [openExtras, setOpenExtras] = useState<Record<string, boolean>>({});
@@ -888,7 +1083,8 @@ export function RegisterSheet(props: {
    * narrow screen; on a wide one the observer corrects it before the browser paints.
    */
   const gridRef = useRef<HTMLDivElement>(null);
-  const revealSentinelRef = useRef<HTMLTableRowElement>(null);
+  /** Set by the virtualiser: scroll empty row `n` into existence so the caret can land in it. */
+  const blankScrollRef = useRef<((index: number) => void) | null>(null);
   const [gridWidth, setGridWidth] = useState(0);
   useEffect(() => {
     const el = gridRef.current;
@@ -1317,15 +1513,6 @@ export function RegisterSheet(props: {
     const colIds = shownCols.map((c) => c.id);
     const startC = colIds.indexOf(startColId as RegisterColId);
     if (startC < 0) return;
-
-    // Open enough empty rows to hold the block before anything is written, so the rows the paste
-    // lands in are on screen when the refresh comes back.
-    if (canTypeBlanks) {
-      const lastBlank = startRow + grid.length - 1 - visible.length;
-      if (lastBlank >= 0) {
-        setBlankRows((n) => growBlankRows({ current: n, targetIndex: lastBlank }));
-      }
-    }
 
     type Line = { caseId: string | null; patch: Parameters<typeof saveRegisterFieldsAction>[1] };
     const lines: Line[] = [];
@@ -1795,62 +1982,392 @@ export function RegisterSheet(props: {
   const canTypeBlanks = sheetUnfiltered && props.canEdit && props.canCreate && !locked;
   const blankRowCount = canTypeBlanks ? blankRows : 0;
 
-  /*
-    `growSheet` goes down the tree in a context, so its identity has to be stable or every cell
-    on the sheet re-renders each time the live list changes. What it needs to read — whether
-    blanks are allowed at all, and how many live rows sit above them — is kept in a ref rather
-    than in the dependency list: `visible` is rebuilt (and sorted) on every render, and naming it
-    as a dependency is what stops the React compiler memoizing this component.
-  */
-  const growGate = useRef({ allowed: false, filled: 0 });
-  useEffect(() => {
-    growGate.current = { allowed: canTypeBlanks, filled: visible.length };
-  });
-  const growSheet = useCallback((column: string) => {
-    const gate = growGate.current;
-    if (!gate.allowed) return;
-    setBlankRows((n) => {
-      const next = growBlankRows({ current: n, targetIndex: n });
-      // Where the caret should land: the first row that did not exist a moment ago, counted
-      // down this column across the live rows and the empty ones already under them.
-      if (next > n) pendingGrow.current = { column, index: gate.filled + n };
-      return next;
-    });
-  }, []);
+  const colIds = useMemo(() => shownCols.map((c) => c.id), [shownCols]);
+  const lastSheetRow = Math.max(0, visible.length + blankRowCount - 1);
+  const lastSheetCol = Math.max(0, colIds.length - 1);
+  const selection: SheetRange | null = anchor && focusCell ? normalizeRange(anchor, focusCell) : null;
+  const selectedCells = useMemo(() => unionSelection(selection, extra), [selection, extra]);
 
-  useEffect(() => {
-    const pending = pendingGrow.current;
-    if (!pending) return;
-    const tryFocus = () => {
-      const table = gridRef.current?.querySelector('table');
-      if (!table) return false;
-      const peers = Array.from(table.querySelectorAll<HTMLInputElement>(
-        `input[data-register-column="${CSS.escape(pending.column)}"]:not(:disabled)`,
-      ));
-      const el = peers[pending.index];
-      if (!el) return false;
-      pendingGrow.current = null;
+  const isSelected = useCallback(
+    (r: number, c: number) => (c < 0 ? false : cellInSelection(r, c, selection, extra)),
+    [selection, extra],
+  );
+
+  const selectCell = useCallback((r: number, c: number, mods: { shift?: boolean; ctrl?: boolean; drag?: boolean }) => {
+    if (c < 0) return;
+    if (mods.ctrl) {
+      setExtra((prev) => toggleCellInSelection(prev, anchor && focusCell ? normalizeRange(anchor, focusCell) : null, r, c));
+      setAnchor({ r, c });
+      setFocusCell({ r, c });
+      return;
+    }
+    if (mods.shift || mods.drag) {
+      setFocusCell({ r, c });
+      setAnchor((current) => current ?? { r, c });
+      return;
+    }
+    setExtra(new Set());
+    setAnchor({ r, c });
+    setFocusCell({ r, c });
+  }, [anchor, focusCell]);
+
+  /*
+    Put the caret in a cell named by coordinates.
+
+    The row may not be in the document — it is one of the virtualised empty rows below the fold —
+    so the scroll comes first and the focus follows on the next frame, once the virtualiser has
+    mounted it. `pendingFocusRef` carries the request across that gap.
+  */
+  const focusSheetCell = useCallback((r: number, column: string, shift = false) => {
+    const c = colIds.indexOf(column as RegisterColId);
+    if (c < 0) return;
+    const row = Math.max(0, Math.min(lastSheetRow, r));
+    selectCell(row, c, { shift });
+    const find = () =>
+      gridRef.current?.querySelector<HTMLInputElement>(
+        `[data-register-index="${row}"][data-register-col="${CSS.escape(column)}"] input:not(:disabled)`,
+      ) ?? null;
+    const land = (el: HTMLInputElement) => {
       el.focus({ preventScroll: true });
       el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      el.select();
-      return true;
+      if (!shift) el.select();
     };
+    const here = find();
+    if (here) { land(here); return; }
+    pendingFocusRef.current = { r: row, column, shift };
+    blankScrollRef.current?.(row - visible.length);
     requestAnimationFrame(() => {
-      if (!tryFocus()) requestAnimationFrame(tryFocus);
+      const el = find();
+      if (!el) return;
+      pendingFocusRef.current = null;
+      land(el);
     });
-  }, [blankRows]);
+  }, [colIds, lastSheetRow, selectCell, visible.length]);
+
+  /*
+    The navigation surface handed to every cell.
+
+    Kept in a ref-backed callback with a stable identity: it travels down the tree in a context,
+    and a value that changed on every render would re-render every mounted cell each time the
+    live list is rebuilt.
+  */
+  const navRef = useRef({ focusSheetCell, selectCell, colIds, lastSheetRow });
+  useEffect(() => {
+    navRef.current = { focusSheetCell, selectCell, colIds, lastSheetRow };
+  });
+  const sheetNav = useMemo<RegisterSheetNav>(() => ({
+    columns: colIds,
+    lastRow: lastSheetRow,
+    moveTo: (r, column, shift) => navRef.current.focusSheetCell(r, column, shift),
+    select: (r, column, mods) => {
+      const c = navRef.current.colIds.indexOf(column as RegisterColId);
+      if (c >= 0) navRef.current.selectCell(r, c, mods);
+    },
+  }), [colIds, lastSheetRow]);
 
   useEffect(() => {
-    const root = gridRef.current;
-    const sentinel = revealSentinelRef.current;
-    if (!root || !sentinel || !sheetUnfiltered || !props.canCreate) return;
-    const io = new IntersectionObserver((entries) => {
-      if (!entries.some((entry) => entry.isIntersecting)) return;
-      setBlankRows((n) => growBlankRows({ current: n, targetIndex: n }));
-    }, { root, rootMargin: '240px' });
-    io.observe(sentinel);
-    return () => io.disconnect();
-  }, [sheetUnfiltered, blankRows, props.canCreate]);
+    const endDrag = () => { draggingRef.current = false; };
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
+    return () => {
+      window.removeEventListener('pointerup', endDrag);
+      window.removeEventListener('pointercancel', endDrag);
+    };
+  }, []);
+
+  function onSheetPointerDown(event: ReactPointerEvent<HTMLTableElement>) {
+    if (event.button !== 0) return;
+    const head = event.target instanceof Element ? event.target.closest('[data-register-rowhead]') : null;
+    if (head instanceof HTMLElement) {
+      // The row number is a row selector, the way it is in Excel.
+      event.preventDefault();
+      const r = Number(head.dataset.registerRowhead);
+      if (!Number.isFinite(r)) return;
+      if (event.ctrlKey || event.metaKey) {
+        setExtra((prev) => {
+          const next = new Set(prev);
+          if (selection) for (const key of rangeKeys(selection)) next.add(key);
+          for (let c = 0; c <= lastSheetCol; c++) next.add(cellKey(r, c));
+          return next;
+        });
+        setAnchor({ r, c: 0 });
+        setFocusCell({ r, c: lastSheetCol });
+        return;
+      }
+      setExtra(new Set());
+      setAnchor(event.shiftKey && anchor ? { r: anchor.r, c: 0 } : { r, c: 0 });
+      setFocusCell({ r, c: lastSheetCol });
+      return;
+    }
+    const pos = cellFromEvent(event.target, colIds);
+    if (!pos) return;
+    const ctrl = event.ctrlKey || event.metaKey;
+    if (event.shiftKey || ctrl) event.preventDefault();
+    selectCell(pos.r, pos.c, { shift: event.shiftKey, ctrl });
+    draggingRef.current = !ctrl;
+  }
+
+  function onSheetPointerMove(event: ReactPointerEvent<HTMLTableElement>) {
+    if (!draggingRef.current) return;
+    const pos = cellFromEvent(document.elementFromPoint(event.clientX, event.clientY), colIds);
+    if (pos) selectCell(pos.r, pos.c, { drag: true });
+  }
+
+  /**
+   * The value of one cell as plain text — no digit grouping, no ₹.
+   *
+   * This is what Ctrl+C writes and what the undo stack remembers, so it has to round-trip: what
+   * comes out here must be something `pasteCellPatch` can read straight back in.
+   */
+  function cellText(r: RegisterRow, col: RegisterColId): string {
+    switch (col) {
+      case 'account': return r.accountNumber ?? '';
+      case 'customer': return r.customerName;
+      case 'agent': return r.agentName;
+      case 'days': return String(r.windowDays);
+      case 'maturityDate': return r.instrumentMaturityOn ? formatDMY(r.instrumentMaturityOn) : '';
+      case 'formDate': return formatDMY(r.formSubmittedOn);
+      case 'paymentDate': return r.paymentOn ? formatDMY(r.paymentOn) : '';
+      case 'amount': return rupeesStr(BigInt(r.maturityPaise));
+      case 'paid': return rupeesStr(BigInt(r.paidPaise));
+      case 'remaining': return rupeesStr(BigInt(r.remainingPaise));
+      case 'today': return rupeesStr(payoutOnDate(r, viewDay) ? plannedOnDate(r, selectedPayoutDate).total : BigInt(r.todayPaise));
+      case 'cash': return rupeesStr(payoutOnDate(r, viewDay) ? plannedOnDate(r, selectedPayoutDate).cash : BigInt(r.todayCashPaise));
+      case 'online': return rupeesStr(payoutOnDate(r, viewDay) ? plannedOnDate(r, selectedPayoutDate).online : BigInt(r.todayOnlinePaise));
+      case 'perDay': return rupeesStr(recommendedPerDay(BigInt(r.remainingPaise), BigInt(r.maturityPaise), r.windowDays));
+      case 'paidToday': return rupeesStr(paidOnDate(r, viewDay, props.today).total);
+      case 'paidCashToday': return rupeesStr(paidOnDate(r, viewDay, props.today).cash);
+      case 'paidOnlineToday': return rupeesStr(paidOnDate(r, viewDay, props.today).online);
+    }
+  }
+
+  /**
+   * Write one cell on a live row, and remember it for undo.
+   *
+   * The boundary is `COL_PATCH_FIELD`: the columns a clerk types into. Everything outside it is
+   * either derived (Remaining, Recommended) or moves money at the counter (Paid today and its
+   * cash/online halves, Taken, Not taken). Those are deliberately out of reach of fill, clear,
+   * paste and undo — a Ctrl+D that silently paid out forty customers is not a feature, and the
+   * payment path asks for a reference and a reason that a bulk gesture cannot answer.
+   */
+  async function applyCell(row: RegisterRow, col: RegisterColId, raw: string, recordUndo = true) {
+    if (!COL_PATCH_FIELD[col]) return false;
+    if (!props.canEdit || locked) return false;
+    const before = cellText(row, col);
+    const patch = pasteCellPatch(col, raw);
+    // An empty string is a legitimate clear; anything else unreadable is left alone rather than
+    // written as a zero.
+    if (!patch && raw.trim() !== '') return false;
+    const after = patch ? String(Object.values(patch)[0] ?? '') : '';
+    if (before === after) return false;
+    if (recordUndo) {
+      undoRef.current.push({ rowId: row.id, col, before, after });
+      redoRef.current = [];
+    }
+    await save(row.id, (patch ?? { [COL_PATCH_FIELD[col]!]: '' }) as Parameters<typeof saveRegisterFieldsAction>[1]);
+    return true;
+  }
+
+  function copySelection() {
+    const cells = selectedCells.length > 0 ? selectedCells : (focusCell ? [focusCell] : []);
+    if (cells.length === 0) return;
+    const bounds = selectionBounds(cells);
+    if (!bounds) return;
+    const picked = new Set(cells.map((pos) => cellKey(pos.r, pos.c)));
+    const block: string[][] = [];
+    for (let r = bounds.r0; r <= bounds.r1; r++) {
+      const row = visible[r];
+      const line: string[] = [];
+      for (let c = bounds.c0; c <= bounds.c1; c++) {
+        const col = colIds[c];
+        line.push(picked.has(cellKey(r, c)) && row && col ? cellText(row, col) : '');
+      }
+      block.push(line);
+    }
+    void navigator.clipboard.writeText(serializeClipboardGrid(block));
+    toast.success(cells.length === 1 ? 'Copied' : `Copied ${cells.length} cells`);
+  }
+
+  async function clearSelected() {
+    const cells = selectedCells.length > 0 ? selectedCells : (focusCell ? [focusCell] : []);
+    let n = 0;
+    for (const pos of cells) {
+      const col = colIds[pos.c];
+      const row = visible[pos.r];
+      if (!col || !row) continue;
+      if (await applyCell(row, col, '')) n++;
+    }
+    if (n > 0) toast.success(n === 1 ? 'Cleared 1 cell' : `Cleared ${n} cells`);
+  }
+
+  async function applyFillPairs(pairs: { from: CellPos; to: CellPos }[]) {
+    let n = 0;
+    for (const pair of pairs) {
+      const fromCol = colIds[pair.from.c];
+      const toCol = colIds[pair.to.c];
+      const src = visible[pair.from.r];
+      const dest = visible[pair.to.r];
+      if (!fromCol || !toCol || !src || !dest) continue;
+      if (await applyCell(dest, toCol, cellText(src, fromCol))) n++;
+    }
+    if (n > 0) toast.success(n === 1 ? 'Filled 1 cell' : `Filled ${n} cells`);
+  }
+
+  function undoSheet() {
+    const item = undoRef.current.pop();
+    if (!item) return false;
+    const row = props.rows.find((r) => r.id === item.rowId);
+    if (!row) return true;
+    redoRef.current.push(item);
+    void applyCell(row, item.col, item.before, false);
+    return true;
+  }
+
+  function redoSheet() {
+    const item = redoRef.current.pop();
+    if (!item) return false;
+    const row = props.rows.find((r) => r.id === item.rowId);
+    if (!row) return true;
+    undoRef.current.push(item);
+    void applyCell(row, item.col, item.after, false);
+    return true;
+  }
+
+  /*
+    The spreadsheet keyboard.
+
+    Registered in the capture phase on the window so a shortcut works whether the caret is in a
+    cell or the sheet merely has a selection. `matchSheetShortcut` owns which chord means what;
+    everything here is about whether the sheet should take the key at all — a Backspace inside a
+    half-typed value belongs to the input, the same Backspace over a selected block clears it.
+  */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const shortcut = matchSheetShortcut(event);
+      if (!shortcut) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const input = target instanceof HTMLInputElement && target.dataset.registerCell ? target : null;
+      const inSheet = Boolean(target?.closest('[data-register-sheet]'));
+      if (!inSheet && shortcut.action !== 'undo' && shortcut.action !== 'redo' && shortcut.action !== 'find') return;
+      const block = selectedCells.length > 1;
+      const range = selection ?? (focusCell ? { r0: focusCell.r, c0: focusCell.c, r1: focusCell.r, c1: focusCell.c } : null);
+      const editable = props.canEdit && !locked;
+
+      if (shortcut.action === 'copy' || shortcut.action === 'cut') {
+        // A partial text selection inside one cell is the browser's to copy, not the sheet's.
+        if (!block && input && window.getSelection()?.toString() && !wholeCellSelected(input)) return;
+        event.preventDefault();
+        copySelection();
+        if (shortcut.action === 'cut' && editable) void clearSelected();
+        return;
+      }
+      if (shortcut.action === 'paste') {
+        if (!focusCell || !editable) return;
+        event.preventDefault();
+        void navigator.clipboard
+          .readText()
+          .then((text) => pasteRegister(focusCell.r, colIds[focusCell.c] ?? '', text))
+          .catch(() => toast.error('Could not read the clipboard — use Ctrl+V inside a cell instead.'));
+        return;
+      }
+      if (shortcut.action === 'undo') {
+        if (!undoSheet()) return;
+        event.preventDefault();
+        return;
+      }
+      if (shortcut.action === 'redo') {
+        if (!redoSheet()) return;
+        event.preventDefault();
+        return;
+      }
+      if (shortcut.action === 'selectAll') {
+        event.preventDefault();
+        setExtra(new Set());
+        setAnchor({ r: 0, c: 0 });
+        setFocusCell({ r: lastSheetRow, c: lastSheetCol });
+        return;
+      }
+      if (shortcut.action === 'selectRow' && focusCell) {
+        event.preventDefault();
+        setExtra(new Set());
+        setAnchor({ r: focusCell.r, c: 0 });
+        setFocusCell({ r: focusCell.r, c: lastSheetCol });
+        return;
+      }
+      if (shortcut.action === 'selectColumn' && focusCell) {
+        event.preventDefault();
+        setExtra(new Set());
+        setAnchor({ r: 0, c: focusCell.c });
+        setFocusCell({ r: lastSheetRow, c: focusCell.c });
+        return;
+      }
+      if (shortcut.action === 'clear' || shortcut.action === 'backspace') {
+        if (!editable) return;
+        if (!block && input && !wholeCellSelected(input)) return;
+        event.preventDefault();
+        void clearSelected();
+        return;
+      }
+      if (shortcut.action === 'fillDown' && range && editable) {
+        event.preventDefault();
+        void applyFillPairs(fillDownPairs(range));
+        return;
+      }
+      if (shortcut.action === 'fillRight' && range && editable) {
+        event.preventDefault();
+        void applyFillPairs(fillRightPairs(range));
+        return;
+      }
+      if (shortcut.action === 'fillSelection' && focusCell && editable) {
+        event.preventDefault();
+        const from = focusCell;
+        void applyFillPairs(
+          selectedCells.filter((pos) => pos.r !== from.r || pos.c !== from.c).map((pos) => ({ from, to: pos })),
+        );
+        return;
+      }
+      if (shortcut.action === 'home' && focusCell) {
+        if (shortcut.extent === 'row' && input && !wholeCellSelected(input)) return;
+        event.preventDefault();
+        focusSheetCell(shortcut.extent === 'sheet' ? 0 : focusCell.r, colIds[0] ?? '', shortcut.shift);
+        return;
+      }
+      if (shortcut.action === 'end' && focusCell) {
+        if (shortcut.extent === 'row' && input && !wholeCellSelected(input)) return;
+        event.preventDefault();
+        const r = shortcut.extent === 'sheet' ? Math.max(0, visible.length - 1) : focusCell.r;
+        focusSheetCell(r, colIds[lastSheetCol] ?? '', shortcut.shift);
+        return;
+      }
+      if (shortcut.action === 'jump' && focusCell) {
+        event.preventDefault();
+        const next = jumpToEdge({
+          from: focusCell,
+          dir: shortcut.dir,
+          lastRow: lastSheetRow,
+          lastCol: lastSheetCol,
+          filled: (r, c) => {
+            const col = colIds[c];
+            const row = visible[r];
+            return Boolean(col && row && cellText(row, col).trim() !== '');
+          },
+        });
+        focusSheetCell(next.r, colIds[next.c] ?? '', shortcut.shift);
+        return;
+      }
+      if (shortcut.action === 'find') {
+        event.preventDefault();
+        document.querySelector<HTMLInputElement>('input[data-register-search]')?.focus();
+        return;
+      }
+      if (shortcut.action === 'save') {
+        event.preventDefault();
+        toast.message('Cells save when you leave them — there is no separate Save.');
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  });
 
   /** Both desk money fields write the same row, so they commit through one call. */
   async function commitDayCash() {
@@ -1862,7 +2379,7 @@ export function RegisterSheet(props: {
   const liveCount = props.rows.filter((r) => BigInt(r.remainingPaise) > 0n).length;
 
   return (
-    <RegisterGrowContext.Provider value={growSheet}>
+    <RegisterSheetContext.Provider value={sheetNav}>
     <div className="space-y-3 print:space-y-2">
       {printScope && (
         <style>{`
@@ -1951,6 +2468,7 @@ export function RegisterSheet(props: {
                 <span className="sr-only">Search name, account or agent</span>
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--faint-fg)]" />
                 <Input
+                  data-register-search="true"
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
                   placeholder="Name, A/c, agent"
@@ -2067,9 +2585,10 @@ export function RegisterSheet(props: {
                     onClick={() => setAddOpen((v) => !v)}
                     aria-expanded={addOpen}
                     aria-haspopup="dialog"
+                    title={`${MAX_BLANK_ROWS} empty rows are always open — jump to one`}
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    Add rows
+                    Go to row
                     <ChevronDown className="h-3 w-3 opacity-60" />
                   </Button>
                   {addOpen && (
@@ -2077,50 +2596,29 @@ export function RegisterSheet(props: {
                     // beats Tailwind's layered `absolute` utility — putting the class and the
                     // positioning on one element drops the popover back into the flex flow and
                     // shreds the toolbar. Position the wrapper; style the panel inside it.
-                    <div className="absolute right-0 top-full z-30 mt-1.5 w-60">
+                    <div className="absolute right-0 top-full z-30 mt-1.5 w-64">
                       <div
                         role="dialog"
-                        aria-label="Add blank rows"
+                        aria-label="Go to a row"
                         className="rounded-[12px] border border-[var(--glass-border)] bg-[var(--page-bg)] p-3 shadow-[0_16px_40px_-12px_rgb(0_0_0/0.35)]"
                       >
                       <p className="mb-2 text-[0.75rem] text-[var(--muted-fg)]">
-                        {MAX_BLANK_ROWS} empty rows are always waiting under the live ones — type or paste straight into them. This just brings more of them into view at once.
+                        There is nothing to add — {MAX_BLANK_ROWS} empty rows are always open under the book. Type or paste into any of them.
                       </p>
-                      <div className="mb-2 flex gap-1">
-                        {[1, 5, 10, 25].map((n) => (
-                          <button
-                            key={n}
-                            type="button"
-                            onClick={() => setAddCount(String(n))}
-                            className={cn(
-                              'h-7 flex-1 rounded-[7px] border border-[var(--input-border)] text-[0.75rem] tabular-nums',
-                              addCount === String(n)
-                                ? 'bg-[var(--glass-bg-strong)] font-medium'
-                                : 'text-[var(--muted-fg)] hover:text-[var(--page-fg)]',
-                            )}
-                          >
-                            {n}
-                          </button>
-                        ))}
-                      </div>
                       <form
                         className="flex gap-2"
                         onSubmit={(e) => {
                           e.preventDefault();
                           const n = Number(addCount);
-                          if (!Number.isFinite(n) || n < 1) return toast.error('Enter a number of rows.');
-                          if (n > MAX_ADD_ROWS) return toast.error(`At most ${MAX_ADD_ROWS} rows at a time.`);
-                          // Lengthen the sheet rather than writing n DRAFT cases. Each row
-                          // becomes real the moment somebody types in it, so this is instant
-                          // and costs nothing if the clerk asked for more than they needed.
-                          setBlankRows((len) => Math.min(MAX_BLANK_ROWS, len + n));
-                          // The blank rows only render unfiltered, so go where they are.
+                          if (!Number.isFinite(n) || n < 1) return toast.error('Enter a row number.');
+                          // The blank rows only render unfiltered, so go where they are first.
                           setTab('all');
                           setQ('');
                           setAgentId('');
                           setRange(EMPTY_RANGE);
                           setAddOpen(false);
-                          toast.success(n === 1 ? 'Row added' : `${n} rows added`);
+                          const target = Math.min(n - 1, visible.length + MAX_BLANK_ROWS - 1);
+                          requestAnimationFrame(() => focusSheetCell(target, colIds[0] ?? ''));
                         }}
                       >
                         <Input
@@ -2129,14 +2627,14 @@ export function RegisterSheet(props: {
                           value={addCount}
                           onChange={(e) => setAddCount(e.target.value.replace(/[^\d]/g, ''))}
                           className="!h-7 !py-1 text-center !text-[0.8125rem] tabular-nums"
-                          aria-label="Number of rows to add"
+                          aria-label="Row number to go to"
                         />
-                        <Button type="submit" variant="primary" size="sm" loading={busy === 'add'}>
-                          Add
+                        <Button type="submit" variant="primary" size="sm">
+                          Go
                         </Button>
                       </form>
                       <p className="mt-2 text-[0.68rem] text-[var(--faint-fg)]">
-                        Or just type or paste from Excel into an empty row — nothing is saved until you leave it.
+                        Row {visible.length + 1} is the first empty one. Nothing is saved until you leave a row.
                       </p>
                       </div>
                     </div>
@@ -2984,19 +3482,25 @@ export function RegisterSheet(props: {
           in the row expander. A sheet that scrolls sideways loses the customer's name off the
           left edge exactly when the clerk is reading the cash figure.
         */}
-        <div ref={gridRef} className="min-h-[18rem] max-h-[min(66vh,46rem)] overflow-y-auto overflow-x-hidden overscroll-contain">
+        <div
+          ref={gridRef}
+          data-register-sheet="true"
+          className="min-h-[18rem] max-h-[min(66vh,46rem)] overflow-y-auto overflow-x-hidden overscroll-contain"
+        >
           <table
-            className="w-full table-fixed border-collapse text-[0.7rem]"
+            className="w-full table-fixed border-collapse text-[0.7rem] select-none"
+            onPointerDown={onSheetPointerDown}
+            onPointerMove={onSheetPointerMove}
+            onPointerUp={() => { draggingRef.current = false; }}
             onPaste={(event) => {
               const text = event.clipboardData.getData('text/plain');
               if (!text.includes('\t') && !text.includes('\n')) return;
-              const input = event.target instanceof HTMLElement
-                ? event.target.closest('input[data-register-cell]')
+              const cellEl = event.target instanceof Element
+                ? event.target.closest<HTMLElement>('[data-register-index][data-register-col]')
                 : null;
-              if (!(input instanceof HTMLInputElement)) return;
-              const rowEl = input.closest('tr');
-              const startRow = Number(rowEl?.dataset.registerIndex ?? input.dataset.registerIndex);
-              const startCol = input.dataset.registerColumn;
+              if (!cellEl) return;
+              const startRow = Number(cellEl.dataset.registerIndex);
+              const startCol = cellEl.dataset.registerCol;
               if (!startCol || !Number.isFinite(startRow)) return;
               event.preventDefault();
               void pasteRegister(startRow, startCol, text);
@@ -3004,6 +3508,7 @@ export function RegisterSheet(props: {
           >
             <thead className="sticky top-0 z-10 bg-[var(--surface-solid)]">
               <tr>
+                <th className={cn(th, 'w-8 text-center font-mono text-[0.58rem] text-[var(--faint-fg)] print:hidden')} aria-label="Row number">#</th>
                 <th className={cn(th, 'w-7 print:hidden')}>
                   <TriCheckbox
                     checked={allVisibleSelected}
@@ -3016,10 +3521,11 @@ export function RegisterSheet(props: {
                     }
                   />
                 </th>
-                {shownCols.map((c) => (
+                {shownCols.map((c, colIndex) => (
                   <SortTh
                     key={c.id}
                     label={c.label}
+                    letter={columnLetter(colIndex)}
                     hint={c.hint}
                     col={c.id}
                     sortKey={sortKey}
@@ -3140,6 +3646,13 @@ export function RegisterSheet(props: {
                       tint,
                     )}
                   >
+                    <td
+                      data-register-rowhead={rowIndex}
+                      className={cn(td, 'cursor-pointer bg-[color-mix(in_oklab,var(--color-brand-500)_6%,var(--surface-solid))] px-1 text-center font-mono text-[0.62rem] font-semibold text-[var(--faint-fg)] print:hidden')}
+                      title="Click to select this whole row"
+                    >
+                      {rowIndex + 1}
+                    </td>
                     <td className={cn(td, 'print:hidden')}>
                       <input
                         type="checkbox"
@@ -3155,8 +3668,13 @@ export function RegisterSheet(props: {
                         }}
                       />
                     </td>
-                    {shownCols.map((c) => (
-                      <td key={c.id} className={cn(td, c.right && num)}>
+                    {shownCols.map((c, colIndex) => (
+                      <td
+                        key={c.id}
+                        data-register-index={rowIndex}
+                        data-register-col={c.id}
+                        className={cn(td, c.right && num, isSelected(rowIndex, colIndex) && SELECTED_CELL)}
+                      >
                         {c.id === 'account' && (
                           <CellInput
                             rowKey={r.id}
@@ -3492,7 +4010,7 @@ export function RegisterSheet(props: {
                     {row}
                     <tr className="border-b border-[var(--hairline)] bg-[var(--glass-bg-subtle)]">
                       <td className={cn(td, 'print:hidden')} />
-                      <td colSpan={shownCols.length + 2 + (hasExtras ? 1 : 0)} className="px-2 py-1.5">
+                      <td colSpan={shownCols.length + 3 + (hasExtras ? 1 : 0)} className="px-2 py-1.5">
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                           <span className="text-[0.65rem] font-medium text-[var(--faint-fg)]">
                             Not taken on {missedDays.length === 1 ? 'this day' : `these ${missedDays.length} days`}:
@@ -3544,7 +4062,7 @@ export function RegisterSheet(props: {
                   .map((r) => (
                     <tr key={`x-${r.id}`} className="border-b border-[var(--hairline)] bg-[var(--glass-bg-subtle)]">
                       <td className={cn(td, 'print:hidden')} />
-                      <td colSpan={shownCols.length + 2} className="px-2 py-1.5">
+                      <td colSpan={shownCols.length + 3} className="px-2 py-1.5">
                         <span className="mr-2 text-[0.65rem] font-medium text-[var(--faint-fg)]">
                           {r.customerName || 'This row'}:
                         </span>
@@ -3561,36 +4079,46 @@ export function RegisterSheet(props: {
                   ))}
 
               {/*
-                The empty rows. They exist only here — nothing reaches the database until a clerk
-                types in one and leaves it. Shown only on the unfiltered "All" view: padding a
-                filtered sheet with blanks would put hundreds of empty rows under "Due today".
-                Capacity is 500, same as the cashbook; more rows are revealed as you type, arrow
-                or scroll down.
+                The empty rows.
+
+                All 500 exist; only the ones on screen are in the document. The two spacer rows
+                below stand in for the ones above and beneath the window, so the scrollbar is the
+                length of the whole sheet and the table keeps its column widths — a `table-fixed`
+                layout measures the first row it can see, and absolutely-positioned rows would
+                take those widths away from it.
+
+                Nothing here reaches the database until a clerk types in a row and leaves it.
+                Hidden while a search or agent filter is on: padding a filtered sheet with blanks
+                would put five hundred empty rows under "Due today".
               */}
-              {blankRowCount > 0 &&
-                Array.from({ length: blankRowCount }, (_, i) => (
-                  <BlankRow
-                    key={`blank-${i}`}
-                    rowIndex={tableRows.length + i}
-                    cols={shownCols}
-                    extrasCol={hasExtras}
-                    disabled={!props.canEdit || locked || !props.canCreate}
-                    onCommit={async (patch) => {
-                      const res = await createRegisterRowWithFieldsAction(props.branchId, patch);
-                      if (!res.ok) toast.error(res.error);
-                      else router.refresh();
-                    }}
-                  />
-                ))}
-              {blankRowCount > 0 && blankRows < MAX_BLANK_ROWS && (
-                <tr ref={revealSentinelRef} aria-hidden className="h-0 print:hidden">
-                  <td colSpan={shownCols.length + 4} />
-                </tr>
+              {blankRowCount > 0 && (
+                <BlankRows
+                  count={blankRowCount}
+                  offset={tableRows.length}
+                  cols={shownCols}
+                  extrasCol={hasExtras}
+                  scrollRef={gridRef}
+                  registerScrollTo={blankScrollRef}
+                  isSelected={isSelected}
+                  disabled={!props.canEdit || locked || !props.canCreate}
+                  onCommit={async (patch) => {
+                    const res = await createRegisterRowWithFieldsAction(props.branchId, patch);
+                    if (!res.ok) toast.error(res.error);
+                    else router.refresh();
+                  }}
+                />
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      <p className="text-[0.68rem] text-[var(--faint-fg)] print:hidden">
+        This sheet is the workspace — you do not need to format an Excel file and upload it. Paste
+        from Excel or Google Sheets into the cell where the block should start. Drag or Shift-click
+        to select a range, Ctrl+D fills down, Ctrl+Z undoes. Taken and Not taken stay buttons
+        because they move money.
+      </p>
 
       <div className="flex flex-wrap items-center gap-2 print:hidden">
         {props.canRequestClose && !closed && !closeRequested && (
@@ -3640,6 +4168,6 @@ export function RegisterSheet(props: {
         />
       )}
     </div>
-    </RegisterGrowContext.Provider>
+    </RegisterSheetContext.Provider>
   );
 }

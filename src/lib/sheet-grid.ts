@@ -237,40 +237,26 @@ export const PASTE_CHUNK_ROWS = 25;
  * is therefore counted in EMPTY rows: 500 of them are always available underneath whatever is on
  * screen, however long the live list is.
  *
- * The DOM still only holds what has been reached. 500 blank rows across a dozen typed columns is
- * six thousand inputs, and mounting them up front costs a visibly slower keystroke on every
- * quiet day that never reaches row 60.
+ * All 500 exist from the first paint. The register sheet virtualises them, so holding them costs
+ * a number rather than the six thousand inputs that a dozen typed columns would otherwise mount.
  */
 export const MAX_BLANK_ROWS = 500;
-export const INITIAL_BLANK_ROWS = 50;
-export const BLANK_REVEAL_BUFFER = 50;
-
-/** How many empty rows to mount on first paint. */
-export function initialBlankRows(max = MAX_BLANK_ROWS): number {
-  return Math.max(0, Math.min(max, INITIAL_BLANK_ROWS));
-}
 
 /**
- * How many empty rows the sheet should hold once `targetIndex` (0-based, counted from the first
- * empty row) has to exist — because the caret walked into it, the scroll sentinel came into
- * view, or a paste is about to write there. Never shrinks; never passes `max`.
+ * Row height the virtualiser assumes for an empty row, in pixels.
+ *
+ * Empty rows are uniform — one line of inputs, no expander, no arrears sub-rows — so the
+ * virtualiser never has to measure them, and the scrollbar is the right length on the first
+ * paint rather than growing under the clerk's hand as rows are measured.
  */
-export function growBlankRows(input: {
-  current: number;
-  targetIndex: number;
-  max?: number;
-  buffer?: number;
-}): number {
-  const max = input.max ?? MAX_BLANK_ROWS;
-  const buffer = input.buffer ?? BLANK_REVEAL_BUFFER;
-  const current = Math.max(0, input.current);
-  const needed = Math.max(0, input.targetIndex) + 1;
-  if (needed <= current) return Math.min(max, current);
-  return Math.min(max, Math.max(current, needed + buffer));
-}
+export const BLANK_ROW_HEIGHT_PX = 28;
 
 /**
- * How many rows to show on first paint: live cases plus a runway of empty rows, capped at 500.
+ * How the OPERATIONS sheet sizes itself: live rows plus a runway of empty ones, capped at 500.
+ *
+ * The register no longer uses these — it holds all 500 empty rows and virtualises them. This
+ * pair stays for the Operations grid, which renders every row it shows and so still reveals
+ * them progressively.
  */
 export function initialSheetLength(filledCount: number, max = MAX_SHEET_ROWS): number {
   const filled = Math.max(0, filledCount);
@@ -279,10 +265,10 @@ export function initialSheetLength(filledCount: number, max = MAX_SHEET_ROWS): n
 }
 
 /**
- * How many rows the sheet should show after the highlighted cell moves onto `targetIndex`.
+ * How many rows the sheet should show once the highlight has moved onto `targetIndex`.
  *
  * Empty rows exist only in the browser. Walking off the bottom (or scrolling into it) reveals
- * another buffer of rows, up to `max` (500). Never shorter than the live rows; never shrinks.
+ * another buffer of rows, up to `max`. Never shorter than the live rows; never shrinks.
  */
 export function growSheetLength(input: {
   currentLength: number;
