@@ -205,3 +205,30 @@ describe('spreadsheet shortcuts', () => {
     ]);
   });
 });
+
+describe('delete row shortcut', () => {
+  const key = (over: Partial<Parameters<typeof matchSheetShortcut>[0]>) =>
+    matchSheetShortcut({ key: '-', ctrlKey: false, metaKey: false, shiftKey: false, ...over });
+
+  it('matches Excel: ctrl or cmd with minus deletes the row', () => {
+    expect(key({ ctrlKey: true })).toEqual({ action: 'deleteRow' });
+    expect(key({ metaKey: true })).toEqual({ action: 'deleteRow' });
+  });
+
+  it('accepts the numeric keypad spelling', () => {
+    // A full-size branch keyboard reports 'Subtract' / 'NumpadSubtract', not '-'.
+    expect(key({ key: 'Subtract', ctrlKey: true })).toEqual({ action: 'deleteRow' });
+    expect(key({ key: 'Unidentified', code: 'NumpadSubtract', ctrlKey: true })).toEqual({ action: 'deleteRow' });
+  });
+
+  it('leaves a plain minus alone so it can be typed into a cell', () => {
+    expect(key({})).toBeNull();
+  });
+
+  it('keeps Delete and Backspace on clearing contents, as Excel does', () => {
+    expect(matchSheetShortcut({ key: 'Delete', ctrlKey: false, metaKey: false, shiftKey: false }))
+      .toEqual({ action: 'clear' });
+    expect(matchSheetShortcut({ key: 'Backspace', ctrlKey: false, metaKey: false, shiftKey: false }))
+      .toEqual({ action: 'backspace' });
+  });
+});

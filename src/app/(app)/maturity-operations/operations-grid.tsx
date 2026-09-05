@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { setInstalmentAmountAction } from '@/actions/cases';
 import {
   createRegisterRowWithFieldsAction,
+  removeRegisterRowsAction,
   markNotTakenAction,
   markTakenAction,
   saveRegisterFieldsAction,
@@ -336,11 +337,13 @@ function BlankOpsRow({
   );
 }
 
-export function OperationsGrid({ rows, canEdit, canApproveDates, canSchedule, canPay, isAdmin, addRowBranchId }: {
+export function OperationsGrid({ rows, canEdit, canApproveDates, canSchedule, canPay, canRemove, isAdmin, addRowBranchId }: {
   rows: OperationsRow[];
   canEdit: boolean;
   /** Only a role holding `case.approve` may move the approval date. */
   canApproveDates: boolean;
+  /** May cancel a row off the register. Cancelled rows keep their history and can come back. */
+  canRemove: boolean;
   canSchedule: boolean;
   canPay: boolean;
   isAdmin: boolean;
@@ -837,19 +840,88 @@ export function OperationsGrid({ rows, canEdit, canApproveDates, canSchedule, ca
     }
   }
 
+  /**
+   * Clear the contents of the selected cells, exactly as Delete does in a spreadsheet.
+   *
+   * It used to end silently whenever nothing matched — a selection sitting on the blank rows at
+   * the bottom, or on the derived money columns — which read as "Delete is broken" rather than
+   * "there is nothing here to clear". It now says which it was.
+   */
   async function clearSelected() {
     if (!canEdit) return;
     const cells = selectedCells.length > 0 ? selectedCells : (focus ? [focus] : []);
-    let n = 0;
+    let cleared = 0;
+    let onBlankRows = 0;
+    let readOnly = 0;
     for (const pos of cells) {
       const col = visColIds[pos.c];
-      if (!col || !BULK_EDIT.has(col)) continue;
+      if (!col) continue;
       const row = visible[pos.r];
-      if (!row) continue;
+      if (!row) { onBlankRows++; continue; }
+      if (!BULK_EDIT.has(col)) { readOnly++; continue; }
       await applyCell(row, col, '');
-      n++;
+      cleared++;
     }
-    if (n > 0) toast.success(n === 1 ? 'Cleared' : `Cleared ${n} cells`);
+    if (cleared > 0) {
+      toast.success(cleared === 1 ? 'Cleared' : `Cleared ${cleared} cells`);
+      return;
+    }
+    if (onBlankRows > 0) {
+      toast.message('Those rows are empty — there is nothing to clear. Type in one to create a case.');
+      return;
+    }
+    if (readOnly > 0) {
+      toast.message('Those columns are worked out by the register — Remaining, Missed, Total and Given cannot be typed over.');
+    }
+  }
+
+  /** Case ids for every real row the selection touches, in sheet order. */
+  const selectedRowIds = useMemo(() => {
+    const seen = new Set<string>();
+    const ids: string[] = [];
+    for (const pos of selectedCells) {
+      const row = visible[pos.r];
+      if (row && !seen.has(row.id)) { seen.add(row.id); ids.push(row.id); }
+    }
+    return ids;
+  }, [selectedCells, visible]);
+
+  /**
+   * Take the selected rows off the register.
+   *
+   * This cancels rather than destroys: the case, its schedule and every payment recorded against
+   * it stay in the database and in the audit trail, and the row simply stops appearing on the
+   * sheet. That is what a branch means by "delete this line", and it is the only version of it
+   * that is safe on a register where money has moved.
+   */
+  async function deleteSelectedRows() {
+    if (!canRemove || selectedRowIds.length === 0) return;
+    const n = selectedRowIds.length;
+    const names = selectedRowIds
+      .map((id) => visible.find((row) => row.id === id)?.customerName)
+      .filter(Boolean)
+      .slice(0, 3)
+      .join(', ');
+    const paid = selectedRowIds.some((id) => {
+      const row = visible.find((r) => r.id === id);
+      return row ? BigInt(row.paidPaise || '0') > 0n : false;
+    });
+    const warning = paid
+      ? '\n\nOne or more of these has money recorded against it. The payment history is kept, but the row leaves the register.'
+      : '';
+    const ok = window.confirm(
+      `Remove ${n === 1 ? 'this row' : `these ${n} rows`} from the register?` +
+        (names ? `\n\n${names}${n > 3 ? ` and ${n - 3} more` : ''}` : '') +
+        warning,
+    );
+    if (!ok) return;
+    const result = await removeRegisterRowsAction(selectedRowIds, 'Removed from the register sheet');
+    if (!result.ok) { toast.error(result.error); return; }
+    setExtra(new Set());
+    setAnchor(null);
+    setFocus(null);
+    toast.success(n === 1 ? 'Row removed' : `${n} rows removed`);
+    router.refresh();
   }
 
   async function applyFillPairs(pairs: { from: { r: number; c: number }; to: { r: number; c: number } }[]) {
@@ -963,6 +1035,13 @@ export function OperationsGrid({ rows, canEdit, canApproveDates, canSchedule, ca
         setFocus({ r: lastSheetRow, c: focus.c });
         return;
       }
+      if (shortcut.action === 'deleteRow') {
+        event.preventDefault();
+        if (!canRemove) { toast.message('Your account cannot remove rows from the register.'); return; }
+        if (selectedRowIds.length === 0) { toast.message('Select a row first — click its number on the left.'); return; }
+        void deleteSelectedRows();
+        return;
+      }
       if (shortcut.action === 'clear' || shortcut.action === 'backspace') {
         if (!canEdit) return;
         if (!block && input && !wholeCellSelected(input) && shortcut.action === 'backspace') return;
@@ -1063,6 +1142,19 @@ export function OperationsGrid({ rows, canEdit, canApproveDates, canSchedule, ca
             </button>
           )}
         </div>
+        {canRemove && selectedRowIds.length > 0 && (
+          /* Discoverable counterpart to Ctrl+Minus. A clerk who has just clicked a row number
+             should not have to know a chord to get rid of it. */
+          <button
+            type="button"
+            onClick={() => void deleteSelectedRows()}
+            title="Remove the selected rows from the register (Ctrl and minus)"
+            className="inline-flex items-center gap-1.5 border border-[var(--row-missed-edge)] bg-[var(--row-missed)] px-3 py-2 text-[0.8125rem] font-semibold text-[var(--row-missed-fg)] hover:bg-[var(--row-missed-strong)]"
+          >
+            <X className="h-3.5 w-3.5" />
+            Remove {selectedRowIds.length} row{selectedRowIds.length === 1 ? '' : 's'}
+          </button>
+        )}
         <label className="relative min-w-[12rem] flex-1 max-w-sm">
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--faint-fg)]" />
           <input

@@ -334,6 +334,7 @@ export type SheetShortcut =
   | { action: 'selectColumn' }
   | { action: 'clear' }
   | { action: 'backspace' }
+  | { action: 'deleteRow' }
   | { action: 'fillDown' }
   | { action: 'fillRight' }
   | { action: 'fillSelection' }
@@ -372,6 +373,17 @@ export function matchSheetShortcut(event: {
   if (meta && key === 'Enter') return { action: 'fillSelection' };
   if (meta && (event.key === ' ' || event.code === 'Space')) return { action: 'selectColumn' };
   if (!meta && event.shiftKey && (event.key === ' ' || event.code === 'Space')) return { action: 'selectRow' };
+  /*
+     Excel's own delete-row chord, and the one a clerk who lives in spreadsheets will reach for.
+
+     Both spellings are needed: the main keyboard reports '-' as the key while the numeric keypad
+     reports 'Subtract' with code 'NumpadSubtract', and a branch machine with a full keyboard uses
+     whichever is nearer. Shift+Ctrl+= (Excel's insert-row) is deliberately not claimed here —
+     rows are added by typing into the blank ones at the bottom.
+  */
+  if (meta && (key === '-' || key === 'Subtract' || event.code === 'NumpadSubtract')) {
+    return { action: 'deleteRow' };
+  }
   if (key === 'Delete') return { action: 'clear' };
   if (key === 'Backspace') return { action: 'backspace' };
   if (key === 'Home') return { action: 'home', extent: meta ? 'sheet' : 'row', shift: event.shiftKey };

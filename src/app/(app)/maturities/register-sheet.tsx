@@ -2384,6 +2384,22 @@ export function RegisterSheet(props: {
         setFocusCell({ r: lastSheetRow, c: focusCell.c });
         return;
       }
+      if (shortcut.action === 'deleteRow') {
+        event.preventDefault();
+        /* Same chord as the Maturities sheet. The ticked rows already drive the Remove button in
+           the bulk bar; this is the keyboard way in, so a clerk working from the keyboard never
+           has to reach for the mouse to get rid of a line. */
+        if (!props.canRemove || locked) {
+          toast.message('Your account cannot remove rows from this register.');
+          return;
+        }
+        if (selIds.length === 0) {
+          toast.message('Tick the rows you want to remove first.');
+          return;
+        }
+        setBulkMenu('remove');
+        return;
+      }
       if (shortcut.action === 'clear' || shortcut.action === 'backspace') {
         if (!editable) return;
         if (!block && input && !wholeCellSelected(input)) return;

@@ -65,6 +65,7 @@ export default async function MaturityOperationsPage({
       <OperationsGrid
         canEdit={roleCan(session.role, 'case.approve')}
         canApproveDates={roleCan(session.role, 'case.approve')}
+        canRemove={roleCan(session.role, 'case.cancel')}
         canSchedule={roleCan(session.role, 'schedule.override')}
         canPay={roleCan(session.role, 'payout.record')}
         isAdmin={session.role === 'ADMIN' || session.role === 'OPS_HEAD'}
