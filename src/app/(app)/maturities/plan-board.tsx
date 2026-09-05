@@ -252,7 +252,7 @@ export function PlanBoard({
   canReplan?: boolean;
   onApplied?: () => void;
 }) {
-  const [applying, setApplying] = useState(false);
+  const [applying, setApplying] = useState<PlanBand | null>(null);
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
   /** Null means "show the committed schedule"; a typed value is an explicit what-if. */
   const [bandParts, setBandParts] = useState<Record<PlanBand, number | '' | null>>({
@@ -312,20 +312,28 @@ export function PlanBoard({
     return m;
   }, [cases]);
 
-  const pending = useMemo(
-    () =>
-      rows.filter(
-        (r) =>
-          !r.error &&
-          r.remainingPaise > 0n &&
-          REPLANNABLE.has(r.status) &&
-          r.parts !== committedParts.get(r.caseId),
-      ),
-    [rows, committedParts],
-  );
+  const pendingIn = (candidates: PlanRow[]) =>
+    candidates.filter(
+      (r) =>
+        !r.error &&
+        r.remainingPaise > 0n &&
+        REPLANNABLE.has(r.status) &&
+        r.parts !== committedParts.get(r.caseId),
+    );
 
-  async function applyToAll() {
-    if (pending.length === 0) return;
+  /*
+    Applying one band at a time.
+
+    The two columns hold different promises - a ₹1 lakh case is paid every working day, a smaller
+    one on alternate days - and the office changes them for different reasons: a cash squeeze
+    stretches the large cases, a quiet week tightens the small ones. A single button for both
+    would have made every one of those a decision about the whole register, so each column commits
+    its own what-if and leaves the other exactly as it was.
+  */
+  async function applyBand(band: PlanBand, title: string, candidates: PlanRow[]) {
+    const pending = pendingIn(candidates);
+    if (pending.length === 0 || applying) return;
+
     const names = pending
       .slice(0, 3)
       .map((r) => r.customerName)
@@ -333,22 +341,23 @@ export function PlanBoard({
     const rest = pending.length > 3 ? ` and ${pending.length - 3} more` : '';
     const paidAlready = pending.filter((r) => r.givenPaise > 0n).length;
     const ok = window.confirm(
-      `Re-plan ${pending.length} case${pending.length === 1 ? '' : 's'} to the number of parts ` +
-        `shown here?\n\n${names}${rest}\n\n` +
+      `Re-plan ${pending.length} case${pending.length === 1 ? '' : 's'} under "${title}" to the ` +
+        `number of parts shown?\n\n${names}${rest}\n\n` +
         (paidAlready > 0
           ? `${paidAlready} of them already ${paidAlready === 1 ? 'has' : 'have'} money paid out. ` +
             'What is already given stays given; only the days still to come are re-spread.\n\n'
           : '') +
-        'Every change is recorded against the case and can be re-planned again.',
+        'Cases in the other column are not touched. Every change is recorded against the case ' +
+        'and can be re-planned again.',
     );
     if (!ok) return;
 
-    setApplying(true);
+    setApplying(band);
     const res = await applyPlanAction(
       pending.map((r) => ({ caseId: r.caseId, parts: r.parts })),
-      'Re-planned from the planning board',
+      `Re-planned from the planning board (${title})`,
     );
-    setApplying(false);
+    setApplying(null);
 
     if (!res.ok) {
       toast.error(res.error);
@@ -356,7 +365,7 @@ export function PlanBoard({
     }
     const { done, failed } = res.data;
     if (done > 0) {
-      toast.success(`Re-planned ${done} case${done === 1 ? '' : 's'}`, {
+      toast.success(`Re-planned ${done} case${done === 1 ? '' : 's'} — ${title}`, {
         description: failed.length ? `${failed.length} could not be changed` : undefined,
         duration: 7000,
       });
@@ -385,6 +394,7 @@ export function PlanBoard({
     s: ReturnType<typeof summariseBand>,
     title: string,
     note: string,
+    bandPending: PlanRow[],
   ) => (
     <Glass className="flex min-h-0 flex-col overflow-hidden">
       <div className="border-b px-3 py-2.5">
@@ -427,6 +437,34 @@ export function PlanBoard({
           />
           parts
         </label>
+
+        {/*
+          This column is a simulator until this button. Shown only to somebody who may re-plan,
+          and enabled only once the parts on screen differ from the schedules these cases are
+          actually on, so it never invites a click that would do nothing. It commits this column
+          alone — the other band keeps whatever it is showing.
+        */}
+        {canReplan && (
+          <div className="mt-2">
+            <Button
+              variant="primary"
+              size="sm"
+              loading={applying === band}
+              disabled={bandPending.length === 0 || (applying !== null && applying !== band)}
+              onClick={() => void applyBand(band, title, s.rows)}
+              title={
+                bandPending.length === 0
+                  ? 'Change the number of parts first — nothing in this column differs from the committed schedule'
+                  : `Re-plan ${bandPending.length} case${bandPending.length === 1 ? '' : 's'} in this column to the parts shown`
+              }
+            >
+              <CheckCheck className="h-3.5 w-3.5" />
+              {bandPending.length === 0
+                ? 'Apply to this column'
+                : `Apply to ${bandPending.length} case${bandPending.length === 1 ? '' : 's'}`}
+            </Button>
+          </div>
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {s.rows.length === 0 ? (
@@ -462,36 +500,9 @@ export function PlanBoard({
               Total across every case · updates instantly when the number of parts changes
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[0.68rem] tabular-nums text-[var(--muted-fg)]">
-              {dailyRequirements.length} payout day{dailyRequirements.length === 1 ? '' : 's'}
-            </span>
-            {/*
-              The board is a simulator until this button; everything above it is arithmetic in the
-              browser. Shown only to somebody who may re-plan, and only once the numbers on screen
-              differ from the schedules the cases are actually on, so it never invites a click that
-              would do nothing.
-            */}
-            {canReplan && (
-              <Button
-                variant="primary"
-                size="sm"
-                loading={applying}
-                disabled={pending.length === 0}
-                onClick={() => void applyToAll()}
-                title={
-                  pending.length === 0
-                    ? 'Change the number of parts first — nothing here differs from the committed schedule'
-                    : `Re-plan ${pending.length} case${pending.length === 1 ? '' : 's'} to the parts shown`
-                }
-              >
-                <CheckCheck className="h-3.5 w-3.5" />
-                {pending.length === 0
-                  ? 'Apply to all'
-                  : `Apply to all ${pending.length} case${pending.length === 1 ? '' : 's'}`}
-              </Button>
-            )}
-          </div>
+          <span className="text-[0.68rem] tabular-nums text-[var(--muted-fg)]">
+            {dailyRequirements.length} payout day{dailyRequirements.length === 1 ? '' : 's'}
+          </span>
         </div>
 
         {dailyRequirements.length === 0 ? (
@@ -601,12 +612,14 @@ export function PlanBoard({
           large,
           '₹1 lakh and above',
           'Paid every working day — 12 parts across the window by default.',
+          pendingIn(large.rows),
         )}
         {bandColumn(
           'SMALL',
           small,
           'Below ₹1 lakh',
           'Paid on alternate working days — 6 parts across the same window.',
+          pendingIn(small.rows),
         )}
       </div>
     </div>
