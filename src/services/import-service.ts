@@ -14,8 +14,8 @@ import type { SessionUser } from '@/lib/auth/session';
 import { resolveImportBranch } from '@/lib/branch-routing';
 import { formatCaseNumber, newId } from '@/lib/id';
 import { parseRupeesToPaise } from '@/lib/money';
-import { addDays, todayISO } from '@/lib/working-days';
-import { APPROVAL_LEAD_CALENDAR_DAYS } from '@/lib/payout-policy';
+import { addDays, formatDMY, todayISO } from '@/lib/working-days';
+import { approvalDateProblem, APPROVAL_LEAD_CALENDAR_DAYS } from '@/lib/payout-policy';
 import type { RegisterRow } from '@/lib/excel-register';
 import { approveAndScheduleInTx } from '@/services/case-service';
 import { getBranchPolicy } from '@/services/calendar-service';
@@ -247,14 +247,43 @@ export async function importRegisterRows(
             .limit(1);
           if (inserted) {
             const { anchor } = await approveAndScheduleInTx(tx, actor, inserted, policy.calendar);
-            // The approval date the office reads is a default until somebody holding
-            // `case.approve` confirms it, so the reviewer columns stay empty on purpose.
-            const reviewOn = row.approvedOn ?? addDays(formSubmittedOn, APPROVAL_LEAD_CALENDAR_DAYS);
+            const paymentOn = row.paymentOn ?? anchor;
+
+            /*
+              The Approval Date the branch typed, checked against the same two rules the register
+              enforces when somebody edits that cell by hand: an approval cannot precede the form
+              that asked for it, and it cannot fall after the day the counter starts paying.
+
+              A date breaking either rule used to be replaced by null with nothing said, so a
+              swapped month or a mistyped year quietly erased the column and the branch found out
+              weeks later. It is reported now. The cell is still left empty - storing a date that
+              contradicts the payment date would only move the contradiction into the register -
+              but the row says so on the import report, naming both dates, so it can be corrected
+              in the sheet and imported again, or simply typed on the register.
+
+              With no Approval Date typed at all the default stands: form date plus three days. It
+              is only ever a default until somebody holding `case.approve` confirms it, so
+              `opsReviewedAt` and `opsReviewedById` stay empty either way.
+            */
+            const typedReview = row.approvedOn ?? null;
+            const reviewOn = typedReview ?? addDays(formSubmittedOn, APPROVAL_LEAD_CALENDAR_DAYS);
+            const problem = approvalDateProblem(reviewOn, formSubmittedOn, paymentOn);
+            if (typedReview && problem) {
+              warnings.push(
+                `Row ${row.rowNumber} (${row.customerName}): approval date ${formatDMY(typedReview)} ` +
+                  (problem === 'BEFORE_FORM'
+                    ? `is before the form submission date ${formatDMY(formSubmittedOn)}`
+                    : `is after the payment date ${formatDMY(paymentOn)}`) +
+                  ' - imported with the approval column left blank. Correct the sheet and import ' +
+                  'the row again, or type the date on the register.',
+              );
+            }
+
             await tx
               .update(maturityCases)
               .set({
-                paymentOn: row.paymentOn ?? anchor,
-                opsReviewedOn: reviewOn <= anchor ? reviewOn : null,
+                paymentOn,
+                opsReviewedOn: problem ? null : reviewOn,
                 updatedAt: new Date(),
               })
               .where(eq(maturityCases.id, caseId));

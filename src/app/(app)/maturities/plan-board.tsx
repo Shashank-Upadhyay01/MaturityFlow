@@ -1,11 +1,14 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { CalendarClock, ChevronRight, Wallet } from 'lucide-react';
+import { CalendarClock, CheckCheck, ChevronRight, Wallet } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { toast } from 'sonner';
 
+import { applyPlanAction } from '@/actions/cases';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Glass } from '@/components/ui/glass';
 import { formatPaise } from '@/lib/money';
 import {
@@ -227,17 +230,29 @@ function CustomerRow({
   );
 }
 
+/**
+ * Statuses whose schedule can still be rewritten. A cancelled or completed case has nothing left
+ * to re-plan, and the server would refuse it anyway - this is only so the button's count matches
+ * what will actually happen.
+ */
+const REPLANNABLE = new Set(['APPROVED', 'IN_PROGRESS', 'ON_HOLD']);
+
 export function PlanBoard({
   cases,
   instalments,
   calendars,
   today,
+  canReplan = false,
+  onApplied,
 }: {
   cases: PlanCase[];
   instalments: PlanInstalment[];
   calendars: Record<string, CalendarSnapshot>;
   today: string;
+  canReplan?: boolean;
+  onApplied?: () => void;
 }) {
+  const [applying, setApplying] = useState(false);
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
   /** Null means "show the committed schedule"; a typed value is an explicit what-if. */
   const [bandParts, setBandParts] = useState<Record<PlanBand, number | '' | null>>({
@@ -280,6 +295,76 @@ export function PlanBoard({
   );
 
   const visible = rows;
+
+  /*
+    What "apply" would actually change.
+
+    A case counts only when the number of parts on screen differs from the number its committed
+    window already produces. Re-planning a case to the schedule it is already on would rewrite its
+    instalments and add an audit line saying nothing happened, so the untouched rows stay out of
+    the batch and out of the count on the button.
+  */
+  const committedParts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of cases) {
+      m.set(c.caseId, defaultPartsFor(BigInt(c.maturityAmountPaise || '1'), c.windowDays));
+    }
+    return m;
+  }, [cases]);
+
+  const pending = useMemo(
+    () =>
+      rows.filter(
+        (r) =>
+          !r.error &&
+          r.remainingPaise > 0n &&
+          REPLANNABLE.has(r.status) &&
+          r.parts !== committedParts.get(r.caseId),
+      ),
+    [rows, committedParts],
+  );
+
+  async function applyToAll() {
+    if (pending.length === 0) return;
+    const names = pending
+      .slice(0, 3)
+      .map((r) => r.customerName)
+      .join(', ');
+    const rest = pending.length > 3 ? ` and ${pending.length - 3} more` : '';
+    const paidAlready = pending.filter((r) => r.givenPaise > 0n).length;
+    const ok = window.confirm(
+      `Re-plan ${pending.length} case${pending.length === 1 ? '' : 's'} to the number of parts ` +
+        `shown here?\n\n${names}${rest}\n\n` +
+        (paidAlready > 0
+          ? `${paidAlready} of them already ${paidAlready === 1 ? 'has' : 'have'} money paid out. ` +
+            'What is already given stays given; only the days still to come are re-spread.\n\n'
+          : '') +
+        'Every change is recorded against the case and can be re-planned again.',
+    );
+    if (!ok) return;
+
+    setApplying(true);
+    const res = await applyPlanAction(
+      pending.map((r) => ({ caseId: r.caseId, parts: r.parts })),
+      'Re-planned from the planning board',
+    );
+    setApplying(false);
+
+    if (!res.ok) {
+      toast.error(res.error);
+      return;
+    }
+    const { done, failed } = res.data;
+    if (done > 0) {
+      toast.success(`Re-planned ${done} case${done === 1 ? '' : 's'}`, {
+        description: failed.length ? `${failed.length} could not be changed` : undefined,
+        duration: 7000,
+      });
+    }
+    for (const f of failed.slice(0, 5)) toast.error(`${f.label}: ${f.error}`);
+    if (failed.length > 5) toast.message(`${failed.length - 5} more could not be changed.`);
+    onApplied?.();
+  }
 
   // Today is computed from EVERY row, never the filtered view — it is the cash the branch must
   // open with, and it would be worse than useless if it moved when somebody searched a name.
@@ -377,9 +462,36 @@ export function PlanBoard({
               Total across every case · updates instantly when the number of parts changes
             </p>
           </div>
-          <span className="text-[0.68rem] tabular-nums text-[var(--muted-fg)]">
-            {dailyRequirements.length} payout day{dailyRequirements.length === 1 ? '' : 's'}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-[0.68rem] tabular-nums text-[var(--muted-fg)]">
+              {dailyRequirements.length} payout day{dailyRequirements.length === 1 ? '' : 's'}
+            </span>
+            {/*
+              The board is a simulator until this button; everything above it is arithmetic in the
+              browser. Shown only to somebody who may re-plan, and only once the numbers on screen
+              differ from the schedules the cases are actually on, so it never invites a click that
+              would do nothing.
+            */}
+            {canReplan && (
+              <Button
+                variant="primary"
+                size="sm"
+                loading={applying}
+                disabled={pending.length === 0}
+                onClick={() => void applyToAll()}
+                title={
+                  pending.length === 0
+                    ? 'Change the number of parts first — nothing here differs from the committed schedule'
+                    : `Re-plan ${pending.length} case${pending.length === 1 ? '' : 's'} to the parts shown`
+                }
+              >
+                <CheckCheck className="h-3.5 w-3.5" />
+                {pending.length === 0
+                  ? 'Apply to all'
+                  : `Apply to all ${pending.length} case${pending.length === 1 ? '' : 's'}`}
+              </Button>
+            )}
+          </div>
         </div>
 
         {dailyRequirements.length === 0 ? (

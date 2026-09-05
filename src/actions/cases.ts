@@ -1,6 +1,6 @@
 'use server';
 
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
@@ -9,7 +9,7 @@ import { customers, maturityCases } from '@/db/schema';
 import { requestMeta, requireActor } from '@/lib/auth/session';
 import { newId } from '@/lib/id';
 import { parseRupeesToPaise } from '@/lib/money';
-import { MIN_WINDOW_DAYS } from '@/lib/payout-policy';
+import { MIN_WINDOW_DAYS, windowDaysForPayoutCount } from '@/lib/payout-policy';
 import { assertCan } from '@/lib/rbac';
 import { writeAudit } from '@/lib/audit';
 import { persistInstalmentEdit, persistInstalmentLegs } from '@/services/schedule-service';
@@ -24,6 +24,12 @@ import {
   setHold,
   submitCase,
 } from '@/services/case-service';
+import {
+  loadCaseRefs,
+  runBulk,
+  MAX_BULK_ROWS,
+  type BulkOutcome,
+} from '@/services/register-bulk';
 import { fail, ok, toActionError, type ActionResult } from './_result';
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -397,6 +403,83 @@ export async function replanWithWindowAction(
       instalments: res.instalments,
       windowDays: res.windowDays,
     });
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+/**
+ * Commit the planning board's what-if to every case shown on it.
+ *
+ * The Plan tab has always been able to answer "what if this were split into 8 parts instead of
+ * 12", for one case or for a whole band at once, and then had no way to say yes. The counts lived
+ * in React state, the branch read them off the screen, and somebody re-typed each one on the case
+ * page. This is that yes.
+ *
+ * Two things it deliberately does not do. It does not accept a window length from the browser:
+ * the client sends a count of parts, and the window each case needs is derived here from that
+ * case's own maturity amount, because the amount decides the cadence and the cadence decides how
+ * many working days N parts occupy. And it takes no shortcut past `replanWithWindow` - every case
+ * goes through the same locked, audited, single-case path the case page uses, one at a time. A
+ * batch of forty is forty of those, not one clever UPDATE.
+ *
+ * Cases that cannot take the change - already paid off, cancelled, outside the actor's branch -
+ * fail on their own and come back named. The rest still land.
+ */
+export async function applyPlanAction(
+  plans: { caseId: string; parts: number }[],
+  reason: string,
+): Promise<ActionResult<BulkOutcome>> {
+  try {
+    const { session, actor } = await requireActor();
+
+    const wanted = new Map<string, number>();
+    for (const p of plans ?? []) {
+      if (!p || typeof p.caseId !== 'string' || p.caseId.length === 0) continue;
+      if (!Number.isInteger(p.parts) || p.parts < 1) {
+        return fail('Number of parts must be a whole number of at least 1.', 'VALIDATION');
+      }
+      wanted.set(p.caseId, p.parts);
+    }
+    if (wanted.size === 0) return fail('Nothing to apply - no cases in the plan.', 'VALIDATION');
+    if (wanted.size > MAX_BULK_ROWS) {
+      return fail(`You can re-plan at most ${MAX_BULK_ROWS} cases at a time.`, 'VALIDATION');
+    }
+
+    const ids = [...wanted.keys()];
+    const refs = await loadCaseRefs(ids);
+
+    // The amount decides the cadence, and the cadence decides how long N parts take. Read it
+    // here rather than trusting the figure the board happened to be showing.
+    const amounts = new Map(
+      (
+        await db
+          .select({ id: maturityCases.id, amount: maturityCases.maturityAmountPaise })
+          .from(maturityCases)
+          .where(inArray(maturityCases.id, ids))
+      ).map((r) => [r.id, r.amount]),
+    );
+
+    const why = reason?.trim() || 'Re-planned from the planning board';
+    const meta = await requestMeta();
+
+    const outcome = await runBulk(ids, refs, async (id, ref) => {
+      assertCan(actor, 'schedule.reschedule', ref);
+      const parts = wanted.get(id);
+      if (parts == null) throw new Error('No part count for this row');
+      const amount = amounts.get(id);
+      if (amount == null) throw new Error('Row no longer exists');
+      const windowDays = windowDaysForPayoutCount(BigInt(amount), parts);
+      if (windowDays > 60) {
+        throw new Error(
+          `${parts} parts would need a ${windowDays}-working-day window; 60 is the most allowed.`,
+        );
+      }
+      await replanWithWindow(session, id, windowDays, `${why} (${parts} parts)`, meta);
+    });
+
+    revalidateCase();
+    return ok(outcome);
   } catch (e) {
     return toActionError(e);
   }

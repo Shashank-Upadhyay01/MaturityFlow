@@ -27,7 +27,14 @@ export async function GET() {
       branchIds.map(async (branchId) => [branchId, await getCalendarSnapshot(branchId)] as const),
     );
     return NextResponse.json(
-      serialize({ cases, instalments, calendars: Object.fromEntries(calendarRows), today: todayISO() }),
+      serialize({
+        cases,
+        instalments,
+        calendars: Object.fromEntries(calendarRows),
+        today: todayISO(),
+        // Whether the board may offer to commit its what-if, decided on the server.
+        canReplan: roleCan(session.role, 'schedule.reschedule'),
+      }),
       { headers: NO_STORE },
     );
   } catch (cause) {

@@ -15,6 +15,8 @@ interface PlanPayload {
   instalments: PlanInstalment[];
   calendars: Record<string, CalendarSnapshot>;
   today: string;
+  /** Server's answer on whether this user may commit the board's what-if. */
+  canReplan: boolean;
 }
 
 /**
@@ -78,7 +80,7 @@ export function RegisterTabs({ sheet }: { sheet: ReactNode }) {
       <div className={cn(view !== 'sheet' && 'hidden')}>{sheet}</div>
       {view === 'plan' && (
         plan ? (
-          <PlanBoard {...plan} />
+          <PlanBoard {...plan} onApplied={() => void loadPlan()} />
         ) : (
           <Glass className="flex min-h-72 items-center justify-center p-8 text-center">
             {loading ? (

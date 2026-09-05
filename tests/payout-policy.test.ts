@@ -15,6 +15,7 @@ import {
   cadenceFor,
   firstPayoutOn,
   isPriorityCase,
+  approvalDateProblem,
   paymentFollowingApproval,
   payoutPlanFor,
   scheduleAnchorFor,
@@ -251,5 +252,66 @@ describe('the payment date the branch typed is where payouts start', () => {
   it('does not drag a back-dated window forward to today', () => {
     // A window the branch dated last week is late, and stays late — the missed columns say so.
     expect(nextWorkingDay('2026-09-01', open)).toBe('2026-09-01');
+  });
+});
+
+describe('approvalDateProblem', () => {
+  it('passes an approval that sits between the form and the payment', () => {
+    expect(approvalDateProblem('2026-09-03', '2026-09-01', '2026-09-06')).toBeNull();
+  });
+
+  it('allows the approval to fall on either boundary', () => {
+    expect(approvalDateProblem('2026-09-01', '2026-09-01', '2026-09-06')).toBeNull();
+    expect(approvalDateProblem('2026-09-06', '2026-09-01', '2026-09-06')).toBeNull();
+  });
+
+  it('catches an approval dated before the form that asked for it', () => {
+    // The exact shape of the four rows that came in approved on 3 August against a form
+    // submitted on 31 August. The importer used to blank the column and say nothing.
+    expect(approvalDateProblem('2026-08-03', '2026-08-31', '2026-09-05')).toBe('BEFORE_FORM');
+  });
+
+  it('catches an approval dated after the counter starts paying', () => {
+    expect(approvalDateProblem('2026-09-10', '2026-09-01', '2026-09-06')).toBe('AFTER_PAYMENT');
+  });
+
+  it('reports the earlier rule first when a date breaks both', () => {
+    expect(approvalDateProblem('2026-08-01', '2026-09-01', '2026-07-01')).toBe('BEFORE_FORM');
+  });
+
+  it('has nothing to check against when no payment date is set yet', () => {
+    expect(approvalDateProblem('2026-12-31', '2026-09-01', null)).toBeNull();
+    expect(approvalDateProblem('2026-08-01', '2026-09-01', null)).toBe('BEFORE_FORM');
+  });
+});
+
+describe('applying a part count from the planning board', () => {
+  /*
+    The board's Apply button sends a number of parts; the server turns it into a window. The
+    button's own count of "cases that would change" compares the parts on screen against the parts
+    the stored window already yields, so if that round trip were lossy the button would still show
+    work to do immediately after doing it.
+  */
+  it('is idempotent: applying N parts leaves the case reading N parts', () => {
+    for (const amount of [LAKH, LAKH - 1n, LAKH * 40n, 1_000n]) {
+      for (let parts = 1; parts <= 20; parts += 1) {
+        const windowDays = windowDaysForPayoutCount(amount, parts);
+        if (windowDays > 60) continue;
+        expect(payoutPlanFor(amount, windowDays).payoutDays).toBe(parts);
+      }
+    }
+  });
+
+  it('keeps an alternate-day case inside the 60-day ceiling up to 29 parts', () => {
+    const small = LAKH - 1n;
+    expect(windowDaysForPayoutCount(small, 29)).toBe(60);
+    expect(windowDaysForPayoutCount(small, 30)).toBeGreaterThan(60);
+    // A daily case fits far more parts in the same ceiling.
+    expect(windowDaysForPayoutCount(LAKH, 57)).toBe(60);
+  });
+
+  it('never returns a window shorter than the processing gap allows', () => {
+    expect(windowDaysForPayoutCount(LAKH, 1)).toBeGreaterThanOrEqual(PROCESSING_WORKING_DAYS + 1);
+    expect(windowDaysForPayoutCount(LAKH - 1n, 1)).toBeGreaterThanOrEqual(PROCESSING_WORKING_DAYS + 1);
   });
 });

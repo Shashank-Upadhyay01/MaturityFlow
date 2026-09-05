@@ -74,6 +74,27 @@ export function paymentFollowingApproval(approvalOn: ISODate): ISODate {
   return addDays(approvalOn, PAYMENT_LEAD_CALENDAR_DAYS);
 }
 
+/**
+ * Is a typed approval date consistent with the two dates either side of it?
+ *
+ * An approval cannot precede the form that asked for it, and it cannot fall after the day the
+ * counter starts paying. Both were already enforced when a clerk types the cell on the register;
+ * the importer used to enforce neither and silently blanked the column instead, which is how a
+ * row could arrive approved four weeks before it was submitted. One predicate so the two paths
+ * cannot drift apart again.
+ *
+ * Returns null when the date is fine, otherwise which rule it breaks.
+ */
+export function approvalDateProblem(
+  approvalOn: ISODate,
+  formSubmittedOn: ISODate,
+  paymentOn: ISODate | null,
+): 'BEFORE_FORM' | 'AFTER_PAYMENT' | null {
+  if (approvalOn < formSubmittedOn) return 'BEFORE_FORM';
+  if (paymentOn && approvalOn > paymentOn) return 'AFTER_PAYMENT';
+  return null;
+}
+
 export class PayoutPolicyError extends Error {
   constructor(message: string) {
     super(message);
