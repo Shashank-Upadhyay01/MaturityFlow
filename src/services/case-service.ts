@@ -17,7 +17,7 @@ import { writeAudit, type AuditAction } from '@/lib/audit';
 import type { SessionUser } from '@/lib/auth/session';
 import { formatPaise } from '@/lib/money';
 import { formatCaseNumber, newId } from '@/lib/id';
-import { todayISO, type WorkingDayCalendar } from '@/lib/working-days';
+import { nextWorkingDay, todayISO, type WorkingDayCalendar } from '@/lib/working-days';
 import { scheduleAnchorFor } from '@/lib/payout-policy';
 import { getBranchPolicy } from './calendar-service';
 import { persistSchedule, persistReschedule, persistReplanWindow } from './schedule-service';
@@ -305,10 +305,26 @@ export async function approveAndScheduleInTx(
  * money on a day nobody agreed to.
  */
 function anchorForCase(caseRow: MaturityCase, calendar: WorkingDayCalendar): string {
+  /*
+    A payment date the branch supplied wins outright.
+
+    It is the date written on the form and the date the customer was given, so the schedule
+    starts there — that is what the Payment Date column has always claimed to mean. Imports used
+    to ignore it and re-derive the start from the maturity date, so a register carrying payment
+    dates of the 9th, 10th and 11th generated every one of its first payouts on the 7th, and the
+    counter would have paid people a week before they were told to come.
+
+    Rolled onto the next open day only when that exact date is closed, because the counter cannot
+    pay on a Sunday or a declared holiday. Deliberately NOT clamped forward to today: a window the
+    branch dated last week really is late, and the missed columns exist to say so rather than to
+    have the date quietly moved.
+  */
+  if (caseRow.paymentOn) return nextWorkingDay(caseRow.paymentOn, calendar);
+
   if (!caseRow.instrumentMaturityOn) {
     throw new WorkflowError(
-      `${caseRow.caseNumber} has no maturity date, so its first payout cannot be worked out. ` +
-        'Add the maturity date and submit again.',
+      `${caseRow.caseNumber} has no maturity date and no payment date, so its first payout cannot ` +
+        'be worked out. Add one of them and submit again.',
       'NO_MATURITY_DATE',
     );
   }

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { addDays, daysBetween, isWorkingDay, makeCalendar } from '../src/lib/working-days';
+import {
+  addDays,
+  daysBetween,
+  isWorkingDay,
+  makeCalendar,
+  nextWorkingDay,
+  type WorkingDayCalendar,
+} from '../src/lib/working-days';
 import {
   LARGE_CASE_THRESHOLD_PAISE,
   PAYMENT_LEAD_CALENDAR_DAYS,
@@ -211,5 +218,38 @@ describe('payment follows approval', () => {
 
   it('agrees with the constant it is built on', () => {
     expect(PAYMENT_LEAD_CALENDAR_DAYS).toBe(3);
+  });
+});
+
+describe('the payment date the branch typed is where payouts start', () => {
+  /*
+    Guards the rule directly rather than through the service, which needs a database.
+
+    The register the branch filled in carried payment dates of 5, 9, 10 and 11 September, and
+    every case still generated its first payout on the 7th, because the schedule was anchored on
+    the maturity date instead. `anchorForCase` now prefers `paymentOn`; these assert the two
+    properties that behaviour rests on.
+  */
+  // Month-start blocking is a separate rule with its own tests; switch it off so these assert
+  // only what this change is about — whether the branch's own date is honoured.
+  const open: WorkingDayCalendar = makeCalendar([], { monthStartBlockedDays: 0 });
+
+  it('leaves an open payment date exactly where it is', () => {
+    // 9, 10 and 11 September 2026 are Wed, Thu and Fri.
+    for (const day of ['2026-09-09', '2026-09-10', '2026-09-11'] as const) {
+      expect(nextWorkingDay(day, open)).toBe(day);
+    }
+  });
+
+  it('rolls only when the counter is shut that day', () => {
+    // 6 September 2026 is a Sunday.
+    expect(nextWorkingDay('2026-09-06', open)).toBe('2026-09-07');
+    const withHoliday = makeCalendar(['2026-09-09'], { monthStartBlockedDays: 0 });
+    expect(nextWorkingDay('2026-09-09', withHoliday)).toBe('2026-09-10');
+  });
+
+  it('does not drag a back-dated window forward to today', () => {
+    // A window the branch dated last week is late, and stays late — the missed columns say so.
+    expect(nextWorkingDay('2026-09-01', open)).toBe('2026-09-01');
   });
 });
