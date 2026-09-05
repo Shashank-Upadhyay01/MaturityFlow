@@ -2,25 +2,72 @@
  * Parse / emit the branch maturity register (the Excel they use today).
  * Dates are India (day/month/year). Money is rupees as number, converted to paise by the caller.
  */
+import { isPriorityCase, windowDaysForPayoutCount } from './payout-policy';
 import { DEFAULT_REGISTER_LAYOUT, excelHeadersForLayout } from './register-layout';
 import { parseISODate, type ISODate } from './working-days';
 
 export const REGISTER_COLUMNS = excelHeadersForLayout(DEFAULT_REGISTER_LAYOUT);
 
-/** Headers the branch import file always has. Hidden Register columns must not strip these. */
-export const REGISTER_IMPORT_HEADERS = [
-  'Savings Account Number',
+/**
+ * The branch template, left to right, exactly as the office asked for it.
+ *
+ * Only the first four are typed by the branch. The rest are the register's own answer: the dates
+ * the case moves through and the five money columns the system computes. They are still in the
+ * file, because the template doubles as the shape of the sheet the branch reads back — but a
+ * branch filling them in by hand is a branch disagreeing with the ledger.
+ */
+export const REGISTER_TEMPLATE_HEADERS = [
+  'Account Number',
   'Customer Name',
-  'Date of Maturity',
-  'Form Submission Date',
-  'Payment Date',
+  'Agent Name',
   'Maturity Amount',
-  'Paid Maturity',
-  'Remaining Amount',
-  "Customer's Agent Name",
-  'Window Days',
-  'Due Payment',
+  'Maturity Date',
+  'Form Submission Date',
+  'Approval Date',
+  'Payment Date',
+  'Remaining',
+  'Paid',
+  'Missed Amount',
+  "Today's Amount",
+  'Total Amount',
+  'Actual Paid',
 ] as const;
+
+/** The only four cells a branch is asked to type. Everything else the system derives. */
+export const REGISTER_TEMPLATE_INPUT_HEADERS = [
+  'Account Number',
+  'Customer Name',
+  'Agent Name',
+  'Maturity Amount',
+] as const;
+
+const INPUT_SET = new Set<string>(REGISTER_TEMPLATE_INPUT_HEADERS);
+
+/** True where the branch types the value; false where the register fills it in. */
+export function isTemplateInputHeader(header: string): boolean {
+  return INPUT_SET.has(header);
+}
+
+/** Headers the branch import file always has. Hidden Register columns must not strip these. */
+export const REGISTER_IMPORT_HEADERS = REGISTER_TEMPLATE_HEADERS;
+
+/**
+ * Payout days a maturity gets when the sheet does not say.
+ *
+ * The office rule, and the only one: ₹1 lakh and over pays every working day for twelve days;
+ * below that, six payouts on alternate days. The template carries no Window Days column at all —
+ * the amount already decides it, and a column the branch has to fill in is one they can fill in
+ * wrongly.
+ */
+export function defaultPayoutDaysFor(maturityPaise: bigint): number {
+  return isPriorityCase(maturityPaise) ? 12 : 6;
+}
+
+/** The working-day window that yields those payouts, from a rupee figure off the sheet. */
+export function defaultWindowDaysFor(maturityRupees: number): number {
+  const paise = BigInt(Math.round((Number.isFinite(maturityRupees) ? maturityRupees : 0) * 100));
+  return windowDaysForPayoutCount(paise, defaultPayoutDaysFor(paise));
+}
 
 export interface RegisterRow {
   /** Branch code/name from a compiled HQ workbook. Empty on a single-branch legacy sheet. */
@@ -29,6 +76,8 @@ export interface RegisterRow {
   customerName: string;
   instrumentMaturityOn: ISODate | null;
   formSubmittedOn: ISODate | null;
+  /** Only where the branch typed one; otherwise the register fills it from the form date. */
+  approvedOn: ISODate | null;
   paymentOn: ISODate | null;
   maturityRupees: number;
   paidRupees: number;
@@ -161,6 +210,7 @@ export function parseRegisterGrid(grid: unknown[][]): { rows: RegisterRow[]; err
   const iRem = idx('remaining');
   const iAgent = idx('agent');
   const iToday = firstIdx('due payment', 'today');
+  const iApproval = firstIdx('approval date', 'approval');
   const iWin = firstIdx('window days', 'window', 'days');
   const iBranchCode = header.findIndex((h) => h === 'branch code' || h.includes('branch code'));
   const iBranchName = header.findIndex((h) => h === 'branch name' || h.includes('branch name'));
@@ -182,6 +232,7 @@ export function parseRegisterGrid(grid: unknown[][]): { rows: RegisterRow[]; err
     const formSubmittedOn = iSub >= 0 ? parseRegisterDate(excelCellRaw(line[iSub])) : null;
     let paymentOn = iPay >= 0 ? parseRegisterDate(excelCellRaw(line[iPay])) : null;
     const instrumentMaturityOn = iMat >= 0 ? parseRegisterDate(excelCellRaw(line[iMat])) : null;
+    const approvedOn = iApproval >= 0 ? parseRegisterDate(excelCellRaw(line[iApproval])) : null;
     const maturityRupees = parseRupeesNumber(excelCellRaw(line[iAmt]));
     const paidRupees = iPaid >= 0 ? parseRupeesNumber(excelCellRaw(line[iPaid])) : 0;
     let remainingRupees = iRem >= 0 ? parseRupeesNumber(excelCellRaw(line[iRem])) : maturityRupees - paidRupees;
@@ -204,7 +255,10 @@ export function parseRegisterGrid(grid: unknown[][]): { rows: RegisterRow[]; err
         paymentOn = formSubmittedOn;
       }
     }
-    const windowDays = iWin >= 0 ? Math.max(1, Math.round(parseRupeesNumber(excelCellRaw(line[iWin])) || 15)) : 15;
+    const windowDays =
+      iWin >= 0
+        ? Math.max(1, Math.round(parseRupeesNumber(excelCellRaw(line[iWin])) || 15))
+        : defaultWindowDaysFor(maturityRupees);
     const agentName = iAgent >= 0 ? String(excelCellRaw(line[iAgent]) ?? '').trim() || 'Unassigned' : 'Unassigned';
     rows.push({
       branchReference: iBranch >= 0 ? String(excelCellRaw(line[iBranch]) ?? '').trim() : '',
@@ -217,6 +271,7 @@ export function parseRegisterGrid(grid: unknown[][]): { rows: RegisterRow[]; err
       paidRupees,
       remainingRupees,
       agentName,
+      approvedOn,
       todayPayableRupees: iToday >= 0 ? parseRupeesNumber(excelCellRaw(line[iToday])) : 0,
       windowDays,
       rowNumber: r + 1,

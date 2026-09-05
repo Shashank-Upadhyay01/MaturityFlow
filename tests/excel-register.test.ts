@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  REGISTER_TEMPLATE_HEADERS,
+  REGISTER_TEMPLATE_INPUT_HEADERS,
+  defaultWindowDaysFor,
+  isTemplateInputHeader,
   parseRegisterDate,
   parseRegisterGrid,
   parseRupeesNumber,
   excelSerialToISO,
 } from '../src/lib/excel-register';
+import { payoutPlanFor } from '../src/lib/payout-policy';
 
 describe('parseRegisterDate', () => {
   it('reads Indian day/month/year', () => {
@@ -158,5 +163,113 @@ describe('parseRegisterGrid', () => {
     expect(kunti?.formSubmittedOn).toBe('2026-07-29');
     expect(kunti?.paymentOn).toBe('2026-08-03');
     expect(rows.filter((r) => r.paymentOn).length).toBeGreaterThan(80);
+  });
+});
+
+describe('branch template', () => {
+  const HEADERS = [...REGISTER_TEMPLATE_HEADERS];
+
+  it('carries the fourteen columns the office asked for, in order', () => {
+    expect(HEADERS).toEqual([
+      'Account Number',
+      'Customer Name',
+      'Agent Name',
+      'Maturity Amount',
+      'Maturity Date',
+      'Form Submission Date',
+      'Approval Date',
+      'Payment Date',
+      'Remaining',
+      'Paid',
+      'Missed Amount',
+      "Today's Amount",
+      'Total Amount',
+      'Actual Paid',
+    ]);
+  });
+
+  it('asks the branch for four cells and derives the rest', () => {
+    expect([...REGISTER_TEMPLATE_INPUT_HEADERS]).toEqual([
+      'Account Number',
+      'Customer Name',
+      'Agent Name',
+      'Maturity Amount',
+    ]);
+    for (const h of REGISTER_TEMPLATE_INPUT_HEADERS) expect(isTemplateInputHeader(h)).toBe(true);
+    for (const h of ['Remaining', 'Paid', 'Missed Amount', "Today's Amount", 'Total Amount']) {
+      expect(isTemplateInputHeader(h)).toBe(false);
+    }
+  });
+
+  it('reads a fully filled line off the new headers', () => {
+    const { rows, errors } = parseRegisterGrid([
+      HEADERS,
+      ['1001601234', 'Rajesh', 'Santosh', 135000, '21-08-2026', '25-08-2026', '28-08-2026', '29-08-2026', 72500, 22500, 33750, 11250, 45000, 40000],
+    ]);
+    expect(errors).toEqual([]);
+    expect(rows).toHaveLength(1);
+    const r = rows[0];
+    expect(r.accountNumber).toBe('1001601234');
+    expect(r.customerName).toBe('Rajesh');
+    expect(r.agentName).toBe('Santosh');
+    expect(r.maturityRupees).toBe(135000);
+    expect(r.instrumentMaturityOn).toBe('2026-08-21');
+    expect(r.formSubmittedOn).toBe('2026-08-25');
+    expect(r.approvedOn).toBe('2026-08-28');
+    expect(r.paymentOn).toBe('2026-08-29');
+    // "Paid" must not be read from "Actual Paid", which also contains the word.
+    expect(r.paidRupees).toBe(22500);
+  });
+
+  it('takes a line with only the four typed cells', () => {
+    const { rows } = parseRegisterGrid([
+      HEADERS,
+      ['1001601234', 'Rajesh', 'Santosh', 135000, '', '', '', '', '', '', '', '', '', ''],
+    ]);
+    const r = rows[0];
+    expect(r.customerName).toBe('Rajesh');
+    expect(r.maturityRupees).toBe(135000);
+    expect(r.instrumentMaturityOn).toBeNull();
+    expect(r.paymentOn).toBeNull();
+    expect(r.approvedOn).toBeNull();
+    // Nothing was typed, so nothing is claimed as paid.
+    expect(r.paidRupees).toBe(0);
+    expect(r.remainingRupees).toBe(135000);
+  });
+});
+
+describe('the twelve / six split', () => {
+  it('gives a lakh and over twelve daily payouts', () => {
+    const window = defaultWindowDaysFor(135000);
+    expect(window).toBe(15);
+    const plan = payoutPlanFor(13_500_000n, window);
+    expect(plan.cadence).toBe('DAILY');
+    expect(plan.payoutDays).toBe(12);
+    expect(plan.stride).toBe(1);
+  });
+
+  it('treats exactly one lakh as a large case', () => {
+    const plan = payoutPlanFor(10_000_000n, defaultWindowDaysFor(100000));
+    expect(plan.cadence).toBe('DAILY');
+    expect(plan.payoutDays).toBe(12);
+  });
+
+  it('gives anything below a lakh six payouts on alternate days', () => {
+    const window = defaultWindowDaysFor(50000);
+    expect(window).toBe(14);
+    const plan = payoutPlanFor(5_000_000n, window);
+    expect(plan.cadence).toBe('ALTERNATE');
+    expect(plan.payoutDays).toBe(6);
+    expect(plan.stride).toBe(2);
+  });
+
+  it('derives the window from the sheet when no Window Days column exists', () => {
+    const { rows } = parseRegisterGrid([
+      [...REGISTER_TEMPLATE_HEADERS],
+      ['1', 'Big', 'A', 135000, '', '', '', '', '', '', '', '', '', ''],
+      ['2', 'Small', 'A', 50000, '', '', '', '', '', '', '', '', '', ''],
+    ]);
+    expect(rows[0].windowDays).toBe(15);
+    expect(rows[1].windowDays).toBe(14);
   });
 });

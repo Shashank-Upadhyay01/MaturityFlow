@@ -4,24 +4,10 @@ import { NextResponse } from 'next/server';
 import { db } from '@/db';
 import { branches } from '@/db/schema';
 import { requireActor } from '@/lib/auth/session';
-import { REGISTER_IMPORT_HEADERS } from '@/lib/excel-register';
+import { buildRegisterTemplate } from '@/lib/register-template';
 import { assertCan } from '@/lib/rbac';
 
 export const dynamic = 'force-dynamic';
-
-const SAMPLE: Record<string, string | number> = {
-  'Savings Account Number': '1001602329',
-  'Customer Name': 'Sample Customer',
-  'Date of Maturity': '29/06/2026',
-  'Form Submission Date': '24/07/2026',
-  'Payment Date': '29/07/2026',
-  'Maturity Amount': 104035,
-  'Paid Maturity': 80000,
-  'Remaining Amount': 24035,
-  "Customer's Agent Name": 'Agent Name',
-  'Window Days': 15,
-  'Due Payment': 0,
-};
 
 export async function GET(request: Request) {
   const { session, actor } = await requireActor();
@@ -47,25 +33,9 @@ export async function GET(request: Request) {
       .limit(1);
     sampleBranchCode = b?.code ?? sampleBranchCode;
   }
-  const headers = [
-    ...(compiled ? ['Branch Code'] : []),
-    ...REGISTER_IMPORT_HEADERS,
-  ];
 
-  const ExcelJS = (await import('exceljs')).default;
-  const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('Register', { views: [{ state: 'frozen', ySplit: 1 }] });
-  ws.addRow(headers);
-  ws.getRow(1).font = { bold: true };
-  ws.addRow([
-    ...(compiled ? [sampleBranchCode] : []),
-    ...REGISTER_IMPORT_HEADERS.map((h) => SAMPLE[h] ?? ''),
-  ]);
-  ws.columns.forEach((c) => {
-    c.width = 18;
-  });
-  const buf = await wb.xlsx.writeBuffer();
-  return new NextResponse(buf as ArrayBuffer, {
+  const buf = await buildRegisterTemplate({ compiled, branchCode: sampleBranchCode });
+  return new NextResponse(buf, {
     headers: {
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'Content-Disposition': `attachment; filename="${compiled ? 'all-branches-register-template' : 'maturity-register-template'}.xlsx"`,

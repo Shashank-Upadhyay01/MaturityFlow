@@ -14,8 +14,11 @@ import type { SessionUser } from '@/lib/auth/session';
 import { resolveImportBranch } from '@/lib/branch-routing';
 import { formatCaseNumber, newId } from '@/lib/id';
 import { parseRupeesToPaise } from '@/lib/money';
-import { todayISO } from '@/lib/working-days';
+import { addDays, todayISO } from '@/lib/working-days';
+import { APPROVAL_LEAD_CALENDAR_DAYS } from '@/lib/payout-policy';
 import type { RegisterRow } from '@/lib/excel-register';
+import { approveAndScheduleInTx } from '@/services/case-service';
+import { getBranchPolicy } from '@/services/calendar-service';
 import { sql } from 'drizzle-orm';
 import { caseCounters, branches } from '@/db/schema';
 
@@ -66,6 +69,7 @@ export async function importRegisterRows(
     if (!branch) throw new Error('Branch not found');
     importedBranchCode = branch.code;
     importedBranchName = branch.name;
+    const policy = await getBranchPolicy(branchId, tx);
 
     const agentByKey = new Map<string, string>();
     const existingAgents = await tx.select().from(agents).where(eq(agents.branchId, branchId));
@@ -129,8 +133,16 @@ export async function importRegisterRows(
       if (!row.formSubmittedOn) {
         warnings.push(`Row ${row.rowNumber} (${row.customerName}): form-in date was blank — used ${formSubmittedOn}.`);
       }
+      /*
+        A maturity date is required to work out where the schedule starts, and the branch is only
+        asked to type four columns — so a blank one falls back to the form date rather than
+        refusing the row. Said out loud in the warnings, because it is a date nobody supplied.
+      */
+      const maturityOn = row.instrumentMaturityOn ?? formSubmittedOn;
       if (!row.instrumentMaturityOn) {
-        warnings.push(`Row ${row.rowNumber} (${row.customerName}): maturity date was blank.`);
+        warnings.push(
+          `Row ${row.rowNumber} (${row.customerName}): maturity date was blank — dated from ${maturityOn}.`,
+        );
       }
 
       const dup = await tx
@@ -164,7 +176,7 @@ export async function importRegisterRows(
         agentId,
         customerId,
         maturityAmountPaise: amount,
-        instrumentMaturityOn: row.instrumentMaturityOn,
+        instrumentMaturityOn: maturityOn,
         formSubmittedOn,
         paymentOn: row.paymentOn,
         submittedAt: new Date(`${formSubmittedOn}T10:00:00+05:30`),
@@ -213,6 +225,47 @@ export async function importRegisterRows(
           updatedAt: new Date(),
         })
         .where(eq(maturityCases.id, caseId));
+
+      /*
+        Schedule the case here, in the transaction that created it.
+
+        Imported rows used to arrive with no instalments at all, so every derived column on the
+        register read zero until somebody remembered to run the backfill script by hand. The
+        branch types four cells; the register owes them the other ten the moment the file lands.
+
+        `approveAndScheduleInTx` anchors on the maturity date plus three calendar days, rolled
+        onto the next open day, and `payoutPlanFor` splits by amount — twelve daily payouts at
+        ₹1 lakh and over, six on alternate days below it. A row that cannot be scheduled is
+        reported and left as it was rather than losing the whole file.
+      */
+      if (remaining > 0n) {
+        try {
+          const [inserted] = await tx
+            .select()
+            .from(maturityCases)
+            .where(eq(maturityCases.id, caseId))
+            .limit(1);
+          if (inserted) {
+            const { anchor } = await approveAndScheduleInTx(tx, actor, inserted, policy.calendar);
+            // The approval date the office reads is a default until somebody holding
+            // `case.approve` confirms it, so the reviewer columns stay empty on purpose.
+            const reviewOn = row.approvedOn ?? addDays(formSubmittedOn, APPROVAL_LEAD_CALENDAR_DAYS);
+            await tx
+              .update(maturityCases)
+              .set({
+                paymentOn: row.paymentOn ?? anchor,
+                opsReviewedOn: reviewOn <= anchor ? reviewOn : null,
+                updatedAt: new Date(),
+              })
+              .where(eq(maturityCases.id, caseId));
+          }
+        } catch (cause) {
+          warnings.push(
+            `Row ${row.rowNumber} (${row.customerName}): imported, but could not be scheduled — ` +
+              `${cause instanceof Error ? cause.message : String(cause)}`,
+          );
+        }
+      }
 
       if (paid > 0n) {
         await tx.insert(payoutTransactions).values({

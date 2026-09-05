@@ -242,7 +242,7 @@ export async function createCase(
  */
 async function scheduleCaseInTx(
   tx: Tx,
-  actor: SessionUser,
+  actor: Pick<SessionUser, 'id'>,
   caseRow: MaturityCase,
   anchor: string,
 ) {
@@ -262,6 +262,39 @@ async function scheduleCaseInTx(
   });
 
   return schedule;
+}
+
+/**
+ * Approve and schedule a case that already exists inside this transaction.
+ *
+ * The same two steps `submitCase` performs, without opening a transaction of its own, so a bulk
+ * caller — the Excel import — can schedule hundreds of rows inside the one transaction that
+ * created them. Calling `submitCase` per row instead would open a nested transaction on a second
+ * connection while the outer one still holds those case locks: that is a deadlock, not a slow
+ * import.
+ *
+ * `approvedById` stays null for the same reason it does in `submitCase` — nobody approved this,
+ * the schedule was derived — and that null is how an auto-scheduled case is told apart later.
+ */
+export async function approveAndScheduleInTx(
+  tx: Tx,
+  actor: Pick<SessionUser, 'id'>,
+  caseRow: MaturityCase,
+  calendar: WorkingDayCalendar,
+) {
+  const anchor = anchorForCase(caseRow, calendar);
+  await tx
+    .update(maturityCases)
+    .set({
+      status: 'APPROVED',
+      approvedOn: anchor,
+      approvedAt: new Date(),
+      approvedById: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(maturityCases.id, caseRow.id));
+  const schedule = await scheduleCaseInTx(tx, actor, caseRow, anchor);
+  return { anchor, schedule };
 }
 
 /**
