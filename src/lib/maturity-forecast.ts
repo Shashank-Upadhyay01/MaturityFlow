@@ -80,7 +80,7 @@ export function parseForecastWorkbook(sheets: readonly ForecastSheetGrid[]): For
       const line = sheet.rows[index] ?? [];
       const customerName = clean(line[iCustomer]);
       if (!customerName) continue; // totals/footer row
-      const sourceMaturityOn = parseRegisterDate(excelCellRaw(line[iMaturity]), { indianAmbiguous: false });
+      const sourceMaturityOn = parseRegisterDate(excelCellRaw(line[iMaturity]));
       const maturityOn = useConfirmedAugustDate && sourceMaturityOn?.startsWith('2026-08')
         ? '2026-08-29'
         : sourceMaturityOn;
@@ -97,7 +97,7 @@ export function parseForecastWorkbook(sheets: readonly ForecastSheetGrid[]): For
         agentName: iAgent >= 0 ? clean(line[iAgent]) : '',
         planRupees: iPlan >= 0 ? parseRupeesNumber(excelCellRaw(line[iPlan])) : 0,
         totalDepositRupees: iDeposit >= 0 ? parseRupeesNumber(excelCellRaw(line[iDeposit])) : 0,
-        joinedOn: iJoined >= 0 ? parseRegisterDate(excelCellRaw(line[iJoined]), { indianAmbiguous: false }) : null,
+        joinedOn: iJoined >= 0 ? parseRegisterDate(excelCellRaw(line[iJoined])) : null,
         maturityOn,
         productName: iProduct >= 0 ? clean(line[iProduct]) : '',
         planName: iPlanName >= 0 ? clean(line[iPlanName]) : '',

@@ -210,7 +210,7 @@ export async function updateRegisterRow(
       if (s == null || s === '') return null;
       // Browser date inputs already send unambiguous ISO. The Excel parser's Indian ambiguity
       // correction is only for imported sheets (01/09 vs 09/01), never for YYYY-MM-DD.
-      const iso = parseRegisterDate(s, { indianAmbiguous: !/^\d{4}-\d{2}-\d{2}$/.test(s.trim()) });
+      const iso = parseRegisterDate(s);
       if (!iso) throw new Error(`Invalid date: ${s}`);
       return iso;
     };

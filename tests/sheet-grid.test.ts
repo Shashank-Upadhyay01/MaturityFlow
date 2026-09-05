@@ -121,7 +121,6 @@ describe('auto-growing empty rows', () => {
 describe('a new row has to identify somebody', () => {
   it('accepts a name or an account number', () => {
     expect(identifiesNewRow({ customerName: 'SUNITA DEVI' })).toBe(true);
-    expect(identifiesNewRow({ accountNumber: '1611937' })).toBe(true);
     expect(identifiesNewRow({ customerName: 'SUNITA DEVI', accountNumber: '1611937' })).toBe(true);
   });
 
@@ -129,6 +128,10 @@ describe('a new row has to identify somebody', () => {
     // This is the "New customer / Unassigned / Rs1" litter: a pasted line that carried an amount
     // and a date but no name used to become a real case with a placeholder for a customer.
     expect(identifiesNewRow({})).toBe(false);
+    // An account with no name is a half-typed row, not a case. This is what filled the sheet
+    // with 75 undeletable "New customer" rows at ₹1.
+    expect(identifiesNewRow({ accountNumber: '1611937' })).toBe(false);
+    expect(identifiesNewRow({ accountNumber: '1611937', customerName: '  ' })).toBe(false);
     expect(identifiesNewRow({ customerName: '   ', accountNumber: '' })).toBe(false);
     expect(identifiesNewRow({ customerName: null, accountNumber: null })).toBe(false);
   });

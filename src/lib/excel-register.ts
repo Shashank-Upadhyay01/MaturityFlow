@@ -112,17 +112,6 @@ export function excelSerialToISO(n: number): ISODate | null {
   return toISO(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate());
 }
 
-/** 3 Aug stored as 2026-03-08 (US mm-dd) → 2026-08-03. Unambiguous days (>12) stay as y-m-d. */
-export function indianiseAmbiguous(iso: ISODate): ISODate {
-  const y = Number(iso.slice(0, 4));
-  const a = Number(iso.slice(5, 7));
-  const b = Number(iso.slice(8, 10));
-  if (a <= 12 && b <= 12 && a !== b) {
-    return toISO(y, b, a) ?? iso;
-  }
-  return iso;
-}
-
 /** Flatten ExcelJS cell values so server actions receive strings, not Date objects. */
 export function excelCellRaw(value: unknown): unknown {
   if (value == null || value === '') return '';
@@ -142,21 +131,37 @@ export function excelCellRaw(value: unknown): unknown {
   return value;
 }
 
-export function parseRegisterDate(raw: unknown, opts: { indianAmbiguous?: boolean } = {}): ISODate | null {
-  const indian = opts.indianAmbiguous !== false;
+/**
+ * Read a date off a register sheet.
+ *
+ * Nothing here guesses at day-vs-month order, and that is the whole point.
+ *
+ * There used to be an `indianiseAmbiguous` step that swapped the two parts whenever both were 12
+ * or under, on the theory that the file had been written by a US-locale Excel. It destroyed
+ * correct data: a branch typing 05-09-2026 into a template got a workbook holding the real serial
+ * for 5 September, and the swap turned it into 9 May. Every payment date in a 25-row import
+ * landed in the wrong month, the schedules were generated against those dates, and the sheet had
+ * to be corrected by hand — which is the opposite of what an import is for.
+ *
+ * Every input this function accepts is already unambiguous:
+ *   - a Date, and an Excel serial, are a specific day. Excel stores the serial, never the
+ *     display format, so the number in the file is the day the branch picked.
+ *   - an ISO string is YYYY-MM-DD by definition.
+ *   - dd-mm-yyyy text is read day-first, which is what the branch writes.
+ * A file genuinely exported month-first is a problem at the point of export, and quietly
+ * rewriting good dates to compensate costs far more than it ever saved.
+ */
+export function parseRegisterDate(raw: unknown): ISODate | null {
   if (raw == null || raw === '') return null;
   if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
-    const utc = toISO(raw.getUTCFullYear(), raw.getUTCMonth() + 1, raw.getUTCDate());
-    const local = toISO(raw.getFullYear(), raw.getMonth() + 1, raw.getDate());
-    const picked = utc ?? local;
-    return picked && indian ? indianiseAmbiguous(picked) : picked;
+    return (
+      toISO(raw.getUTCFullYear(), raw.getUTCMonth() + 1, raw.getUTCDate()) ??
+      toISO(raw.getFullYear(), raw.getMonth() + 1, raw.getDate())
+    );
   }
-  if (typeof raw === 'number') {
-    const iso = excelSerialToISO(raw);
-    return iso && indian ? indianiseAmbiguous(iso) : iso;
-  }
+  if (typeof raw === 'number') return excelSerialToISO(raw);
   if (typeof raw === 'object' && raw && 'result' in (raw as object)) {
-    return parseRegisterDate((raw as { result: unknown }).result, opts);
+    return parseRegisterDate((raw as { result: unknown }).result);
   }
   const s = String(raw).trim();
   const dmy = s.match(DMY);
@@ -168,15 +173,9 @@ export function parseRegisterDate(raw: unknown, opts: { indianAmbiguous?: boolea
     return toISO(year, Number(dmy2[2]), Number(dmy2[1]));
   }
   const stamp = s.match(ISO_STAMP);
-  if (stamp) return parseRegisterDate(s.slice(0, 10), opts);
+  if (stamp) return parseRegisterDate(s.slice(0, 10));
   const iso = s.match(ISO);
-  if (iso) {
-    const y = Number(iso[1]);
-    const a = Number(iso[2]);
-    const b = Number(iso[3]);
-    const picked = toISO(y, a, b) ?? toISO(y, b, a);
-    return picked && indian ? indianiseAmbiguous(picked) : picked;
-  }
+  if (iso) return toISO(Number(iso[1]), Number(iso[2]), Number(iso[3]));
   return null;
 }
 

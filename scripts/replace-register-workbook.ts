@@ -92,7 +92,7 @@ function paise(value: unknown): bigint {
 function requireDate(value: unknown, label: string, rowNumber: number): ISODate {
   // These cells are genuine Excel dates. Do not apply the legacy US-stored-date correction to
   // their ISO representation: 2026-09-01 means 1 September, not 9 January.
-  const parsed = parseRegisterDate(excelCellRaw(value), { indianAmbiguous: false });
+  const parsed = parseRegisterDate(excelCellRaw(value));
   if (!parsed) throw new Error(`Row ${rowNumber}: invalid ${label}.`);
   return parsed;
 }

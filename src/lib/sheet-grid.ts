@@ -304,11 +304,23 @@ export function blankRowCount(input: {
  * placeholder name in the register, in exports and in the counts, which is exactly the litter the
  * Add row button used to produce. Amounts and dates are things you fill in AFTER a row exists.
  */
+/**
+ * Is there enough on this line to create a case for it?
+ *
+ * A customer NAME is the minimum. An account number on its own is not: a clerk tabbing across a
+ * blank row, or a paste that lands one column out, leaves an account and nothing else — and this
+ * used to answer yes to that, so the sheet filled with rows called "New customer" holding ₹1.
+ * Seventy-five of them appeared in one afternoon, none of them deletable from the grid, and the
+ * real rows were lost among them.
+ *
+ * Money and dates still do not count on their own, for the same reason they never did: they say
+ * something about a case without saying whose it is.
+ */
 export function identifiesNewRow(fields: {
   customerName?: string | null;
   accountNumber?: string | null;
 }): boolean {
-  return Boolean(fields.customerName?.trim() || fields.accountNumber?.trim());
+  return Boolean(fields.customerName?.trim());
 }
 
 export type SheetShortcut =
