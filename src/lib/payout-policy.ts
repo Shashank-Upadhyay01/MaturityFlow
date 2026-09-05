@@ -52,6 +52,28 @@ export const AUTO_APPROVAL_CALENDAR_DAYS = 3;
  */
 export const APPROVAL_LEAD_CALENDAR_DAYS = 3;
 
+/**
+ * Calendar days between the approval date and the day the payouts start.
+ *
+ * The office types the approval date; the payment date follows it by three days and the sheet
+ * fills it in. Counted in CALENDAR days for the same reason the maturity gap is: "three days
+ * after approval" is a promise a customer can check on a wall calendar. The clerk can still
+ * overwrite the payment date afterwards — this is the default, not a lock.
+ */
+export const PAYMENT_LEAD_CALENDAR_DAYS = 3;
+
+/**
+ * The payment date an approval date implies.
+ *
+ * Deliberately NOT rolled onto the next working day. The office reads this as plain arithmetic —
+ * approval on the 1st, payment on the 4th — and a date that silently jumped a Sunday would stop
+ * matching what they wrote on the form. `scheduleAnchorFor` still rolls the first payout onto an
+ * open day when the schedule is built, which is where that belongs.
+ */
+export function paymentFollowingApproval(approvalOn: ISODate): ISODate {
+  return addDays(approvalOn, PAYMENT_LEAD_CALENDAR_DAYS);
+}
+
 export class PayoutPolicyError extends Error {
   constructor(message: string) {
     super(message);

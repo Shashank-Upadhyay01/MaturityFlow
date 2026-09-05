@@ -18,7 +18,7 @@ import { formatCaseNumber, newId } from '@/lib/id';
 import { DEFAULT_CASH_CAP_PAISE } from '@/lib/org-settings';
 import { loadOrgSettings } from '@/services/org-settings';
 import { parseRupeesToPaise } from '@/lib/money';
-import { APPROVAL_LEAD_CALENDAR_DAYS, MIN_WINDOW_DAYS } from '@/lib/payout-policy';
+import { APPROVAL_LEAD_CALENDAR_DAYS, MIN_WINDOW_DAYS, paymentFollowingApproval } from '@/lib/payout-policy';
 import { firstPayoutOn } from '@/lib/payout-policy';
 import { bulkTodayAmount, type BulkTodayMode } from '@/lib/register-view';
 import { parseRegisterDate } from '@/lib/excel-register';
@@ -257,6 +257,8 @@ export async function updateRegisterRow(
     const affectsSchedule =
       patch.instrumentMaturityOn !== undefined ||
       patch.paymentOn !== undefined ||
+      // Approval now drags the payment date three days behind it, so it moves the schedule too.
+      patch.opsReviewedOn !== undefined ||
       patch.maturityRupees !== undefined ||
       patch.windowDays !== undefined;
     const alreadyPaid = row.paidCashPaise + row.paidOnlinePaise;
@@ -310,6 +312,22 @@ export async function updateRegisterRow(
       setCase.opsReviewedOn === null
         ? null
         : ((setCase.opsReviewedOn as string | undefined) ?? row.opsReviewedOn);
+
+    /*
+      Typing an approval date fills the payment date three days later.
+
+      The office asked for this directly: approval on the 1st means the counter starts paying on
+      the 4th, and they should not have to type the second date to find that out.
+
+      It is a default, not a lock. A payment date sent in the SAME edit wins — that is the clerk
+      overriding it deliberately — and the payment cell stays editable afterwards, so a later
+      correction sticks until the approval date itself is changed again.
+    */
+    if (patch.opsReviewedOn != null && patch.paymentOn === undefined && finalReview) {
+      const followsApproval = paymentFollowingApproval(finalReview);
+      setCase.paymentOn = followsApproval;
+      finalPayment = followsApproval;
+    }
     if (!adminOverride) {
       if (finalMaturity && finalForm < finalMaturity) {
         throw new Error('Form submission date cannot be before the maturity date.');

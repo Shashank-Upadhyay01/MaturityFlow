@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { addDays, daysBetween, isWorkingDay, makeCalendar } from '../src/lib/working-days';
 import {
-  firstPayoutOn,
-  scheduleAnchorFor,
   LARGE_CASE_THRESHOLD_PAISE,
+  PAYMENT_LEAD_CALENDAR_DAYS,
   PROCESSING_WORKING_DAYS,
   PayoutPolicyError,
   cadenceFor,
+  firstPayoutOn,
   isPriorityCase,
+  paymentFollowingApproval,
   payoutPlanFor,
+  scheduleAnchorFor,
   strideFor,
   windowDaysForPayoutCount,
 } from '../src/lib/payout-policy';
@@ -183,5 +185,31 @@ describe('scheduleAnchorFor', () => {
 
   it('rejects a date it cannot read', () => {
     expect(() => scheduleAnchorFor('not-a-date', '2026-09-10', cal)).toThrow();
+  });
+});
+
+describe('payment follows approval', () => {
+  it('lands three calendar days after the approval date', () => {
+    // The office's own example: approved on 1 September, counter starts on the 4th.
+    expect(paymentFollowingApproval('2026-09-01')).toBe('2026-09-04');
+  });
+
+  it('counts calendar days, not working days', () => {
+    // 4 Sept 2026 is a Friday; three days later is Sunday the 7th and it stays there.
+    // Rolling onto an open day is scheduleAnchorFor's job, not this arithmetic's.
+    expect(paymentFollowingApproval('2026-09-04')).toBe('2026-09-07');
+  });
+
+  it('crosses month and year ends', () => {
+    expect(paymentFollowingApproval('2026-09-29')).toBe('2026-10-02');
+    expect(paymentFollowingApproval('2026-12-30')).toBe('2027-01-02');
+  });
+
+  it('crosses a leap day', () => {
+    expect(paymentFollowingApproval('2028-02-27')).toBe('2028-03-01');
+  });
+
+  it('agrees with the constant it is built on', () => {
+    expect(PAYMENT_LEAD_CALENDAR_DAYS).toBe(3);
   });
 });
