@@ -82,16 +82,21 @@
 
      Only the light values change here — `.dark` redefines every one of these below.
   */
-  --page-bg: #f3f5f8;
+  --page-bg: #dfe5ee;
   --page-fg: #172033;
-  --muted-fg: #4b5565;
-  --faint-fg: #667085;
+  --muted-fg: #3d4552;
+  --faint-fg: #555d6b;
 
-  --glass-bg: #ffffff;
+  /*
+     Panels are off pure white on purpose. A full screen of #ffffff is glare on a branch monitor
+     somebody reads for eight hours; at 96% luminance the page still looks white but stops
+     burning. --glass-bg-strong keeps real white for the few surfaces that must pop.
+  */
+  --glass-bg: #fafbfd;
   --glass-bg-strong: #ffffff;
-  --glass-bg-subtle: #f7f9fc;
-  --glass-border: #d9dee8;
-  --glass-border-quiet: #e7eaf0;
+  --glass-bg-subtle: #dce0e7;
+  --glass-border: #a4aebe;
+  --glass-border-quiet: #c6cdda;
   --glass-highlight: transparent;
   --glass-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
   --glass-shadow-lifted: 0 2px 6px rgba(16, 24, 40, 0.08);
@@ -103,12 +108,20 @@
      beside it — the register's selection bar parks over the table's sticky header, and at any
      translucency the column headings read straight through the totals printed on it.
   */
-  --surface-solid: #ffffff;
+  --surface-solid: #fafbfd;
 
-  /* Grid lines a clerk can actually follow across a 16-column row. */
-  --hairline: #e1e5ec;
+  /*
+     Grid lines a clerk can actually follow across a 16-column row.
+
+     Measured, not eyeballed: the old #e1e5ec sat at 1.26:1 against the panel, which is invisible
+     at arm's length — the reason the sheet read as a wall of numbers with no rows. 1.9:1 is
+     followable without turning the table into a cage. Input borders are held at 3:1 because
+     WCAG 1.4.11 asks that of a control boundary, and a field you cannot find is worse than an
+     ugly one.
+  */
+  --hairline: #b1b9c7;
   --input-bg: #ffffff;
-  --input-border: #cbd2dc;
+  --input-border: #8693a8;
   --ring: rgba(37, 99, 235, 0.42);
 
   /*
@@ -121,20 +134,20 @@
      borrow them: green means the customer took today's money, red means they did not. A day
      nobody has answered for yet gets no colour at all.
   */
-  --row-taken: #dcfce7;
+  --row-taken: #d3f8e0;
   --row-taken-strong: #bbf7d0;
   --row-taken-edge: #16a34a;
-  --row-taken-fg: #14532d;
+  --row-taken-fg: #0f4526;
 
-  --row-missed: #fee2e2;
+  --row-missed: #fdd9d9;
   --row-missed-strong: #fecaca;
   --row-missed-edge: #dc2626;
-  --row-missed-fg: #7f1d1d;
+  --row-missed-fg: #78191c;
 
-  --row-partial: #fef3c7;
+  --row-partial: #fdecbe;
   --row-partial-strong: #fde68a;
   --row-partial-edge: #d97706;
-  --row-partial-fg: #78350f;
+  --row-partial-fg: #6b3007;
 }
 
 .dark {
@@ -146,10 +159,10 @@
   --field-4: 199 89% 48%;
   --field-alpha: 0.3;
 
-  --page-bg: #0b1220;
-  --page-fg: #f1f5f9;
-  --muted-fg: #b2bdcc;
-  --faint-fg: #8793a8;
+  --page-bg: #0a0f1b;
+  --page-fg: #eef2f8;
+  --muted-fg: #b8c3d2;
+  --faint-fg: #93a0b5;
 
   /* Three of the brand steps are used as *roles*, not as fixed colours:
        50  — the faintest tint you can lay a panel or a table row in
@@ -162,11 +175,17 @@
   --color-brand-100: #17376b;
   --color-brand-700: #bfdbfe;
 
-  --glass-bg: #111a2b;
-  --glass-bg-strong: #162033;
-  --glass-bg-subtle: #0f1828;
-  --glass-border: #2c374a;
-  --glass-border-quiet: #222c3d;
+  /*
+     The panel lifts off the page instead of melting into it. Dark mode was three near-identical
+     blues — page, panel and striped row within 0.5% luminance of each other — so nothing had an
+     edge and a row could not be tracked across the sheet. The stripe is now LIGHTER than the
+     panel, which is what reads as banding on a dark ground.
+  */
+  --glass-bg: #182133;
+  --glass-bg-strong: #1e293c;
+  --glass-bg-subtle: #2b3441;
+  --glass-border: #525f75;
+  --glass-border-quiet: #39445a;
   --glass-highlight: transparent;
   --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
   --glass-shadow-lifted: 0 2px 8px rgba(0, 0, 0, 0.32);
@@ -174,29 +193,30 @@
   --glass-saturate: 100%;
 
   /* Opaque counterpart of the light value — see --surface-solid above. */
-  --surface-solid: #111a2b;
+  --surface-solid: #182133;
 
-  --hairline: #263247;
-  --input-bg: #0e1727;
-  --input-border: #354159;
+  /* Same separator targets as the light block: 1.9:1 grid lines, 3:1 control borders. */
+  --hairline: #444e5d;
+  --input-bg: #101827;
+  --input-border: #616e86;
   --ring: rgba(96, 165, 250, 0.58);
 
   /* The row tints inverted — a deep wash with a light label, so the verdict survives on a dark
      page instead of glowing. Same roles, same meanings; see the light block. */
-  --row-taken: #0f2e1d;
+  --row-taken: #123a25;
   --row-taken-strong: #14532d;
   --row-taken-edge: #22c55e;
-  --row-taken-fg: #86efac;
+  --row-taken-fg: #8ff0b4;
 
-  --row-missed: #3a1113;
+  --row-missed: #4a1518;
   --row-missed-strong: #7f1d1d;
   --row-missed-edge: #f87171;
-  --row-missed-fg: #fca5a5;
+  --row-missed-fg: #ffb3b3;
 
-  --row-partial: #3a2a08;
+  --row-partial: #4a3409;
   --row-partial-strong: #78350f;
   --row-partial-edge: #fbbf24;
-  --row-partial-fg: #fcd34d;
+  --row-partial-fg: #ffd970;
 }
 
 /* ── Base ──────────────────────────────────────────────────────────────── */
@@ -631,8 +651,13 @@ table th {
 }
 
 /* Browsers without backdrop-filter (older Edge on branch PCs) still get a usable,
-   opaque surface rather than unreadable transparent text. */
+   opaque surface rather than unreadable transparent text.
+
+   Both themes set --glass-blur to 0, so there is no glass effect to fall back FROM any more:
+   mixing a paler surface here only made old Edge disagree with every other browser about how
+   light a panel is. The token is already opaque and already measured against the text that sits
+   on it, so the fallback is simply the token. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .glass { background: color-mix(in oklab, var(--page-bg) 82%, white); }
-  .dark .glass { background: color-mix(in oklab, var(--page-bg) 70%, white 6%); }
+  .glass { background: var(--glass-bg); }
+  .dark .glass { background: var(--glass-bg); }
 }
