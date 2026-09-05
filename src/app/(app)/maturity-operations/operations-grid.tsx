@@ -56,6 +56,12 @@ export interface OperationsRow {
   paymentOn: string;
   duePaise: string;
   recommendedPaise: string;
+  /** Maturity minus everything actually paid. Missed days never reduce it. */
+  remainingPaise: string;
+  /** Cash and online handed over across the whole case so far. */
+  paidPaise: string;
+  /** Earlier due days still carrying money — the rolling arrears behind this row. */
+  missedPaise: string;
   paidTodayPaise: string;
   paidCashTodayPaise: string;
   paidOnlineTodayPaise: string;
@@ -65,13 +71,25 @@ export interface OperationsRow {
   needsReview: boolean;
 }
 
+/**
+ * The Maturities sheet, left to right, as the office fixed it.
+ *
+ * Read as a sentence: who the customer is, what matured and when, the three dates the case moves
+ * through, then the money — what is still owed, what has gone out, what was missed, what today
+ * asks for, and what the two of those add up to. Actual paid is the only money cell that takes a
+ * figure; Given is the control that commits it.
+ *
+ * Cash / online legs and the recommended figure are deliberately not here. They are reference
+ * numbers a clerk can derive, and every column past the first screenful costs a horizontal
+ * scroll on a branch monitor.
+ */
 const COLUMNS = [
   ['account', 'Account number'], ['customer', 'Customer name'], ['agent', 'Agent name'],
   ['amount', 'Maturity amount'], ['maturity', 'Maturity date'], ['form', 'Form submission date'],
-  ['review', 'Approval date'],
-  ['payment', 'Payment date'], ['due', 'Due payment'], ['recommended', 'Recommended payment'],
-  ['paidToday', 'Paid today'], ['paidCash', 'Paid in cash'], ['paidOnline', 'Paid online'],
-  ['taken', 'Taken'], ['notTaken', 'Not taken'],
+  ['review', 'Approval date'], ['payment', 'Payment date'],
+  ['remaining', 'Remaining'], ['paid', 'Paid'], ['missed', 'Missed amount'],
+  ['due', "Today's amount"], ['total', 'Total amount'], ['paidToday', 'Actual paid'],
+  ['given', 'Given'],
 ] as const;
 type ColumnId = (typeof COLUMNS)[number][0];
 
@@ -307,20 +325,22 @@ function BlankOpsRow({
       {show('form') && wrap('form', cellFor('form', 'date'))}
       {show('review') && wrap('review', cellFor('review', 'date'))}
       {show('payment') && wrap('payment', cellFor('payment', 'date'))}
+      {show('remaining') && wrap('remaining', null)}
+      {show('paid') && wrap('paid', null)}
+      {show('missed') && wrap('missed', null)}
       {show('due') && wrap('due', cellFor('due', 'money'))}
-      {show('recommended') && wrap('recommended', null)}
+      {show('total') && wrap('total', null)}
       {show('paidToday') && wrap('paidToday', cellFor('paidToday', 'money'))}
-      {show('paidCash') && wrap('paidCash', cellFor('paidCash', 'money'))}
-      {show('paidOnline') && wrap('paidOnline', cellFor('paidOnline', 'money'))}
-      {show('taken') && wrap('taken', null)}
-      {show('notTaken') && wrap('notTaken', null)}
+      {show('given') && wrap('given', null)}
     </tr>
   );
 }
 
-export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, addRowBranchId }: {
+export function OperationsGrid({ rows, canEdit, canApproveDates, canSchedule, canPay, isAdmin, addRowBranchId }: {
   rows: OperationsRow[];
   canEdit: boolean;
+  /** Only a role holding `case.approve` may move the approval date. */
+  canApproveDates: boolean;
   canSchedule: boolean;
   canPay: boolean;
   isAdmin: boolean;
@@ -490,11 +510,12 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
     if (col === 'form') return row.formSubmittedOn;
     if (col === 'review') return row.opsReviewedOn;
     if (col === 'payment') return row.paymentOn;
+    if (col === 'remaining') return rupees(row.remainingPaise);
+    if (col === 'paid') return rupees(row.paidPaise);
+    if (col === 'missed') return rupees(row.missedPaise);
     if (col === 'due') return rupees(row.duePaise);
-    if (col === 'recommended') return rupees(row.recommendedPaise);
+    if (col === 'total') return rupees((BigInt(row.missedPaise) + BigInt(row.duePaise)).toString());
     if (col === 'paidToday') return rupees(row.paidTodayPaise);
-    if (col === 'paidCash') return rupees(row.paidCashTodayPaise);
-    if (col === 'paidOnline') return rupees(row.paidOnlineTodayPaise);
     return '';
   }, []);
 
@@ -683,10 +704,12 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
   }
 
   async function applyCell(row: OperationsRow, col: ColumnId, raw: string, recordUndo = true) {
-    if (col === 'taken' || col === 'notTaken' || col === 'recommended') return;
+    // Derived money and the Given control are never writable — a paste that filled Total would
+    // be writing a figure the sheet computes, and Given moves money.
+    if (col === 'given' || col === 'remaining' || col === 'paid' || col === 'missed' || col === 'total') return;
     const before = valueOf(row, col);
     let next = raw;
-    if (col === 'amount' || col === 'due' || col === 'paidToday' || col === 'paidCash' || col === 'paidOnline') {
+    if (col === 'amount' || col === 'due' || col === 'paidToday') {
       next = pasteRupees(raw);
       if (next === '' && raw.trim() !== '') return;
     }
@@ -709,10 +732,6 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
       const total = BigInt(next || '0');
       const online = BigInt(row.paidOnlineTodayPaise) / 100n;
       await savePaid(row, total > online ? total - online : total, total > online ? online : 0n);
-    } else if (col === 'paidCash') {
-      await savePaid(row, BigInt(next || '0'), BigInt(row.paidOnlineTodayPaise) / 100n);
-    } else if (col === 'paidOnline') {
-      await savePaid(row, BigInt(row.paidCashTodayPaise) / 100n, BigInt(next || '0'));
     }
   }
 
@@ -1021,8 +1040,8 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
   const widths: [ColumnId, number][] = [
     ['account', 5.5], ['customer', 9], ['agent', 8.5], ['amount', 6.5],
     ['maturity', 7.5], ['form', 8.5], ['review', 7.5], ['payment', 7.5],
-    ['due', 6], ['recommended', 7], ['paidToday', 5], ['paidCash', 5],
-    ['paidOnline', 5], ['taken', 5.5], ['notTaken', 6.5],
+    ['remaining', 6], ['paid', 5.5], ['missed', 6], ['due', 6], ['total', 6],
+    ['paidToday', 5.5], ['given', 9],
   ];
   const visibleWeight = Math.max(
     1,
@@ -1117,7 +1136,7 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
               <tr>
                 <th className={cn(head, 'w-8 px-0 text-center text-[0.58rem] text-[var(--faint-fg)]')}>#</th>
                 {COLUMNS.filter(([id]) => show(id)).map(([id, label], colIndex) => (
-                  <th key={id} className={cn(head, ['amount', 'due', 'recommended', 'paidToday', 'paidCash', 'paidOnline'].includes(id) && 'text-right')}>
+                  <th key={id} className={cn(head, ['amount', 'remaining', 'paid', 'missed', 'due', 'total', 'paidToday'].includes(id) && 'text-right')}>
                     <span className="block font-mono text-[0.58rem] font-bold text-[var(--color-brand-700)]">{columnLetter(colIndex)}</span>
                     {label}
                   </th>
@@ -1126,7 +1145,8 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
             </thead>
             <tbody>
               {visible.map((row, rowIndex) => {
-                const paidCash = BigInt(row.paidCashTodayPaise) / 100n;
+                // The cash leg is no longer a column of its own; Actual paid still has to split
+                // against whatever is already recorded online, so that half is kept.
                 const paidOnline = BigInt(row.paidOnlineTodayPaise) / 100n;
                 const rowSurface = rowIndex % 2 === 0 ? 'bg-[var(--surface-solid)]' : 'bg-[var(--glass-bg-subtle)]';
                 return (
@@ -1138,15 +1158,18 @@ export function OperationsGrid({ rows, canEdit, canSchedule, canPay, isAdmin, ad
                     {show('amount') && <td className={cell} data-ops-index={rowIndex} data-ops-col="amount"><EditableCell row={row.id} col="amount" type="money" value={row.maturityRupees} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('amount'))}  onCommit={(v) => { pushUndo({ rowId: row.id, col: 'amount', before: row.maturityRupees, after: v }); return save(row.id, { maturityRupees: v }).then(() => undefined); }} /></td>}
                     {show('maturity') && <td className={cell} data-ops-index={rowIndex} data-ops-col="maturity"><EditableCell row={row.id} col="maturity" type="date" value={row.maturityOn || DEFAULT_OPERATIONS_MATURITY_ON} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('maturity'))}  onCommit={(v) => save(row.id, { instrumentMaturityOn: v || null }).then(() => undefined)} /></td>}
                     {show('form') && <td className={cell} data-ops-index={rowIndex} data-ops-col="form"><EditableCell row={row.id} col="form" type="date" value={row.formSubmittedOn} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('form'))}  onCommit={(v) => save(row.id, { formSubmittedOn: v }).then(() => undefined)} /></td>}
-                    {show('review') && <td className={cell} data-ops-index={rowIndex} data-ops-col="review"><EditableCell row={row.id} col="review" type="date" value={row.opsReviewedOn} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('review'))}  onCommit={(v) => save(row.id, { opsReviewedOn: v || null }).then(() => undefined)} /></td>}
+                    {show('review') && <td className={cell} data-ops-index={rowIndex} data-ops-col="review"><EditableCell row={row.id} col="review" type="date" value={row.opsReviewedOn} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canApproveDates} selected={isSelected(rowIndex, visColIds.indexOf('review'))}  onCommit={(v) => save(row.id, { opsReviewedOn: v || null }).then(() => undefined)} /></td>}
                     {show('payment') && <td className={cell} data-ops-index={rowIndex} data-ops-col="payment"><EditableCell row={row.id} col="payment" type="date" value={row.paymentOn} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canEdit} selected={isSelected(rowIndex, visColIds.indexOf('payment'))}  onCommit={(v) => save(row.id, { paymentOn: v || null }).then(() => undefined)} /></td>}
+                    {show('remaining') && <td className={cell} data-ops-index={rowIndex} data-ops-col="remaining"><EditableCell row={row.id} col="remaining" type="money" value={rupees(row.remainingPaise)} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled selected={isSelected(rowIndex, visColIds.indexOf('remaining'))}  onCommit={async () => {}} /></td>}
+                    {show('paid') && <td className={cell} data-ops-index={rowIndex} data-ops-col="paid"><EditableCell row={row.id} col="paid" type="money" value={rupees(row.paidPaise)} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled selected={isSelected(rowIndex, visColIds.indexOf('paid'))}  onCommit={async () => {}} /></td>}
+                    {show('missed') && <td className={cell} data-ops-index={rowIndex} data-ops-col="missed"><EditableCell row={row.id} col="missed" type="money" value={rupees(row.missedPaise)} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled selected={isSelected(rowIndex, visColIds.indexOf('missed'))}  onCommit={async () => {}} /></td>}
                     {show('due') && <td className={cell} data-ops-index={rowIndex} data-ops-col="due"><EditableCell row={row.id} col="due" type="money" value={rupees(row.duePaise)} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canSchedule && !canEdit} selected={isSelected(rowIndex, visColIds.indexOf('due'))}  onCommit={(v) => savePlanned(row, v)} /></td>}
-                    {show('recommended') && <td className={cell} data-ops-index={rowIndex} data-ops-col="recommended"><EditableCell row={row.id} col="recommended" type="money" value={rupees(row.recommendedPaise)} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled selected={isSelected(rowIndex, visColIds.indexOf('recommended'))}  onCommit={async () => {}} /></td>}
+                    {show('total') && <td className={cell} data-ops-index={rowIndex} data-ops-col="total"><EditableCell row={row.id} col="total" type="money" value={rupees((BigInt(row.missedPaise) + BigInt(row.duePaise)).toString())} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled selected={isSelected(rowIndex, visColIds.indexOf('total'))}  onCommit={async () => {}} /></td>}
                     {show('paidToday') && <td className={cell} data-ops-index={rowIndex} data-ops-col="paidToday"><EditableCell row={row.id} col="paidToday" type="money" value={rupees(row.paidTodayPaise)} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canPay} selected={isSelected(rowIndex, visColIds.indexOf('paidToday'))}  onCommit={(v) => { const total = BigInt(v || '0'); const online = paidOnline > total ? 0n : paidOnline; return savePaid(row, total - online, online); }} /></td>}
-                    {show('paidCash') && <td className={cell} data-ops-index={rowIndex} data-ops-col="paidCash"><EditableCell row={row.id} col="paidCash" type="money" value={paidCash.toString()} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canPay} selected={isSelected(rowIndex, visColIds.indexOf('paidCash'))}  onCommit={(v) => savePaid(row, BigInt(v || '0'), paidOnline)} /></td>}
-                    {show('paidOnline') && <td className={cell} data-ops-index={rowIndex} data-ops-col="paidOnline"><EditableCell row={row.id} col="paidOnline" type="money" value={paidOnline.toString()} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canPay} selected={isSelected(rowIndex, visColIds.indexOf('paidOnline'))}  onCommit={(v) => savePaid(row, paidCash, BigInt(v || '0'))} /></td>}
-                    {show('taken') && <td className={cell} data-ops-index={rowIndex} data-ops-col="taken"><button type="button" title="Mark as taken" aria-label="Mark as taken" disabled={!canPay || !row.todayInstalmentId || row.todayState === 'PAID' || busy === row.id} onClick={(event) => { if (event.shiftKey || event.ctrlKey || event.metaKey) return; void mark(row, true); }} className="flex h-9 w-full items-center justify-center gap-0.5 rounded-none bg-[var(--row-taken)] text-[0.65rem] font-bold text-[var(--row-taken-fg)] hover:bg-[var(--row-taken-strong)] disabled:cursor-not-allowed disabled:opacity-40 xl:text-[0.7rem]"><Check className="h-3 w-3 shrink-0" /><span className="hidden xl:inline">Taken</span></button></td>}
-                    {show('notTaken') && <td className={cell} data-ops-index={rowIndex} data-ops-col="notTaken"><button type="button" title="Mark as not taken" aria-label="Mark as not taken" disabled={!canPay || !row.todayInstalmentId || row.todayState === 'PAID' || busy === row.id} onClick={(event) => { if (event.shiftKey || event.ctrlKey || event.metaKey) return; void mark(row, false); }} className="flex h-9 w-full items-center justify-center gap-0.5 rounded-none bg-[var(--row-missed)] text-[0.65rem] font-bold text-[var(--row-missed-fg)] hover:bg-[var(--row-missed-strong)] disabled:cursor-not-allowed disabled:opacity-40 xl:text-[0.7rem]"><X className="h-3 w-3 shrink-0" /><span className="hidden xl:inline">Not taken</span></button></td>}
+                    {/* Given: the one control that commits Actual paid. Two buttons, because
+                        "the customer did not come" is a different fact from "nothing was typed"
+                        — a blank row must never silently become a missed day. */}
+                    {show('given') && <td className={cell} data-ops-index={rowIndex} data-ops-col="given"><div className="flex h-9 w-full items-stretch gap-px"><button type="button" title="Mark as taken" aria-label="Mark as taken" disabled={!canPay || !row.todayInstalmentId || row.todayState === 'PAID' || busy === row.id} onClick={(event) => { if (event.shiftKey || event.ctrlKey || event.metaKey) return; void mark(row, true); }} className="flex flex-1 items-center justify-center gap-0.5 rounded-none bg-[var(--row-taken)] text-[0.65rem] font-bold text-[var(--row-taken-fg)] hover:bg-[var(--row-taken-strong)] disabled:cursor-not-allowed disabled:opacity-40 xl:text-[0.7rem]"><Check className="h-3 w-3 shrink-0" /><span className="hidden xl:inline">Taken</span></button><button type="button" title="Mark as not taken" aria-label="Mark as not taken" disabled={!canPay || !row.todayInstalmentId || row.todayState === 'PAID' || busy === row.id} onClick={(event) => { if (event.shiftKey || event.ctrlKey || event.metaKey) return; void mark(row, false); }} className="flex flex-1 items-center justify-center gap-0.5 rounded-none bg-[var(--row-missed)] text-[0.65rem] font-bold text-[var(--row-missed-fg)] hover:bg-[var(--row-missed-strong)] disabled:cursor-not-allowed disabled:opacity-40 xl:text-[0.7rem]"><X className="h-3 w-3 shrink-0" /><span className="hidden xl:inline">Not taken</span></button></div></td>}
                   </tr>
                 );
               })}

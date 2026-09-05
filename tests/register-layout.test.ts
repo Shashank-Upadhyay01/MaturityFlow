@@ -12,11 +12,18 @@ import {
 
 describe('register layout', () => {
   it('fills missing columns from the default order', () => {
-    const layout = parseRegisterLayout({ version: REGISTER_LAYOUT_VERSION, order: ['agent', 'customer'], hidden: ['perDay'] });
+    const layout = parseRegisterLayout({ version: REGISTER_LAYOUT_VERSION, order: ['agent', 'customer'], hidden: ['total'] });
     expect(layout.order[0]).toBe('agent');
     expect(layout.order[1]).toBe('customer');
     expect(layout.order).toContain('amount');
-    expect(layout.hidden).not.toContain('perDay');
+    // Total is what the customer can walk out with; it is not an admin's to hide.
+    expect(layout.hidden).not.toContain('total');
+  });
+
+  it('lets an admin hide Recommended, which the office layout does not carry', () => {
+    const layout = parseRegisterLayout({ version: REGISTER_LAYOUT_VERSION, order: [], hidden: ['perDay'] });
+    expect(layout.hidden).toContain('perDay');
+    expect(visibleRegisterCols(layout).map((c) => c.id)).not.toContain('perDay');
   });
 
   it('cannot hide required columns', () => {
@@ -39,20 +46,31 @@ describe('register layout', () => {
     expect(headers.some((h) => h.includes('Per Day'))).toBe(false);
   });
 
-  it('default layout matches the cashier register', () => {
+  it('default layout matches the register the office fixed', () => {
+    // The thirteenth column, Given, is the tick furniture beside the grid rather than a data
+    // column, so it carries no Excel header and does not appear here.
     const headers = excelHeadersForLayout(DEFAULT_REGISTER_LAYOUT);
     expect(headers).toEqual([
       'Savings Account Number',
       'Customer Name',
       "Customer's Agent Name",
       'Maturity Amount',
+      'Date of Maturity',
       'Payment Date',
+      'Remaining Amount',
+      'Paid Maturity',
+      'Missed Amount',
       'Due Payment',
-      'Recommended Payment',
+      'Total Amount',
       'Paid Today',
-      'Paid in Cash',
-      'Paid Online',
     ]);
+  });
+
+  it('keeps the arrears columns beside the day they explain', () => {
+    const ids = visibleRegisterCols(DEFAULT_REGISTER_LAYOUT).map((c) => c.id);
+    // Missed, today, total read left to right as the sentence they are: what was not collected,
+    // what today asks for, what the two come to.
+    expect(ids.slice(ids.indexOf('missed'), ids.indexOf('missed') + 3)).toEqual(['missed', 'today', 'total']);
   });
 
   it('upgrades a saved pre-grid layout to the current cashier sheet once', () => {

@@ -94,6 +94,9 @@ import {
   compareTodayFigures,
   dayStateOf,
   groupIndian,
+  hasMissedAmount,
+  missedAmountPaise,
+  remainingAfterPaid,
   hasMissedPayment,
   leftoverOnPayoutDay,
   paidOnDate,
@@ -1220,6 +1223,17 @@ export function RegisterSheet(props: {
         case 'perDay':
           c = cmpBig(perDay(a), perDay(b));
           break;
+        case 'missed':
+          c = cmpBig(missedAmountPaise(a, props.today), missedAmountPaise(b, props.today));
+          break;
+        case 'total':
+          c = cmpBig(
+            missedAmountPaise(a, props.today) +
+              (selectedPayoutDate ? plannedOnDate(a, selectedPayoutDate).total : BigInt(a.todayPaise)),
+            missedAmountPaise(b, props.today) +
+              (selectedPayoutDate ? plannedOnDate(b, selectedPayoutDate).total : BigInt(b.todayPaise)),
+          );
+          break;
         case 'today':
           // Scheduled rows display the engine's live figure, so sorting must read that same
           // figure. Using the legacy typed field made the dropdown say "Today descending"
@@ -1254,17 +1268,17 @@ export function RegisterSheet(props: {
       return c * dir;
     });
     },
-    [sortKey, sortDir, d, selectedPayoutDate, viewDay],
+    [sortKey, sortDir, d, selectedPayoutDate, props.today],
   );
 
   /**
-   * How many rows are carrying a not-taken day, counted across EVERY row rather than the
+   * How many rows are carrying a missed amount, counted across EVERY row rather than the
    * filtered view — the same rule as "due today". A backlog that shrank because somebody
    * filtered to one agent would be a lie in the one place the branch cannot afford one.
    */
   const missedCount = useMemo(
-    () => props.rows.filter(hasMissedPayment).length,
-    [props.rows],
+    () => props.rows.filter((r) => hasMissedAmount(r, props.today)).length,
+    [props.rows, props.today],
   );
 
   const visible = useMemo(() => {
@@ -1281,7 +1295,7 @@ export function RegisterSheet(props: {
     // Everyone who did not withdraw on a day they were due. Note this is a *view* of the same
     // rows, not a second list: the user's rule is that a missed payment is never removed from
     // the twelve-day sheet, only coloured. This tab is the shortcut to them, not their home.
-    if (tab === 'missed') list = list.filter(hasMissedPayment);
+    if (tab === 'missed') list = list.filter((r) => hasMissedAmount(r, props.today));
     if (agentId) list = list.filter((r) => r.agentId === agentId);
     if (isRangeActive(range)) list = list.filter((r) => rowInDateRange(r, dateField, range));
     if (q.trim()) {
@@ -1294,7 +1308,7 @@ export function RegisterSheet(props: {
       );
     }
     return sortRows(list);
-  }, [props.rows, tab, agentId, q, range, dateField, sortRows]);
+  }, [props.rows, tab, agentId, q, range, dateField, sortRows, props.today]);
 
   const totals = visible.reduce(
     (a, r) => {
@@ -1801,6 +1815,18 @@ export function RegisterSheet(props: {
     setBusy(null);
   }
 
+  /**
+   * Today's own instalment, the arrears behind it, and the two added together.
+   *
+   * One definition, read by the comparator, the clipboard, the Excel export and the cell. The
+   * day's figure follows whichever day the sheet is showing; arrears are always measured against
+   * the real today, because a backlog does not change because a clerk paged back to Tuesday.
+   */
+  const todayFigureOf = (r: RegisterRow): bigint =>
+    payoutOnDate(r, viewDay) ? plannedOnDate(r, selectedPayoutDate).total : BigInt(r.todayPaise);
+  const missedOf = (r: RegisterRow): bigint => missedAmountPaise(r, props.today);
+  const totalOf = (r: RegisterRow): bigint => missedOf(r) + todayFigureOf(r);
+
   function exportValue(col: RegisterColId, r: RegisterRow): string | number {
     switch (col) {
       case 'account':
@@ -1827,8 +1853,12 @@ export function RegisterSheet(props: {
         const per = recommendedPerDay(BigInt(r.remainingPaise), BigInt(r.maturityPaise), r.windowDays);
         return per > 0n ? inr(per) : '0';
       }
+      case 'missed':
+        return inr(missedOf(r));
+      case 'total':
+        return inr(totalOf(r));
       case 'today':
-        return inr(payoutOnDate(r, viewDay) ? plannedOnDate(r, selectedPayoutDate).total : BigInt(r.todayPaise));
+        return inr(todayFigureOf(r));
       case 'cash':
         return inr(payoutOnDate(r, viewDay) ? plannedOnDate(r, selectedPayoutDate).cash : BigInt(r.todayCashPaise));
       case 'online':
@@ -2182,7 +2212,9 @@ export function RegisterSheet(props: {
       case 'amount': return rupeesStr(BigInt(r.maturityPaise));
       case 'paid': return rupeesStr(BigInt(r.paidPaise));
       case 'remaining': return rupeesStr(BigInt(r.remainingPaise));
-      case 'today': return rupeesStr(payoutOnDate(r, viewDay) ? plannedOnDate(r, selectedPayoutDate).total : BigInt(r.todayPaise));
+      case 'missed': return rupeesStr(missedOf(r));
+      case 'total': return rupeesStr(totalOf(r));
+      case 'today': return rupeesStr(todayFigureOf(r));
       case 'cash': return rupeesStr(payoutOnDate(r, viewDay) ? plannedOnDate(r, selectedPayoutDate).cash : BigInt(r.todayCashPaise));
       case 'online': return rupeesStr(payoutOnDate(r, viewDay) ? plannedOnDate(r, selectedPayoutDate).online : BigInt(r.todayOnlinePaise));
       case 'perDay': return rupeesStr(recommendedPerDay(BigInt(r.remainingPaise), BigInt(r.maturityPaise), r.windowDays));
@@ -3657,6 +3689,24 @@ export function RegisterSheet(props: {
                   ? BigInt(selectedInstalment.onlinePaise)
                   : BigInt(r.todayOnlinePaise);
                 const paidView = paidOnDate(r, viewDay, props.today);
+                /*
+                  Remaining answers Actual paid before Taken is pressed.
+
+                  A clerk types 40,000 and has to see Remaining fall by 40,000 in the same
+                  keystroke — that is the check they run against the customer's passbook, and it
+                  is worthless if it only lands after the payment is committed.
+
+                  Only the DELTA against what is already recorded is applied. Money already taken
+                  today is inside `paidPaise` and therefore already out of `liveRemaining`;
+                  subtracting the whole cell would count it twice and show a customer as owed
+                  less than they are.
+                */
+                const paidTodayDraftPaise = tryParseRupeesToPaise(
+                  d(r.id, 'paidTodayActual', rupeesStr(paidView.total)),
+                );
+                const paidTodayDelta =
+                  paidTodayDraftPaise == null ? 0n : paidTodayDraftPaise - paidView.total;
+                const previewRemaining = remainingAfterPaid(liveRemaining, paidTodayDelta);
                 const edit = props.canEdit && !locked;
                 const datesOpen = editDates;
                 const matShown = r.instrumentMaturityOn ? formatDMY(r.instrumentMaturityOn) : '';
@@ -3835,9 +3885,18 @@ export function RegisterSheet(props: {
                           />
                         )}
                         {c.id === 'remaining' && (
-                          <span className={cn('font-semibold', liveRemaining > 0n && 'rounded-[4px] bg-[var(--row-missed)] px-1 text-[var(--row-missed-fg)]')}>
-                            {inr(liveRemaining)}
+                          <span className={cn('font-semibold', previewRemaining > 0n && 'rounded-[4px] bg-[var(--row-missed)] px-1 text-[var(--row-missed-fg)]')}>
+                            {inr(previewRemaining)}
                           </span>
+                        )}
+                        {/* Arrears, and arrears plus today. Both derived — never typed. */}
+                        {c.id === 'missed' && (
+                          <span className={cn('font-semibold tabular-nums', missedOf(r) > 0n && 'rounded-[4px] bg-[var(--row-missed)] px-1 text-[var(--row-missed-fg)]')}>
+                            {inr(missedOf(r))}
+                          </span>
+                        )}
+                        {c.id === 'total' && (
+                          <span className="font-semibold tabular-nums">{inr(totalOf(r))}</span>
                         )}
                         {c.id === 'agent' && (
                           <CellInput

@@ -18,7 +18,7 @@ import { formatCaseNumber, newId } from '@/lib/id';
 import { DEFAULT_CASH_CAP_PAISE } from '@/lib/org-settings';
 import { loadOrgSettings } from '@/services/org-settings';
 import { parseRupeesToPaise } from '@/lib/money';
-import { MIN_WINDOW_DAYS } from '@/lib/payout-policy';
+import { APPROVAL_LEAD_CALENDAR_DAYS, MIN_WINDOW_DAYS } from '@/lib/payout-policy';
 import { firstPayoutOn } from '@/lib/payout-policy';
 import { bulkTodayAmount, type BulkTodayMode } from '@/lib/register-view';
 import { parseRegisterDate } from '@/lib/excel-register';
@@ -285,6 +285,27 @@ export async function updateRegisterRow(
     }
 
     const finalForm = (setCase.formSubmittedOn as string | undefined) ?? row.formSubmittedOn;
+
+    /*
+      Approval date defaults to three calendar days after the form went in.
+
+      A default, not a decision. The date is filled so a case waiting to be looked at shows when
+      it is expected rather than a blank cell, but `opsReviewedAt` and `opsReviewedById` stay
+      null until somebody actually holding `case.approve` confirms it — writing an approver here
+      would forge the one maker-checker record in the money path.
+
+      Skipped when the payout is already dated earlier than the default would land. A back-dated
+      case must not become unsaveable because of a date nobody typed.
+    */
+    if (
+      patch.formSubmittedOn != null &&
+      patch.opsReviewedOn === undefined &&
+      !row.opsReviewedOn
+    ) {
+      const suggested = addDays(finalForm, APPROVAL_LEAD_CALENDAR_DAYS);
+      if (!finalPayment || suggested <= finalPayment) setCase.opsReviewedOn = suggested;
+    }
+
     const finalReview =
       setCase.opsReviewedOn === null
         ? null

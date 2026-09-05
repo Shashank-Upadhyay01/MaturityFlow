@@ -43,6 +43,15 @@ export type Cadence = 'DAILY' | 'ALTERNATE';
  */
 export const AUTO_APPROVAL_CALENDAR_DAYS = 3;
 
+/**
+ * Calendar days between the form going in and the approval date the sheet fills in for it.
+ *
+ * A default the office asked for, not a rule the schedule obeys: payouts are anchored on the
+ * payment date and never on this. It exists so a case waiting to be looked at shows the date it
+ * is expected by, instead of a blank cell nobody can chase.
+ */
+export const APPROVAL_LEAD_CALENDAR_DAYS = 3;
+
 export class PayoutPolicyError extends Error {
   constructor(message: string) {
     super(message);

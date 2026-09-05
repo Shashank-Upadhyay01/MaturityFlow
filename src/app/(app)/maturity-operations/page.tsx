@@ -64,6 +64,7 @@ export default async function MaturityOperationsPage({
       )}
       <OperationsGrid
         canEdit={roleCan(session.role, 'case.approve')}
+        canApproveDates={roleCan(session.role, 'case.approve')}
         canSchedule={roleCan(session.role, 'schedule.override')}
         canPay={roleCan(session.role, 'payout.record')}
         isAdmin={session.role === 'ADMIN' || session.role === 'OPS_HEAD'}
@@ -88,6 +89,9 @@ export default async function MaturityOperationsPage({
             formSubmittedOn: toISODateString(row.formSubmittedOn) ?? row.formSubmittedOn,
             opsReviewedOn: toISODateString(row.opsReviewedOn) ?? '',
             paymentOn,
+            remainingPaise: remaining.toString(),
+            paidPaise: paid.toString(),
+            missedPaise: row.overduePaise.toString(),
             duePaise: row.todayDuePaise,
             recommendedPaise: recommendedPerDay(remaining, row.maturityAmountPaise, row.windowDays).toString(),
             paidTodayPaise: row.paidTodayPaise,

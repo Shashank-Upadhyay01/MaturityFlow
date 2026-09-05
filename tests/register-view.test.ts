@@ -10,7 +10,12 @@ import {
   DAY_STATE_LABEL,
   endOfMonth,
   groupIndian,
+  hasMissedAmount,
   hasMissedPayment,
+  dailyBasePaise,
+  missedAmountPaise,
+  remainingAfterPaid,
+  totalDuePaise,
   isDueToday,
   isOnTodaysList,
   isTodayButUnset,
@@ -809,5 +814,94 @@ describe("isOnTodaysList — the day's worklist, not just what is still owed", (
         overdueCount: 0,
       }),
     ).toBe(false);
+  });
+});
+
+describe('rolling arrears', () => {
+  /**
+   * The branch's own worked example: ₹1,35,000 over 12 daily payouts of ₹11,250.
+   *
+   * Days 1 and 2 are collected, days 3 to 5 are not, and the customer turns up on day 6. The
+   * point of the case is what does NOT move: Remaining is untouched by the three missed days,
+   * because nothing left the drawer on them.
+   */
+  const PER_DAY = 1_125_000n; // ₹11,250 in paise
+  const MATURITY = 13_500_000n; // ₹1,35,000
+  const DAY = (n: number) => `2026-09-${String(n).padStart(2, '0')}`;
+
+  const days = Array.from({ length: 12 }, (_, i) => {
+    const n = i + 1;
+    const paid = n <= 2;
+    return {
+      id: `d${n}`,
+      dueOn: DAY(n),
+      amountPaise: PER_DAY.toString(),
+      cashPaise: PER_DAY.toString(),
+      onlinePaise: '0',
+      paidPaise: paid ? PER_DAY.toString() : '0',
+      status: paid ? 'PAID' : n <= 5 ? 'MISSED' : 'PENDING',
+    };
+  });
+
+  /** Day 6: two days collected, three missed, today due. */
+  const row = {
+    paymentOn: DAY(1),
+    formSubmittedOn: '2026-08-25',
+    instrumentMaturityOn: '2026-08-22',
+    todayPaise: PER_DAY.toString(),
+    remainingPaise: (MATURITY - 2n * PER_DAY).toString(),
+    payoutDays: days,
+    todayInstalmentId: 'd6',
+    todayDuePaise: PER_DAY.toString(),
+    todayPaidTakenPaise: '0',
+  };
+
+  it('spreads the maturity into a fixed daily base', () => {
+    expect(dailyBasePaise(MATURITY, 12)).toBe(PER_DAY);
+  });
+
+  it('counts three missed days as ₹33,750 of arrears', () => {
+    expect(missedAmountPaise(row, DAY(6))).toBe(3n * PER_DAY);
+  });
+
+  it('leaves Remaining at ₹1,12,500 — missed days never reduce it', () => {
+    expect(BigInt(row.remainingPaise)).toBe(11_250_000n);
+    // The three missed days are arrears, not a repayment: Remaining is what the bank still owes.
+    expect(BigInt(row.remainingPaise)).toBe(MATURITY - 2n * PER_DAY);
+  });
+
+  it("keeps Today's amount at the base rather than re-spreading the miss", () => {
+    expect(todayPlannedPaise(row)).toBe(PER_DAY);
+  });
+
+  it('totals arrears plus today to ₹45,000', () => {
+    expect(totalDuePaise(row, DAY(6))).toBe(4_500_000n);
+  });
+
+  it('prefers the server figure when the row carries one', () => {
+    expect(missedAmountPaise({ ...row, overduePaise: '9900' }, DAY(6))).toBe(9_900n);
+    // A negative aggregate is a bug upstream, not a credit to the customer.
+    expect(missedAmountPaise({ ...row, overduePaise: '-500' }, DAY(6))).toBe(0n);
+  });
+
+  it('drops off the Missed Payments list once the backlog clears', () => {
+    expect(hasMissedAmount(row, DAY(6))).toBe(true);
+    const settled = { ...row, payoutDays: days.map((d) => ({ ...d, status: 'PAID', paidPaise: d.amountPaise })) };
+    expect(hasMissedAmount(settled, DAY(6))).toBe(false);
+  });
+
+  it('recalculates Remaining against a typed Actual paid', () => {
+    // The clerk types ₹40,000 against ₹1,12,500 outstanding.
+    expect(remainingAfterPaid(11_250_000n, 4_000_000n)).toBe(7_250_000n);
+    // Over-typing is a slip, not the bank owing the customer money.
+    expect(remainingAfterPaid(11_250_000n, 99_000_000n)).toBe(0n);
+    // Correcting a figure downwards puts the money back.
+    expect(remainingAfterPaid(11_250_000n, -1_000_000n)).toBe(12_250_000n);
+  });
+
+  it('measures arrears against the real today, not the day being viewed', () => {
+    // Paging back to day 4 must not shrink a backlog that exists on day 6.
+    expect(missedAmountPaise(row, DAY(4))).toBe(PER_DAY);
+    expect(missedAmountPaise(row, DAY(6))).toBe(3n * PER_DAY);
   });
 });

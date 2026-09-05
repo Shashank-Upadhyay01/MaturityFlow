@@ -17,7 +17,9 @@ export const REGISTER_COL_IDS = [
   'amount',
   'paid',
   'remaining',
+  'missed',
   'today',
+  'total',
   'cash',
   'online',
   'days',
@@ -99,6 +101,14 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
     id: 'remaining', label: 'Remaining', excel: 'Remaining Amount', right: true, w: 'w-[5.4rem]', priority: 2,
     hint: 'Amount minus paid \u2014 what the bank still owes this customer.',
   },
+  missed: {
+    id: 'missed', label: 'Missed amount', excel: 'Missed Amount', right: true, w: 'w-[5.6rem]', priority: 2,
+    hint: 'Earlier due days the customer never collected. It does NOT come off Remaining \u2014 the bank still owes this money, it simply was not handed over on the day.',
+  },
+  total: {
+    id: 'total', label: 'Total amount', excel: 'Total Amount', right: true, required: true, w: 'w-[5.8rem]', priority: 1,
+    hint: 'Missed amount plus today\u2019s \u2014 everything the customer can walk out with now. A single payment of this size clears the backlog and the day, oldest first.',
+  },
   agent: {
     id: 'agent', label: 'Agent name', excel: "Customer's Agent Name", w: 'w-[6.5rem]', priority: 1,
     hint: 'The agent who brought this customer in.',
@@ -108,12 +118,12 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
     hint: 'Payout days the customer can withdraw. ₹1 lakh+ defaults to 12 daily; below that, 6 alternate. Type any count to split across that many days.',
   },
   perDay: {
-    id: 'perDay', label: 'Recommended', excel: 'Recommended Payment', right: true, required: true, w: 'w-[6.2rem]', priority: 1,
+    id: 'perDay', label: 'Recommended', excel: 'Recommended Payment', right: true, w: 'w-[6.2rem]', priority: 6,
     hint: 'Advice only: remaining money spread over the days that actually pay. Not what must be handed over today.',
   },
   today: {
-    id: 'today', label: 'Due payment', excel: 'Due Payment', right: true, required: true, w: 'w-[5.7rem]', priority: 1,
-    hint: 'What the schedule plans to hand over today. Admins can edit it directly; later unpaid days are re-balanced automatically.',
+    id: 'today', label: "Today's amount", excel: 'Due Payment', right: true, required: true, w: 'w-[5.7rem]', priority: 1,
+    hint: 'The day\u2019s own instalment \u2014 the fixed base the case was scheduled on. It does not rise because an earlier day was missed; that money is in Missed amount.',
   },
   cash: {
     id: 'cash', label: 'Cash', excel: 'Today Cash', right: true, w: 'w-[5.25rem]', priority: 3,
@@ -124,7 +134,7 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
     hint: 'The transfer half of today\u2019s figure.',
   },
   paidToday: {
-    id: 'paidToday', label: 'Paid today', excel: 'Paid Today', right: true, w: 'w-[5rem]', priority: 2,
+    id: 'paidToday', label: 'Actual paid', excel: 'Paid Today', right: true, w: 'w-[5.2rem]', priority: 1,
     hint: 'Type what was actually given, then press Taken. Nothing is recorded until you confirm.',
   },
   paidCashToday: {
@@ -143,16 +153,16 @@ export interface RegisterLayout {
   hidden: RegisterColId[];
 }
 
-export const REGISTER_LAYOUT_VERSION = 2;
+export const REGISTER_LAYOUT_VERSION = 3;
 
 export const DEFAULT_REGISTER_LAYOUT: RegisterLayout = {
   version: REGISTER_LAYOUT_VERSION,
   order: [
-    'account', 'customer', 'agent', 'amount', 'paymentDate', 'today', 'perDay',
-    'paidToday', 'paidCashToday', 'paidOnlineToday',
-    'remaining', 'paid', 'cash', 'online', 'days', 'formDate', 'maturityDate',
+    'account', 'customer', 'agent', 'amount', 'maturityDate', 'paymentDate',
+    'remaining', 'paid', 'missed', 'today', 'total', 'paidToday',
+    'formDate', 'perDay', 'paidCashToday', 'paidOnlineToday', 'cash', 'online', 'days',
   ],
-  hidden: ['remaining', 'paid', 'cash', 'online', 'days', 'formDate', 'maturityDate'],
+  hidden: ['formDate', 'perDay', 'paidCashToday', 'paidOnlineToday', 'cash', 'online', 'days'],
 };
 
 const ID_SET = new Set<string>(REGISTER_COL_IDS);

@@ -22,6 +22,8 @@ export type SortKey =
   | 'amount'
   | 'paid'
   | 'remaining'
+  | 'missed'
+  | 'total'
   | 'agent'
   | 'days'
   | 'perDay'
@@ -46,7 +48,7 @@ export const DATE_FIELD_LABEL: Record<DateField, string> = {
 export const TAB_LABEL: Record<RegisterTab, string> = {
   due: 'Due today',
   today: 'Live',
-  missed: 'Not paid',
+  missed: 'Missed Payments',
   pending: 'Pending',
   all: 'All',
 };
@@ -55,7 +57,7 @@ export const TAB_LABEL: Record<RegisterTab, string> = {
 export const TAB_HINT: Record<RegisterTab, string> = {
   due: 'Customers the schedule expects at the counter today',
   today: 'Every case that still owes money',
-  missed: 'Customers who were not paid on a due day — still owed, still on the list',
+  missed: 'Customers carrying a missed amount — days that came due and were not collected',
   pending: 'Rows typed into the sheet that have not been submitted, so nothing is scheduled yet',
   all: 'Every row in the register, settled or not',
 };
@@ -924,4 +926,88 @@ export function summariseSelection(rows: readonly SelectionRow[]): SelectionSumm
     if (isDueToday(r)) dueCount += 1;
   }
   return { count: rows.length, maturity, paid, remaining, today, cash, online, dueCount };
+}
+
+// ── Rolling arrears ───────────────────────────────────────────────────────────
+
+/**
+ * A row that can answer "what is behind on this case?".
+ *
+ * `overduePaise` is the server's figure — the sum of every earlier day still carrying money,
+ * computed in SQL against the instalment table. It is authoritative wherever it is present. The
+ * instalment fallback exists for callers holding a schedule but no aggregate: the preview on an
+ * unsaved row, and the tests.
+ */
+export interface ArrearsRow extends TodayFigureRow {
+  overduePaise?: string;
+}
+
+/**
+ * Missed amount — what earlier days still owe.
+ *
+ * Deliberately NOT netted off Remaining. A missed day is money the customer has not collected,
+ * not money the bank has stopped owing: Remaining moves only when cash actually leaves the
+ * drawer. Missing three days at ₹11,250 leaves Remaining untouched and puts ₹33,750 here.
+ */
+export function missedAmountPaise(r: ArrearsRow, today?: string): bigint {
+  if (r.overduePaise != null) {
+    const v = BigInt(r.overduePaise);
+    return v > 0n ? v : 0n;
+  }
+  if (!today) return 0n;
+  let sum = 0n;
+  for (const d of r.payoutDays ?? []) {
+    if (d.dueOn < today) sum += leftoverOnPayoutDay(d);
+  }
+  return sum;
+}
+
+/**
+ * Total amount — arrears plus today.
+ *
+ * What the customer can actually walk out with today: every day they missed, plus the day the
+ * schedule plans now. `planSettlement` allocates a counter payment oldest day first, so this is
+ * exactly the figure a single payment of this size would clear.
+ */
+export function totalDuePaise(r: ArrearsRow, today?: string): bigint {
+  return missedAmountPaise(r, today) + todayPlannedPaise(r);
+}
+
+/**
+ * The fixed daily instalment a case was scheduled on.
+ *
+ * The base does not move when a day is missed — that is the entire point of tracking arrears
+ * separately. Re-deriving it from what is left would quietly raise the daily figure every time a
+ * customer failed to turn up, which is how an ₹11,250 day becomes ₹16,071 and the sheet stops
+ * agreeing with what the customer was promised at the counter.
+ */
+export function dailyBasePaise(maturityPaise: bigint, payoutDays: number): bigint {
+  const n = BigInt(Math.max(1, Math.floor(payoutDays) || 1));
+  return maturityPaise / n;
+}
+
+/**
+ * Remaining after a figure is typed into Actual paid.
+ *
+ * Floors at zero: a clerk who types more than is owed has made a typing error, and a negative
+ * Remaining would read as the customer owing the bank.
+ */
+export function remainingAfterPaid(
+  previousRemainingPaise: bigint,
+  actualPaidPaise: bigint,
+): bigint {
+  const left = previousRemainingPaise - actualPaidPaise;
+  return left > 0n ? left : 0n;
+}
+
+/**
+ * Does this case carry a missed amount?
+ *
+ * The Missed Payments tab lists on money, not on status: a day flagged MISSED that has since
+ * been settled is history, and a case whose arrears are zero does not belong on a list of people
+ * to chase. Kept separate from `hasMissedPayment`, which still decides the row's colour — a red
+ * row and a chase list are not the same question.
+ */
+export function hasMissedAmount(r: ArrearsRow, today?: string): boolean {
+  return missedAmountPaise(r, today) > 0n;
 }
