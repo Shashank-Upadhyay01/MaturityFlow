@@ -1,6 +1,5 @@
 'use client';
 
-import { AnimatePresence, motion } from 'framer-motion';
 import { Banknote, Check, ChevronDown, Landmark, Send } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -108,19 +107,18 @@ export function PayoutDesk({ rows, date, today }: { rows: DueRow[]; date: string
               />
             </button>
 
-            <AnimatePresence initial={false}>
-              {open && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
-                  className="overflow-hidden border-t"
-                >
-                  <PayoutForm row={r} valueDate={date} onDone={() => setOpenId(null)} />
-                </motion.div>
-              )}
-            </AnimatePresence>
+            <div
+              className="grid transition-[grid-template-rows,opacity] duration-[320ms] [transition-timing-function:var(--ease-out-quint)]"
+              style={{ gridTemplateRows: open ? '1fr' : '0fr', opacity: open ? 1 : 0 }}
+            >
+              <div className="min-h-0 overflow-hidden">
+                {open && (
+                  <div className="border-t">
+                    <PayoutForm row={r} valueDate={date} onDone={() => setOpenId(null)} />
+                  </div>
+                )}
+              </div>
+            </div>
           </Glass>
         );
       })}

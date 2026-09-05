@@ -1,6 +1,5 @@
 'use client';
 
-import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle, Banknote, CalendarDays, Info, Send, TriangleAlert } from 'lucide-react';
 import { useMemo } from 'react';
 
@@ -116,8 +115,6 @@ export function useSchedule(input: SchedulePreviewInput): {
   ]);
 }
 
-const spring = { type: 'spring' as const, stiffness: 420, damping: 34, mass: 0.7 };
-
 export function SchedulePreview({
   input,
   compact = false,
@@ -168,18 +165,12 @@ export function SchedulePreview({
             {title}
           </p>
           <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <AnimatePresence mode="popLayout">
-              <motion.span
-                key={String(result.typicalDailyPaise)}
-                initial={{ opacity: 0, y: 8, filter: 'blur(4px)' }}
-                animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                exit={{ opacity: 0, y: -8, filter: 'blur(4px)' }}
-                transition={spring}
-                className="text-[1.875rem] font-semibold leading-none tracking-[-0.02em] tabular-nums"
-              >
-                {formatPaise(result.typicalDailyPaise, { decimals: false })}
-              </motion.span>
-            </AnimatePresence>
+            <span
+              key={String(result.typicalDailyPaise)}
+              className="mf-swap text-[1.875rem] font-semibold leading-none tracking-[-0.02em] tabular-nums"
+            >
+              {formatPaise(result.typicalDailyPaise, { decimals: false })}
+            </span>
             <span className="text-[0.9375rem] text-[var(--muted-fg)]">per day</span>
             <span className="text-[var(--faint-fg)]">·</span>
             <span className="text-[0.9375rem] text-[var(--muted-fg)]">
@@ -213,16 +204,11 @@ export function SchedulePreview({
       </Glass>
 
       {/* Warnings */}
-      <AnimatePresence initial={false}>
-        {criticalWarnings.map((w) => (
-          <motion.div
-            key={w.code}
-            layout
-            initial={{ opacity: 0, height: 0, marginTop: 0 }}
-            animate={{ opacity: 1, height: 'auto', marginTop: 0 }}
-            exit={{ opacity: 0, height: 0, marginTop: 0 }}
-            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-          >
+      {criticalWarnings.map((w) => (
+        // `marginTop: 0` keeps the parent's `space-y-4` off this row, exactly as the
+        // old animated style did — the warning sits flush under the panel above it.
+        <div key={w.code} className="mf-expand" style={{ marginTop: 0 }}>
+          <div className="min-h-0 overflow-hidden">
             <div
               className={cn(
                 'flex gap-3 rounded-[15px] border px-4 py-3',
@@ -239,9 +225,9 @@ export function SchedulePreview({
               />
               <p className="text-[0.8125rem] leading-relaxed">{w.message}</p>
             </div>
-          </motion.div>
-        ))}
-      </AnimatePresence>
+          </div>
+        </div>
+      ))}
 
       {/* Day by day */}
       <Glass className="overflow-hidden">
@@ -278,13 +264,11 @@ export function SchedulePreview({
             </thead>
             <tbody>
               {result.installments.map((i, idx) => (
-                <motion.tr
+                <tr
                   key={i.seq}
-                  initial={{ opacity: 0, x: -6 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: Math.min(idx * 0.012, 0.3), duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                  style={{ animationDelay: `${Math.min(idx * 0.012, 0.3)}s` }}
                   className={cn(
-                    'border-b border-[var(--hairline)] tabular-nums last:border-0',
+                    'mf-slide-row border-b border-[var(--hairline)] tabular-nums last:border-0',
                     i.isFinal && 'bg-[color-mix(in_oklab,var(--color-brand-500)_7%,transparent)]',
                   )}
                 >
@@ -307,7 +291,7 @@ export function SchedulePreview({
                   <td className="px-3 py-2 text-right text-[var(--muted-fg)]">
                     {i.onlineLegPaise > 0n ? formatPaise(i.onlineLegPaise, { decimals: false }) : '—'}
                   </td>
-                </motion.tr>
+                </tr>
               ))}
             </tbody>
             <tfoot className="mf-sticky-surface sticky bottom-0 z-10">

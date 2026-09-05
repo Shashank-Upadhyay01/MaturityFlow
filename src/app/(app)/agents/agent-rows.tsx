@@ -1,6 +1,5 @@
 'use client';
 
-import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronRight, FileText, Users } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
@@ -115,15 +114,12 @@ export function AgentRows({ agents, cases }: { agents: AgentRow[]; cases: (BookC
             </div>
 
             {/* ── the customers ──────────────────────────────────────────── */}
-            <AnimatePresence initial={false}>
-              {isOpen && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.18, ease: 'easeOut' }}
-                  className="overflow-hidden"
-                >
+            <div
+              className="grid transition-[grid-template-rows,opacity] duration-[180ms] ease-out"
+              style={{ gridTemplateRows: isOpen ? '1fr' : '0fr', opacity: isOpen ? 1 : 0 }}
+            >
+              <div className="min-h-0 overflow-hidden">
+                {isOpen && (
                   <div className="bg-[var(--glass-bg-subtle)] px-4 pb-4">
                     {groups.length === 0 ? (
                       <p className="py-4 text-center text-[0.8125rem] text-[var(--muted-fg)]">
@@ -216,9 +212,9 @@ export function AgentRows({ agents, cases }: { agents: AgentRow[]; cases: (BookC
                       </div>
                     )}
                   </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                )}
+              </div>
+            </div>
           </div>
         );
       })}

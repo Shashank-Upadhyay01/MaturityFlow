@@ -1,6 +1,5 @@
 'use client';
 
-import { AnimatePresence, motion } from 'framer-motion';
 import {
   BadgeCheck,
   FileText,
@@ -209,68 +208,62 @@ export function CaseDocuments({
           </div>
 
           <ul className="space-y-2">
-            <AnimatePresence initial={false}>
-              {documents.map((d, i) => {
-                const isImage = d.mimeType.startsWith('image/');
-                return (
-                  <motion.li
-                    key={d.id}
-                    layout
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ delay: Math.min(i * 0.03, 0.2), duration: 0.3 }}
-                    className="flex items-center gap-3 rounded-[13px] border border-[var(--input-border)] px-3.5 py-2.5"
-                  >
-                    <span
-                      className={cn(
-                        'flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px]',
-                        d.verifiedAt
-                          ? 'bg-[color-mix(in_oklab,var(--color-money-500)_16%,transparent)] text-[var(--color-money-600)] dark:text-[var(--color-money-400)]'
-                          : 'bg-[var(--glass-bg-subtle)] text-[var(--faint-fg)]',
-                      )}
-                    >
-                      {isImage ? <ImageIcon className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
-                    </span>
-
-                    <div className="min-w-0 flex-1">
-                      <a
-                        href={`/api/documents/${d.id}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="block truncate text-[0.875rem] font-medium hover:text-[var(--color-brand-500)] hover:underline"
-                      >
-                        {d.fileName}
-                      </a>
-                      <p className="truncate text-[0.75rem] text-[var(--faint-fg)]">
-                        {DOCUMENT_KIND_LABEL[d.kind]} · {humanBytes(d.sizeBytes)}
-                        {d.uploadedByName ? ` · ${d.uploadedByName}` : ''}
-                        {d.verifiedAt && d.verifiedByName ? ` · verified by ${d.verifiedByName}` : ''}
-                      </p>
-                    </div>
-
-                    {d.verifiedAt ? (
-                      <Badge tone="money">
-                        <BadgeCheck className="h-3 w-3" />
-                        verified
-                      </Badge>
-                    ) : canVerify ? (
-                      <Button
-                        size="sm"
-                        variant="glass"
-                        loading={verifying === d.id}
-                        onClick={() => verify(d.id)}
-                      >
-                        <ShieldCheck className="h-3.5 w-3.5" />
-                        Verify
-                      </Button>
-                    ) : (
-                      <Badge tone="neutral">unverified</Badge>
+            {documents.map((d, i) => {
+              const isImage = d.mimeType.startsWith('image/');
+              return (
+                <li
+                  key={d.id}
+                  style={{ animationDelay: `${Math.min(i * 0.03, 0.2)}s` }}
+                  className="mf-rise-row flex items-center gap-3 rounded-[13px] border border-[var(--input-border)] px-3.5 py-2.5"
+                >
+                  <span
+                    className={cn(
+                      'flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px]',
+                      d.verifiedAt
+                        ? 'bg-[color-mix(in_oklab,var(--color-money-500)_16%,transparent)] text-[var(--color-money-600)] dark:text-[var(--color-money-400)]'
+                        : 'bg-[var(--glass-bg-subtle)] text-[var(--faint-fg)]',
                     )}
-                  </motion.li>
-                );
-              })}
-            </AnimatePresence>
+                  >
+                    {isImage ? <ImageIcon className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+                  </span>
+
+                  <div className="min-w-0 flex-1">
+                    <a
+                      href={`/api/documents/${d.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block truncate text-[0.875rem] font-medium hover:text-[var(--color-brand-500)] hover:underline"
+                    >
+                      {d.fileName}
+                    </a>
+                    <p className="truncate text-[0.75rem] text-[var(--faint-fg)]">
+                      {DOCUMENT_KIND_LABEL[d.kind]} · {humanBytes(d.sizeBytes)}
+                      {d.uploadedByName ? ` · ${d.uploadedByName}` : ''}
+                      {d.verifiedAt && d.verifiedByName ? ` · verified by ${d.verifiedByName}` : ''}
+                    </p>
+                  </div>
+
+                  {d.verifiedAt ? (
+                    <Badge tone="money">
+                      <BadgeCheck className="h-3 w-3" />
+                      verified
+                    </Badge>
+                  ) : canVerify ? (
+                    <Button
+                      size="sm"
+                      variant="glass"
+                      loading={verifying === d.id}
+                      onClick={() => verify(d.id)}
+                    >
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      Verify
+                    </Button>
+                  ) : (
+                    <Badge tone="neutral">unverified</Badge>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </>
       )}

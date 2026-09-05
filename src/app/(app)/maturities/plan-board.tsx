@@ -1,6 +1,5 @@
 'use client';
 
-import { AnimatePresence, motion } from 'framer-motion';
 import { CalendarClock, CheckCheck, ChevronRight, Wallet } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
@@ -213,19 +212,14 @@ function CustomerRow({
         </div>
       </div>
 
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.16, ease: 'easeOut' }}
-            className="overflow-hidden bg-[var(--glass-bg-subtle)]"
-          >
-            <DayTable row={row} />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <div
+        className="grid transition-[grid-template-rows,opacity] duration-[160ms] ease-out"
+        style={{ gridTemplateRows: open ? '1fr' : '0fr', opacity: open ? 1 : 0 }}
+      >
+        <div className="min-h-0 overflow-hidden bg-[var(--glass-bg-subtle)]">
+          {open && <DayTable row={row} />}
+        </div>
+      </div>
     </div>
   );
 }

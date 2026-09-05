@@ -1,6 +1,5 @@
 'use client';
 
-import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronRight, FileText, Search, Users } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
@@ -261,15 +260,12 @@ export function CustomerList({
                     </span>
                   </div>
 
-                  <AnimatePresence initial={false}>
-                    {isOpen && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.18, ease: 'easeOut' }}
-                        className="overflow-hidden"
-                      >
+                  <div
+                    className="grid transition-[grid-template-rows,opacity] duration-[180ms] ease-out"
+                    style={{ gridTemplateRows: isOpen ? '1fr' : '0fr', opacity: isOpen ? 1 : 0 }}
+                  >
+                    <div className="min-h-0 overflow-hidden">
+                      {isOpen && (
                         <div className="space-y-2 bg-[var(--glass-bg-subtle)] px-4 pb-4 pt-1">
                           {/* who they are */}
                           <div className="grid gap-x-6 gap-y-1 text-[0.72rem] sm:grid-cols-2 lg:grid-cols-4">
@@ -439,9 +435,9 @@ export function CustomerList({
                             );
                           })}
                         </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                      )}
+                    </div>
+                  </div>
                 </div>
               );
             })}

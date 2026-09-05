@@ -457,6 +457,45 @@ table th {
 @keyframes mf-fade { from { opacity: 0; } to { opacity: 1; } }
 .mf-fade { animation: mf-fade 160ms ease-out both; }
 
+/* Row entrances. A list sets its own per-row delay with an inline
+   `animation-delay`, so a timeline or a document list still arrives one line at a
+   time instead of as a slab. `both` matters: the row must hold the "from" state
+   through its delay, or it flashes in at full opacity first. */
+@keyframes mf-rise-row {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.mf-rise-row { animation: mf-rise-row 300ms var(--ease-out-quint) both; }
+
+@keyframes mf-slide-row {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.mf-slide-row { animation: mf-slide-row 320ms var(--ease-out-quint) both; }
+
+/* A recalculated figure swaps itself in. Keyed on the value it prints, so React
+   remounts the element and the animation runs again on every change. */
+@keyframes mf-swap {
+  from { opacity: 0; transform: translateY(8px); filter: blur(4px); }
+  to   { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+.mf-swap { animation: mf-swap 280ms var(--ease-out-quint) both; }
+
+/* A panel that appears in place opens from nothing. `grid-template-rows` is the
+   one height CSS can animate to the content's own size — `1fr` resolves to it —
+   so the single child must be `min-h-0 overflow-hidden` or it refuses to shrink.
+   The same trick, driven by a `transition` rather than this keyframe, is what
+   the expand/collapse rows across the app use. */
+@keyframes mf-expand {
+  from { grid-template-rows: 0fr; opacity: 0; }
+  to   { grid-template-rows: 1fr; opacity: 1; }
+}
+.mf-expand {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: mf-expand 280ms var(--ease-out-quint) both;
+}
+
 /* The K mark combines a secure enclosure with a compact ledger motif. Its
    login animation is deliberately slow and quiet; the working UI stays still. */
 .brand-mark {

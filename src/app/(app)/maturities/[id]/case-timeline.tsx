@@ -1,7 +1,5 @@
 'use client';
 
-import { motion } from 'framer-motion';
-
 import type { CaseEventType, Role } from '@/db/schema';
 import { ROLE_SHORT, activeRole } from '@/lib/rbac';
 import { cn } from '@/lib/utils';
@@ -61,12 +59,10 @@ export function CaseTimeline({ events }: { events: TimelineEvent[] }) {
         aria-hidden
       />
       {events.map((ev, i) => (
-        <motion.li
+        <li
           key={ev.e.id}
-          initial={{ opacity: 0, x: -8 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: Math.min(i * 0.03, 0.25), duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-          className="relative"
+          style={{ animationDelay: `${Math.min(i * 0.03, 0.25)}s` }}
+          className="mf-slide-row relative"
         >
           <span
             className={cn(
@@ -90,7 +86,7 @@ export function CaseTimeline({ events }: { events: TimelineEvent[] }) {
             })}
             {ev.actor && ` · ${ev.actor.name} (${ROLE_SHORT[activeRole(ev.actor.role)]})`}
           </p>
-        </motion.li>
+        </li>
       ))}
     </ol>
   );
