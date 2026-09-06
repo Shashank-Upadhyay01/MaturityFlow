@@ -5,13 +5,13 @@ import {
   ArrowUp,
   ArrowUpDown,
   CalendarDays,
-  Check,
   CheckCheck,
   ChevronDown,
   ChevronUp,
   Columns3,
   Download,
   FileSpreadsheet,
+  MoreHorizontal,
   Plus,
   Printer,
   Search,
@@ -39,6 +39,7 @@ import {
   confirmRegisterTakenAction,
   correctRegisterDayPaidAction,
   markNotTakenAction,
+  markTakenAction,
   removeRegisterRowsAction,
   reopenDayAction,
   requestCloseDayAction,
@@ -47,6 +48,7 @@ import {
   settleRegisterRowAction,
 } from '@/actions/register';
 import { AdminDateCell } from '@/components/domain/admin-date-cell';
+import { TakenMark } from '@/components/domain/taken-mark';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/field';
 import { Glass } from '@/components/ui/glass';
@@ -80,7 +82,6 @@ import {
 import { excelCellRaw } from '@/lib/excel-register';
 import {
   BULK_TODAY_LABEL,
-  DAY_STATE_LABEL,
   DATE_FIELD_LABEL,
   DATE_PRESETS,
   DATE_PRESET_LABEL,
@@ -98,12 +99,12 @@ import {
   missedAmountPaise,
   remainingAfterPaid,
   hasMissedPayment,
-  leftoverOnPayoutDay,
   paidOnDate,
-  unpaidPayoutDays,
   isDueToday,
   isOnTodaysList,
+  markTargetOf,
   isRangeActive,
+  payoutDayStateOf,
   payoutOnDate,
   plannedOnDate,
   recommendedPerDay,
@@ -452,13 +453,6 @@ const DAY_TINT: Partial<Record<DayState, string>> = {
     'bg-[var(--row-partial)] shadow-[inset_3px_0_0_0_var(--row-partial-edge)] hover:bg-[var(--row-partial-strong)]',
 };
 
-/** The pill printed in the Today column once a day has been answered for. */
-const DAY_PILL: Partial<Record<DayState, string>> = {
-  taken: 'bg-[var(--row-taken-strong)] text-[var(--row-taken-fg)]',
-  missed: 'bg-[var(--row-missed-strong)] text-[var(--row-missed-fg)]',
-  partial: 'bg-[var(--row-partial-strong)] text-[var(--row-partial-fg)]',
-};
-
 /**
  * What the Today cell says about itself once the schedule owns it.
  *
@@ -473,81 +467,6 @@ const SCHEDULED_TODAY_HINT: Record<DayState, string> = {
   missed: 'Marked not paid. Still owed \u2014 it stays on the payout list.',
   none: 'The schedule plans nothing for today.',
 };
-
-/**
- * Taken / Not taken on a row.
- *
- * ✓ opens the payment list so the clerk can tick days and confirm an amount. ✗ records a
- * no-show without writing the money off. A recorded payout is corrected by Admin / CMD / CEO,
- * not by un-clicking Taken.
- */
-function DayMark({
-  state,
-  instalmentId,
-  hasUnpaid,
-  disabled,
-  busy,
-  onPay,
-  onNotTaken,
-}: {
-  state: DayState;
-  instalmentId: string | null;
-  hasUnpaid: boolean;
-  disabled: boolean;
-  busy: boolean;
-  onPay: () => void;
-  onNotTaken: (instalmentId: string, clear: boolean) => void;
-}) {
-  if (!hasUnpaid && state === 'taken') {
-    return (
-      <span
-        className={cn(
-          'inline-flex h-6 w-full items-center justify-center gap-1 whitespace-nowrap rounded-[6px] text-[0.65rem] font-medium',
-          DAY_PILL.taken,
-        )}
-        title={`${DAY_STATE_LABEL.taken} — Admin / CMD / CEO can correct a mistaken amount`}
-      >
-        <Check className="h-3 w-3" />
-        Paid
-      </span>
-    );
-  }
-
-  if (!hasUnpaid && (state === 'none' || !instalmentId)) {
-    return (
-      <span className="text-[0.65rem] text-[var(--faint-fg)]" title={DAY_STATE_LABEL.none}>
-        &mdash;
-      </span>
-    );
-  }
-
-  return (
-    <div className="relative flex items-center gap-0.5">
-      <button
-        type="button"
-        disabled={disabled || busy}
-        onClick={onPay}
-        title="Opens this customer’s payment list — tick days and confirm what was given"
-        aria-label="Record payment"
-        className="inline-flex h-6 flex-1 items-center justify-center rounded-[6px] bg-[var(--row-taken)] text-[var(--row-taken-fg)] transition-colors hover:bg-[var(--row-taken-strong)] disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <Check className="h-3.5 w-3.5" />
-      </button>
-      {instalmentId && state !== 'taken' && (
-        <button
-          type="button"
-          disabled={disabled || busy}
-          onClick={() => onNotTaken(instalmentId, false)}
-          title="Not paid — the customer did not collect today. The amount remains owed."
-          aria-label="Mark today's scheduled payment as not paid"
-          className="inline-flex h-6 flex-1 items-center justify-center rounded-[6px] bg-[var(--row-missed)] text-[var(--row-missed-fg)] transition-colors hover:bg-[var(--row-missed-strong)] disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      )}
-    </div>
-  );
-}
 
 type Tab = RegisterTab;
 
@@ -1642,8 +1561,15 @@ export function RegisterSheet(props: {
    * A reason is asked for in two situations, and the server insists on it independently: when a
    * figure already recorded today is being changed, and when the amount reaches past today into
    * days that are not due yet.
+   *
+   * Answers whether anything was actually recorded, so the ✓ that routes a typed figure through
+   * here can tell a cancelled prompt apart from a payment and only report the payment.
    */
-  async function savePaidSplit(row: RegisterRow, cashRupees: bigint, onlineRupees: bigint) {
+  async function savePaidSplit(
+    row: RegisterRow,
+    cashRupees: bigint,
+    onlineRupees: bigint,
+  ): Promise<boolean> {
     const total = cashRupees + onlineRupees;
     /*
       What this figure is allowed to reach, measured as the server will measure it.
@@ -1664,13 +1590,13 @@ export function RegisterSheet(props: {
 
     if (capacity === 0n && total > 0n && !row.todayInstalmentId) {
       toast.error('Nothing is due on this row today or earlier.');
-      return;
+      return false;
     }
 
     const reference = onlineRupees > 0n
       ? window.prompt('Enter UTR / transfer reference for the online amount:')
       : null;
-    if (onlineRupees > 0n && !reference?.trim()) return;
+    if (onlineRupees > 0n && !reference?.trim()) return false;
 
     const replacing = BigInt(row.paidTodayActualPaise) > 0n;
     const payingAhead = total * 100n > capacity;
@@ -1680,10 +1606,10 @@ export function RegisterSheet(props: {
         `Only ₹${inr(capacity)} is due today and earlier on this row. Paying more settles days ` +
           'that have not come round yet. Reason for authorising it:',
       );
-      if (!reason?.trim()) return;
+      if (!reason?.trim()) return false;
     } else if (replacing) {
       reason = window.prompt('Reason for correcting the recorded payment:', 'Register correction');
-      if (!reason?.trim()) return;
+      if (!reason?.trim()) return false;
     }
 
     const result = await settleRegisterRowAction(
@@ -1693,8 +1619,13 @@ export function RegisterSheet(props: {
       reference?.trim() || null,
       reason?.trim() || null,
     );
-    if (!result.ok) toast.error(result.error);
-    else { rememberGridFocus(); router.refresh(); }
+    if (!result.ok) {
+      toast.error(result.error);
+      return false;
+    }
+    rememberGridFocus();
+    router.refresh();
+    return true;
   }
 
   /**
@@ -1774,6 +1705,56 @@ export function RegisterSheet(props: {
     else {
       toast.success(clear ? 'Not-paid mark cleared' : 'Marked not paid');
       router.refresh();
+    }
+  }
+
+  /**
+   * The tick: one click records the day the marks point at, in full, with no dialog in the way.
+   *
+   * `typedRupees` is a figure the clerk put in the Actual paid cell before pressing it. That
+   * cell promises what you type is what Taken confirms, so the figure goes through
+   * `settleRegisterRow` instead — the same path the cell itself commits on, and the only one
+   * that can reach the days behind today. With nothing typed this is `markInstalmentTaken`, so
+   * agreeing with the schedule stays a single click.
+   *
+   * A day the engine planned to send online cannot be recorded without a UTR (INV-4), and
+   * cancelling that prompt abandons the click entirely rather than recording a cash payment
+   * nobody made.
+   */
+  async function onTaken(row: RegisterRow, day: PayoutDayView, typedRupees: bigint | null) {
+    if (marking[day.id]) return;
+    setMarking((m) => ({ ...m, [day.id]: true }));
+    try {
+      if (typedRupees != null) {
+        /*
+          Cash first up to the day's cash leg, the remainder online but never beyond the online
+          leg the engine planned. A customer clearing three missed days hands the cashier notes,
+          and calling that surplus "online" would demand a UTR for money that never moved by
+          transfer.
+        */
+        const legCash = BigInt(day.cashPaise) / 100n;
+        const legOnline = BigInt(day.onlinePaise) / 100n;
+        const spill = typedRupees > legCash ? typedRupees - legCash : 0n;
+        const online = spill < legOnline ? spill : legOnline;
+        if (await savePaidSplit(row, typedRupees - online, online)) {
+          toast.success('Marked taken');
+        }
+        return;
+      }
+      const needsReference = BigInt(day.onlinePaise) > 0n;
+      const reference = needsReference
+        ? window.prompt('Enter UTR / transfer reference for the online portion:')
+        : null;
+      if (needsReference && !reference?.trim()) return;
+      const result = await markTakenAction(day.id, 'SPLIT', reference?.trim() || null);
+      if (!result.ok) toast.error(result.error);
+      else {
+        toast.success('Marked taken');
+        rememberGridFocus();
+        router.refresh();
+      }
+    } finally {
+      setMarking((m) => ({ ...m, [day.id]: false }));
     }
   }
 
@@ -3673,7 +3654,6 @@ export function RegisterSheet(props: {
               {tableRows.map((r, rowIndex) => {
                 const arrears = missedDaysOf(r);
                 const missedDays = tab === 'missed' ? arrears : [];
-                const arrearsPay = arrears[0] ?? null;
                 const daysN = Math.max(1, Number(d(r.id, 'windowDays', String(r.windowDays))) || 1);
                 const paidDraft = d(r.id, 'paid', rupeesStr(BigInt(r.paidPaise)));
                 const amtDraft = d(r.id, 'amount', rupeesStr(BigInt(r.maturityPaise)));
@@ -3732,6 +3712,23 @@ export function RegisterSheet(props: {
                 const ticked = Boolean(selected[r.id]);
                 const dayState = dayStateOf(r);
                 const rowState = rowStateOf(r);
+                /*
+                  Which day the two marks answer for, and what the tick will record on it.
+
+                  A clerk who typed into Actual paid was promised that figure is what Taken
+                  confirms, so the draft wins over the schedule's own amount — but only while the
+                  sheet is showing today, because the settlement behind it posts against today's
+                  date whichever day the money columns happen to be displaying.
+                */
+                const markTarget = markTargetOf(r, props.today);
+                const typedPaidPaise =
+                  viewDay === props.today
+                    ? tryParseRupeesToPaise(d(r.id, 'paidTodayActual', ''))
+                    : null;
+                const typedPaidRupees =
+                  typedPaidPaise != null && typedPaidPaise > 0n && typedPaidPaise !== paidView.total
+                    ? typedPaidPaise / 100n
+                    : null;
 
                 /*
                   Exactly ONE background class, chosen here rather than layered.
@@ -4099,15 +4096,37 @@ export function RegisterSheet(props: {
                       </td>
                     ))}
                     <td className={cn(td, 'print:hidden')} colSpan={2}>
-                      <DayMark
-                        state={arrearsPay && !r.todayInstalmentId ? 'due' : dayState}
-                        instalmentId={r.todayInstalmentId ?? arrearsPay?.id ?? null}
-                        hasUnpaid={unpaidPayoutDays(r.payoutDays ?? [], props.today).length > 0}
-                        disabled={!props.canPay}
-                        busy={paying && payRow?.id === r.id}
-                        onPay={() => setPayRow(r)}
-                        onNotTaken={(id, clear) => void onNotTaken(id, clear)}
-                      />
+                      <div className="flex items-center justify-center gap-1">
+                        <TakenMark
+                          state={markTarget.state}
+                          canMark={props.canPay}
+                          busy={Boolean(markTarget.day && marking[markTarget.day.id])}
+                          onTaken={() => {
+                            if (markTarget.day) void onTaken(r, markTarget.day, typedPaidRupees);
+                          }}
+                          onNotTaken={(clear) => {
+                            if (markTarget.day) void onNotTaken(markTarget.day.id, clear);
+                          }}
+                        />
+                        {/*
+                          Everything the two marks deliberately cannot do — several days at once,
+                          a value date, a correction to an amount already recorded — still lives
+                          in the payment dialog, one click away for the roles allowed to do it.
+                          A cashier sees the tick and the cross and nothing else.
+                        */}
+                        {props.canCorrectPay && (
+                          <button
+                            type="button"
+                            disabled={paying}
+                            onClick={() => setPayRow(r)}
+                            aria-label={`More payment options for ${r.customerName}`}
+                            title="More — pay several days, correct an amount"
+                            className="inline-flex h-7 w-6 shrink-0 items-center justify-center rounded-[6px] text-[var(--muted-fg)] transition-colors hover:bg-[var(--glass-bg-strong)] hover:text-[var(--page-fg)] disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <MoreHorizontal className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                     {hasExtras && (
                       <td className={cn(td, 'print:hidden')}>
@@ -4159,14 +4178,12 @@ export function RegisterSheet(props: {
                               <span className="text-[0.68rem] font-semibold tabular-nums text-[var(--row-missed-edge)]">
                                 ₹{inr(day.outstandingPaise)}
                               </span>
-                              <DayMark
-                                state={day.status === 'PAID' ? 'taken' : day.status === 'PARTIAL' ? 'partial' : 'due'}
-                                instalmentId={day.id}
-                                hasUnpaid={leftoverOnPayoutDay(day) > 0n}
-                                disabled={!props.canPay}
-                                busy={paying && payRow?.id === r.id}
-                                onPay={() => setPayRow(r)}
-                                onNotTaken={(id, clear) => void onNotTaken(id, clear)}
+                              <TakenMark
+                                state={payoutDayStateOf(day)}
+                                canMark={props.canPay}
+                                busy={Boolean(marking[day.id])}
+                                onTaken={() => void onTaken(r, day, null)}
+                                onNotTaken={(clear) => void onNotTaken(day.id, clear)}
                               />
                             </span>
                           ))}

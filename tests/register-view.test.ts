@@ -21,6 +21,7 @@ import {
   isTodayButUnset,
   nextDay,
   leftoverOnPayoutDay,
+  markTargetOf,
   allocateVisitPaise,
   legsAfterPayment,
   orderPaidCorrections,
@@ -45,6 +46,7 @@ import {
   todayPlannedSplit,
   SORT_LABEL,
   type DateField,
+  type PayoutDayView,
 } from '@/lib/register-view';
 
 const TODAY = '2026-08-22';
@@ -444,6 +446,84 @@ describe('missed-payment visibility', () => {
   it('uses today\'s answer when there is no backlog', () => {
     expect(rowStateOf(row({ todayStatus: 'PAID' }))).toBe('taken');
     expect(rowStateOf(row({ todayStatus: 'PARTIAL' }))).toBe('partial');
+  });
+});
+
+describe('markTargetOf — which day the tick and the cross answer for', () => {
+  const day = (over: Partial<PayoutDayView> = {}): PayoutDayView => ({
+    id: 'inst_1',
+    dueOn: '2026-03-10',
+    amountPaise: '2500000',
+    cashPaise: '2500000',
+    onlinePaise: '0',
+    paidPaise: '0',
+    status: 'PENDING',
+    ...over,
+  });
+  const row = (days: PayoutDayView[], over: Partial<Parameters<typeof dayStateOf>[0]> = {}) => ({
+    todayInstalmentId: 'inst_today',
+    todayStatus: 'PENDING',
+    overdueCount: 0,
+    payoutDays: days,
+    ...over,
+  });
+
+  it("answers for today's own day while it is still owed", () => {
+    const target = markTargetOf(
+      row([day({ id: 'old', dueOn: '2026-03-09' }), day({ id: 'now', dueOn: '2026-03-10' })]),
+      '2026-03-10',
+    );
+    expect(target.day?.id).toBe('now');
+    expect(target.state).toBe('due');
+  });
+
+  it('falls back to the oldest unpaid earlier day once today is settled', () => {
+    // The customer who missed Monday and comes in on Wednesday is paid from their row.
+    const target = markTargetOf(
+      row(
+        [
+          day({ id: 'mon', dueOn: '2026-03-09', status: 'MISSED' }),
+          day({ id: 'now', dueOn: '2026-03-10', status: 'PAID', paidPaise: '2500000' }),
+        ],
+        { todayStatus: 'PAID' },
+      ),
+      '2026-03-10',
+    );
+    expect(target.day?.id).toBe('mon');
+    expect(target.state).toBe('missed');
+  });
+
+  it('never targets a day that has not arrived', () => {
+    const target = markTargetOf(row([day({ id: 'tomorrow', dueOn: '2026-03-11' })]), '2026-03-10');
+    expect(target.day).toBeNull();
+    expect(target.state).toBe('none');
+  });
+
+  it('reports the day it chose, not the row\'s backlog colour', () => {
+    // rowStateOf paints the whole row red for the arrears; the marks must still say that TODAY
+    // is merely due, because today's instalment is what the tick is about to pay.
+    const r = row([day({ id: 'old', dueOn: '2026-03-09' }), day({ id: 'now', dueOn: '2026-03-10' })], {
+      overdueCount: 1,
+    });
+    expect(rowStateOf(r)).toBe('missed');
+    expect(markTargetOf(r, '2026-03-10').state).toBe('due');
+  });
+
+  it('reads a part-paid day as partial and a not-taken day as missed', () => {
+    expect(markTargetOf(row([day({ paidPaise: '1000000', status: 'PARTIAL' })]), '2026-03-10').state)
+      .toBe('partial');
+    expect(markTargetOf(row([day({ status: 'MISSED' })]), '2026-03-10').state).toBe('missed');
+  });
+
+  it('leaves the marks inert with nothing outstanding: taken when paid, none when unscheduled', () => {
+    expect(
+      markTargetOf(
+        row([day({ status: 'PAID', paidPaise: '2500000' })], { todayStatus: 'PAID' }),
+        '2026-03-10',
+      ),
+    ).toEqual({ day: null, state: 'taken' });
+    expect(markTargetOf(row([], { todayInstalmentId: null, todayStatus: null }), '2026-03-10'))
+      .toEqual({ day: null, state: 'none' });
   });
 });
 

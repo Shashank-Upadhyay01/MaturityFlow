@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, Columns3, ExternalLink, FileSpreadsheet, Search, ShieldAlert, X } from 'lucide-react';
+import { Columns3, ExternalLink, FileSpreadsheet, Search, ShieldAlert, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { setInstalmentAmountAction } from '@/actions/cases';
@@ -14,7 +14,9 @@ import {
   saveRegisterFieldsAction,
   settleRegisterRowAction,
 } from '@/actions/register';
+import { TakenMark } from '@/components/domain/taken-mark';
 import { DEFAULT_OPERATIONS_MATURITY_ON } from '@/lib/maturity-operations';
+import type { DayState } from '@/lib/register-view';
 import {
   blankRowCount,
   cellAddress,
@@ -93,6 +95,19 @@ const COLUMNS = [
   ['given', 'Given'],
 ] as const;
 type ColumnId = (typeof COLUMNS)[number][0];
+
+/**
+ * How this sheet's row reads to the shared marks.
+ *
+ * The page has already resolved `todayInstalmentId` to today's day or, failing that, the oldest
+ * one still unpaid — so a row with nothing left to answer for has no id at all, and the marks
+ * become the dim dash rather than two buttons that would be refused.
+ */
+function markStateOf(row: OperationsRow): DayState {
+  if (!row.todayInstalmentId || row.todayState === 'NONE') return 'none';
+  if (row.todayState === 'PAID') return 'taken';
+  return row.todayState === 'MISSED' ? 'missed' : 'due';
+}
 
 /** Identity and date fields bulk shortcuts may write. Paid / Taken move money — not Delete or Ctrl+D. */
 const BULK_EDIT = new Set<ColumnId>(['account', 'customer', 'agent', 'amount', 'maturity', 'form', 'review', 'payment']);
@@ -694,16 +709,24 @@ export function OperationsGrid({ rows, canEdit, canApproveDates, canSchedule, ca
     if (!result.ok) toast.error(result.error); else router.refresh();
   }
 
-  async function mark(row: OperationsRow, taken: boolean) {
+  /**
+   * The two marks. `clear` unticks a not-taken day, which is the undo for a mis-click; there is
+   * no equivalent for a taken one, because that day's money has already left the drawer.
+   */
+  async function mark(row: OperationsRow, taken: boolean, clear = false) {
     if (!row.todayInstalmentId || busy) return;
     setBusy(row.id);
     const reference = taken && BigInt(row.todayOnlineDuePaise) > 0n ? window.prompt('Enter UTR / transfer reference for the online portion:') : null;
     if (taken && BigInt(row.todayOnlineDuePaise) > 0n && !reference?.trim()) { setBusy(null); return; }
     const result = taken
       ? await markTakenAction(row.todayInstalmentId, 'SPLIT', reference?.trim() || null)
-      : await markNotTakenAction(row.todayInstalmentId, false);
+      : await markNotTakenAction(row.todayInstalmentId, clear);
     setBusy(null);
-    if (!result.ok) toast.error(result.error); else router.refresh();
+    if (!result.ok) toast.error(result.error);
+    else {
+      toast.success(taken ? 'Marked taken' : clear ? 'Not-paid mark cleared' : 'Marked not paid');
+      router.refresh();
+    }
   }
 
   async function applyCell(row: OperationsRow, col: ColumnId, raw: string, recordUndo = true) {
@@ -1258,10 +1281,11 @@ export function OperationsGrid({ rows, canEdit, canApproveDates, canSchedule, ca
                     {show('due') && <td className={cell} data-ops-index={rowIndex} data-ops-col="due"><EditableCell row={row.id} col="due" type="money" value={rupees(row.duePaise)} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canSchedule && !canEdit} selected={isSelected(rowIndex, visColIds.indexOf('due'))}  onCommit={(v) => savePlanned(row, v)} /></td>}
                     {show('total') && <td className={cell} data-ops-index={rowIndex} data-ops-col="total"><EditableCell row={row.id} col="total" type="money" value={rupees((BigInt(row.missedPaise) + BigInt(row.duePaise)).toString())} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled selected={isSelected(rowIndex, visColIds.indexOf('total'))}  onCommit={async () => {}} /></td>}
                     {show('paidToday') && <td className={cell} data-ops-index={rowIndex} data-ops-col="paidToday"><EditableCell row={row.id} col="paidToday" type="money" value={rupees(row.paidTodayPaise)} rowIndex={rowIndex} onGrowDown={growFromNav} onMove={moveHighlight} disabled={!canPay} selected={isSelected(rowIndex, visColIds.indexOf('paidToday'))}  onCommit={(v) => { const total = BigInt(v || '0'); const online = paidOnline > total ? 0n : paidOnline; return savePaid(row, total - online, online); }} /></td>}
-                    {/* Given: the one control that commits Actual paid. Two buttons, because
-                        "the customer did not come" is a different fact from "nothing was typed"
-                        — a blank row must never silently become a missed day. */}
-                    {show('given') && <td className={cell} data-ops-index={rowIndex} data-ops-col="given"><div className="flex h-9 w-full items-stretch gap-px"><button type="button" title="Mark as taken" aria-label="Mark as taken" disabled={!canPay || !row.todayInstalmentId || row.todayState === 'PAID' || busy === row.id} onClick={(event) => { if (event.shiftKey || event.ctrlKey || event.metaKey) return; void mark(row, true); }} className="flex flex-1 items-center justify-center gap-0.5 rounded-none bg-[var(--row-taken)] text-[0.65rem] font-bold text-[var(--row-taken-fg)] hover:bg-[var(--row-taken-strong)] disabled:cursor-not-allowed disabled:opacity-40 xl:text-[0.7rem]"><Check className="h-3 w-3 shrink-0" /><span className="hidden xl:inline">Taken</span></button><button type="button" title="Mark as not taken" aria-label="Mark as not taken" disabled={!canPay || !row.todayInstalmentId || row.todayState === 'PAID' || busy === row.id} onClick={(event) => { if (event.shiftKey || event.ctrlKey || event.metaKey) return; void mark(row, false); }} className="flex flex-1 items-center justify-center gap-0.5 rounded-none bg-[var(--row-missed)] text-[0.65rem] font-bold text-[var(--row-missed-fg)] hover:bg-[var(--row-missed-strong)] disabled:cursor-not-allowed disabled:opacity-40 xl:text-[0.7rem]"><X className="h-3 w-3 shrink-0" /><span className="hidden xl:inline">Not taken</span></button></div></td>}
+                    {/* Given: whether the customer came, not how the money was handed over.
+                        Two marks, because "the customer did not come" is a different fact from
+                        "nothing was typed" — a blank row must never silently become a missed
+                        day. */}
+                    {show('given') && <td className={cell} data-ops-index={rowIndex} data-ops-col="given"><div className="flex h-9 w-full items-center justify-center"><TakenMark state={markStateOf(row)} canMark={canPay} busy={busy === row.id} onTaken={() => void mark(row, true)} onNotTaken={(clear) => void mark(row, false, clear)} /></div></td>}
                   </tr>
                 );
               })}

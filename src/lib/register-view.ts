@@ -391,6 +391,37 @@ export function rowStateOf(r: DayStateRow): DayState {
   return hasMissedPayment(r) ? 'missed' : dayStateOf(r);
 }
 
+/** How one instalment reads on its own, without the row's arrears speaking for it. */
+export function payoutDayStateOf(day: PayoutDayView): DayState {
+  if (leftoverOnPayoutDay(day) === 0n) return 'taken';
+  if (day.status === 'MISSED') return 'missed';
+  return BigInt(day.paidPaise) > 0n ? 'partial' : 'due';
+}
+
+/**
+ * Which day the row's ✓ / ✗ answer for, and how that day currently reads.
+ *
+ * Today's own instalment while it is still owed, because that is the question the sheet asks.
+ * Once today is settled — or the schedule plans nothing for today — the marks fall back to the
+ * oldest earlier day still unpaid, so a customer who comes back on Thursday for Monday's money
+ * is paid from their row instead of from a dialog. Future days are never a target: an unarrived
+ * day is not an observation yet, and `markInstalmentTaken` refuses one anyway.
+ *
+ * `state` is what the marks render, so it has to be the chosen DAY's state and not the row's:
+ * `rowStateOf` deliberately paints a whole row red for a backlog, and a tick that reported the
+ * backlog's colour while paying today's instalment would be telling the clerk about a different
+ * day from the one their click is about to settle.
+ */
+export function markTargetOf(
+  r: DayStateRow & { payoutDays?: PayoutDayView[] },
+  today: string,
+): { day: PayoutDayView | null; state: DayState } {
+  const open = unpaidPayoutDays(r.payoutDays ?? [], today);
+  const day = open.find((d) => d.dueOn === today) ?? open[0] ?? null;
+  if (!day) return { day: null, state: dayStateOf(r) === 'taken' ? 'taken' : 'none' };
+  return { day, state: payoutDayStateOf(day) };
+}
+
 /**
  * Everything the "what goes out today" rules read.
  *
