@@ -17,12 +17,28 @@ function makePool(): Pool {
   if (!connectionString) {
     throw new Error('DATABASE_URL is not set. Copy .env.example to .env and fill it in.');
   }
+  /*
+    How many connections one instance of this app may hold.
+
+    Twenty was sized for the shape this started as: one long-lived server on the branch network,
+    where a generous pool costs nothing and saves a handshake. On Vercel it is the wrong number by
+    an order of magnitude. Every serverless instance evaluates this module and gets a pool of its
+    own, this database allows sixty connections in total, and each one opened has to be
+    authenticated through the pooler before it can run a query - so a handful of instances warming
+    up together can spend the whole budget and leave real requests queueing behind handshakes.
+
+    A serverless instance serves one request at a time, so it needs about one connection, and a
+    small ceiling for the few paths that fan out. Anything long-lived - the branch LAN server,
+    local development - keeps the original number, because there the pool really is shared.
+  */
+  const serverless = Boolean(process.env.VERCEL);
   return new Pool({
     connectionString,
-    // Sized for a branch network on one server. Postgres allows 100 connections by
-    // default; 20 leaves ample room for psql, backups and a second app instance.
-    max: Number(process.env.DB_POOL_MAX ?? 20),
-    idleTimeoutMillis: 10_000,
+    max: Number(process.env.DB_POOL_MAX ?? (serverless ? 3 : 20)),
+    // A serverless instance is frozen between requests; holding a connection open across that
+    // gap keeps a backend reserved for nobody. Long-lived servers keep theirs the full ten
+    // seconds, where the next request really is moments away.
+    idleTimeoutMillis: serverless ? 2_000 : 10_000,
     connectionTimeoutMillis: 20_000,
     keepAlive: true,
     // Managed Postgres (Supabase / Neon / RDS) requires TLS; local docker does not.
