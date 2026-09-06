@@ -69,6 +69,9 @@ export interface OperationsRow {
   paidCashTodayPaise: string;
   paidOnlineTodayPaise: string;
   todayInstalmentId: string | null;
+  /** The scheduled day `todayInstalmentId` points at, and what it still owes — what the ✓ confirms. */
+  takeDueOn: string;
+  takeAmountPaise: string;
   todayOnlineDuePaise: string;
   todayState: 'DUE' | 'PAID' | 'MISSED' | 'NONE';
   needsReview: boolean;
@@ -710,14 +713,15 @@ export function OperationsGrid({ rows, canEdit, canApproveDates, canSchedule, ca
   }
 
   /**
-   * The two marks. `clear` unticks a not-taken day, which is the undo for a mis-click; there is
-   * no equivalent for a taken one, because that day's money has already left the drawer.
+   * The two marks, once the shared control's confirmation has been answered. `clear` unticks a
+   * not-taken day, which is the undo for a mis-click; there is no equivalent for a taken one,
+   * because that day's money has already left the drawer. `reference` is the UTR that same
+   * confirmation collected when part of the day goes out online, so INV-4 is satisfied without a
+   * second popup.
    */
-  async function mark(row: OperationsRow, taken: boolean, clear = false) {
+  async function mark(row: OperationsRow, taken: boolean, clear = false, reference: string | null = null) {
     if (!row.todayInstalmentId || busy) return;
     setBusy(row.id);
-    const reference = taken && BigInt(row.todayOnlineDuePaise) > 0n ? window.prompt('Enter UTR / transfer reference for the online portion:') : null;
-    if (taken && BigInt(row.todayOnlineDuePaise) > 0n && !reference?.trim()) { setBusy(null); return; }
     const result = taken
       ? await markTakenAction(row.todayInstalmentId, 'SPLIT', reference?.trim() || null)
       : await markNotTakenAction(row.todayInstalmentId, clear);
@@ -1285,7 +1289,7 @@ export function OperationsGrid({ rows, canEdit, canApproveDates, canSchedule, ca
                         Two marks, because "the customer did not come" is a different fact from
                         "nothing was typed" — a blank row must never silently become a missed
                         day. */}
-                    {show('given') && <td className={cell} data-ops-index={rowIndex} data-ops-col="given"><div className="flex h-9 w-full items-center justify-center"><TakenMark state={markStateOf(row)} canMark={canPay} busy={busy === row.id} onTaken={() => void mark(row, true)} onNotTaken={(clear) => void mark(row, false, clear)} /></div></td>}
+                    {show('given') && <td className={cell} data-ops-index={rowIndex} data-ops-col="given"><div className="flex h-9 w-full items-center justify-center"><TakenMark state={markStateOf(row)} canMark={canPay} busy={busy === row.id} customerName={row.customerName} dueOn={row.takeDueOn} amountPaise={row.takeAmountPaise} needsReference={BigInt(row.todayOnlineDuePaise || '0') > 0n} onTaken={(reference) => void mark(row, true, false, reference)} onNotTaken={(clear) => void mark(row, false, clear)} /></div></td>}
                   </tr>
                 );
               })}

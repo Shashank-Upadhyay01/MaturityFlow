@@ -417,7 +417,14 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           <PaymentRows
             canEditDates={canEditDates}
             canReverse={roleCan(session.role, 'payout.reverse')}
-            payments={detail.transactions.map(({ t, recordedBy }) => ({
+            /*
+              The same pair of answers `correctRegisterDayPaidAction` checks for itself, so the
+              Edit control appears exactly where the server would accept it rather than one role
+              wider. No new permission: correcting a recorded payment has always been
+              `payout.reverse` held by an account that may also override dates.
+            */
+            canCorrect={canEditDates && roleCan(session.role, 'payout.reverse')}
+            payments={detail.transactions.map(({ t, recordedBy, reversedBy, instalment }) => ({
               id: t.id,
               cashPaise: t.cashPaise.toString(),
               onlinePaise: t.onlinePaise.toString(),
@@ -426,7 +433,10 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
               valueDate: t.valueDate,
               reversedAt: t.reversedAt ? t.reversedAt.toISOString() : null,
               reversalReason: t.reversalReason,
+              reversedByName: reversedBy?.name ?? null,
               recordedByName: recordedBy?.name ?? null,
+              instalmentId: t.instalmentId,
+              instalmentDueOn: instalment?.dueOn ?? null,
             }))}
           />
         </GlassCard>

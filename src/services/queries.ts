@@ -1398,13 +1398,24 @@ export async function getCaseDetail(actor: Actor, caseId: string) {
     )
     .orderBy(asc(payoutInstalments.seq));
 
+  /*
+    Who reversed an entry is part of the entry, not a footnote: the case page has to be able to
+    say who corrected a payment and why without anyone opening the audit log. The instalment is
+    joined for its due date, and left-joined because the rows the Excel import wrote carry no
+    instalment at all — those are the ones the case page can only offer to undo.
+  */
+  const reverser = alias(users, 'reverser');
   const transactions = await db
     .select({
       t: payoutTransactions,
       recordedBy: { name: users.name },
+      reversedBy: { name: reverser.name },
+      instalment: { dueOn: payoutInstalments.dueOn },
     })
     .from(payoutTransactions)
     .leftJoin(users, eq(users.id, payoutTransactions.recordedById))
+    .leftJoin(reverser, eq(reverser.id, payoutTransactions.reversedById))
+    .leftJoin(payoutInstalments, eq(payoutInstalments.id, payoutTransactions.instalmentId))
     .where(eq(payoutTransactions.caseId, caseId))
     .orderBy(desc(payoutTransactions.paidAt));
 

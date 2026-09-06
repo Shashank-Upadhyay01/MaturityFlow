@@ -76,10 +76,16 @@ export default async function MaturityOperationsPage({
           const paymentOn = toISODateString(row.paymentOn) ?? toISODateString(row.firstPayoutOn) ?? '';
           const reviewDueOn = paymentOn ? addDays(paymentOn, -1) : '';
           const status = row.todayStatus;
-          const unpaid = parsePayoutDays(row.payoutDays).find(
-            (day) => leftoverOnPayoutDay(day) > 0n && day.dueOn <= today,
-          );
+          const days = parsePayoutDays(row.payoutDays);
+          const unpaid = days.find((day) => leftoverOnPayoutDay(day) > 0n && day.dueOn <= today);
           const takeId = row.todayInstalmentId ?? unpaid?.id ?? null;
+          /*
+            The day the ✓ actually answers for, so its confirmation can name that date and the
+            money on it. `takeId` is today's instalment or, failing that, the oldest one still
+            unpaid — a row cleared up on Thursday for a Monday that was never collected must not
+            be confirmed as Thursday's money.
+          */
+          const takeDay = takeId ? days.find((day) => day.id === takeId) ?? null : null;
           return {
             id: row.id,
             accountNumber: row.accountNumber ?? '',
@@ -99,6 +105,8 @@ export default async function MaturityOperationsPage({
             paidCashTodayPaise: row.paidTodayCashPaise,
             paidOnlineTodayPaise: row.paidTodayOnlinePaise,
             todayInstalmentId: takeId,
+            takeDueOn: takeDay?.dueOn ?? (paymentOn || today),
+            takeAmountPaise: (takeDay ? leftoverOnPayoutDay(takeDay) : BigInt(row.todayDuePaise)).toString(),
             todayOnlineDuePaise: row.todayOnlineDuePaise,
             todayState: status === 'PAID' && !unpaid ? 'PAID' : status === 'MISSED' || (unpaid && unpaid.dueOn < today) ? 'MISSED' : takeId ? 'DUE' : 'NONE',
             needsReview: !row.opsReviewedOn && Boolean(reviewDueOn) && reviewDueOn <= today,

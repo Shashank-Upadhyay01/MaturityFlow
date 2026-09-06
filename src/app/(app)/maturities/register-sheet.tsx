@@ -130,6 +130,7 @@ import {
   type RegisterLayout,
   REGISTER_COL_DEFS,
 } from '@/lib/register-layout';
+import { tickPlanFor } from '@/lib/mark-confirm';
 import { formatPaise, tryParseRupeesToPaise } from '@/lib/money';
 import { payoutPlanFor, windowDaysForPayoutCount } from '@/lib/payout-policy';
 import { cn } from '@/lib/utils';
@@ -1563,12 +1564,17 @@ export function RegisterSheet(props: {
    * days that are not due yet.
    *
    * Answers whether anything was actually recorded, so the ✓ that routes a typed figure through
-   * here can tell a cancelled prompt apart from a payment and only report the payment.
+   * here can tell an abandoned answer apart from a payment and only report the payment.
+   *
+   * `suppliedReference` is how the ✓ hands over the UTR its own confirmation already collected.
+   * The money cells have no dialog of their own and still ask for one here, because a figure
+   * committed by tabbing out of a cell has nowhere else to be asked.
    */
   async function savePaidSplit(
     row: RegisterRow,
     cashRupees: bigint,
     onlineRupees: bigint,
+    suppliedReference: string | null = null,
   ): Promise<boolean> {
     const total = cashRupees + onlineRupees;
     /*
@@ -1593,9 +1599,9 @@ export function RegisterSheet(props: {
       return false;
     }
 
-    const reference = onlineRupees > 0n
-      ? window.prompt('Enter UTR / transfer reference for the online amount:')
-      : null;
+    const reference = onlineRupees <= 0n
+      ? null
+      : (suppliedReference ?? window.prompt('Enter UTR / transfer reference for the online amount:'));
     if (onlineRupees > 0n && !reference?.trim()) return false;
 
     const replacing = BigInt(row.paidTodayActualPaise) > 0n;
@@ -1709,43 +1715,33 @@ export function RegisterSheet(props: {
   }
 
   /**
-   * The tick: one click records the day the marks point at, in full, with no dialog in the way.
+   * The tick, once its confirmation has been answered: record the day the marks point at.
    *
    * `typedRupees` is a figure the clerk put in the Actual paid cell before pressing it. That
    * cell promises what you type is what Taken confirms, so the figure goes through
    * `settleRegisterRow` instead — the same path the cell itself commits on, and the only one
    * that can reach the days behind today. With nothing typed this is `markInstalmentTaken`, so
-   * agreeing with the schedule stays a single click.
+   * agreeing with the schedule stays one confirmation and no typing.
    *
-   * A day the engine planned to send online cannot be recorded without a UTR (INV-4), and
-   * cancelling that prompt abandons the click entirely rather than recording a cash payment
-   * nobody made.
+   * A day the engine planned to send online cannot be recorded without a UTR (INV-4). The mark's
+   * own dialog collects it, so `reference` arrives already answered and there is no second popup.
    */
-  async function onTaken(row: RegisterRow, day: PayoutDayView, typedRupees: bigint | null) {
+  async function onTaken(
+    row: RegisterRow,
+    day: PayoutDayView,
+    typedRupees: bigint | null,
+    reference: string | null,
+  ) {
     if (marking[day.id]) return;
     setMarking((m) => ({ ...m, [day.id]: true }));
     try {
       if (typedRupees != null) {
-        /*
-          Cash first up to the day's cash leg, the remainder online but never beyond the online
-          leg the engine planned. A customer clearing three missed days hands the cashier notes,
-          and calling that surplus "online" would demand a UTR for money that never moved by
-          transfer.
-        */
-        const legCash = BigInt(day.cashPaise) / 100n;
-        const legOnline = BigInt(day.onlinePaise) / 100n;
-        const spill = typedRupees > legCash ? typedRupees - legCash : 0n;
-        const online = spill < legOnline ? spill : legOnline;
-        if (await savePaidSplit(row, typedRupees - online, online)) {
+        const plan = tickPlanFor(day, typedRupees);
+        if (await savePaidSplit(row, typedRupees - plan.onlinePaise / 100n, plan.onlinePaise / 100n, reference)) {
           toast.success('Marked taken');
         }
         return;
       }
-      const needsReference = BigInt(day.onlinePaise) > 0n;
-      const reference = needsReference
-        ? window.prompt('Enter UTR / transfer reference for the online portion:')
-        : null;
-      if (needsReference && !reference?.trim()) return;
       const result = await markTakenAction(day.id, 'SPLIT', reference?.trim() || null);
       if (!result.ok) toast.error(result.error);
       else {
@@ -4101,8 +4097,14 @@ export function RegisterSheet(props: {
                           state={markTarget.state}
                           canMark={props.canPay}
                           busy={Boolean(markTarget.day && marking[markTarget.day.id])}
-                          onTaken={() => {
-                            if (markTarget.day) void onTaken(r, markTarget.day, typedPaidRupees);
+                          customerName={r.customerName}
+                          dueOn={markTarget.day?.dueOn ?? props.today}
+                          amountPaise={markTarget.day ? tickPlanFor(markTarget.day, typedPaidRupees).totalPaise : 0n}
+                          needsReference={
+                            markTarget.day ? tickPlanFor(markTarget.day, typedPaidRupees).needsReference : false
+                          }
+                          onTaken={(reference) => {
+                            if (markTarget.day) void onTaken(r, markTarget.day, typedPaidRupees, reference);
                           }}
                           onNotTaken={(clear) => {
                             if (markTarget.day) void onNotTaken(markTarget.day.id, clear);
@@ -4182,7 +4184,11 @@ export function RegisterSheet(props: {
                                 state={payoutDayStateOf(day)}
                                 canMark={props.canPay}
                                 busy={Boolean(marking[day.id])}
-                                onTaken={() => void onTaken(r, day, null)}
+                                customerName={r.customerName}
+                                dueOn={day.dueOn}
+                                amountPaise={day.outstandingPaise}
+                                needsReference={tickPlanFor(day, null).needsReference}
+                                onTaken={(reference) => void onTaken(r, day, null, reference)}
                                 onNotTaken={(clear) => void onNotTaken(day.id, clear)}
                               />
                             </span>
