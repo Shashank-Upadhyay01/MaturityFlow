@@ -246,7 +246,23 @@ export async function importRegisterRows(
             .where(eq(maturityCases.id, caseId))
             .limit(1);
           if (inserted) {
-            const { anchor } = await approveAndScheduleInTx(tx, actor, inserted, policy.calendar);
+            /*
+              `remaining`, not the maturity amount.
+
+              An imported row can arrive with months of counter payments already against it - the
+              Paid column - and the days still to come have to add up to what is left. Passing the
+              full amount put a case that was all but settled back on the register asking for the
+              whole sum a second time: a customer owed 5,795 was scheduled for twelve more days of
+              14,000. The cadence is still taken from the maturity amount inside, because the band
+              belongs to the deposit rather than to the balance.
+            */
+            const { anchor } = await approveAndScheduleInTx(
+              tx,
+              actor,
+              inserted,
+              policy.calendar,
+              remaining,
+            );
             const paymentOn = row.paymentOn ?? anchor;
 
             /*

@@ -39,6 +39,20 @@ export interface PersistScheduleArgs {
   /** The approval date — the anchor. Defaults to the case's approvedOn. */
   anchorDate?: string;
   branchDailyCashComfortPaise?: bigint;
+  /**
+   * What there is left to pay, when that is not the whole maturity amount.
+   *
+   * A case being approved for the first time has had nothing paid, so the schedule covers the
+   * full amount and this stays unset. An imported row is different: it can arrive carrying months
+   * of payments already made at the counter, and the days still to come must add up to what is
+   * left, not to the amount the customer started with. Without this an August row that was all
+   * but settled came back onto the register asking for the whole sum a second time.
+   *
+   * Only the money moves. The cadence still comes from the maturity amount below, because a
+   * lakh-plus case is a daily case whether ten thousand or ten rupees of it remain - the band is
+   * a property of the deposit, not of the balance.
+   */
+  remainingPaise?: bigint;
 }
 
 /**
@@ -53,6 +67,7 @@ export async function persistSchedule({
   calendar,
   anchorDate,
   branchDailyCashComfortPaise,
+  remainingPaise,
 }: PersistScheduleArgs): Promise<ScheduleResult> {
   // The anchor IS day one. `scheduleAnchorFor` has already spent the three-calendar-day gap and
   // rolled onto an open day, so applying the working-day processing offset here as well would
@@ -60,13 +75,17 @@ export async function persistSchedule({
   const anchor = anchorDate ?? caseRow.approvedOn;
   if (!anchor) throw new Error('Cannot generate a schedule without an anchor date');
 
+  // See `remainingPaise` above: the days carry what is left, the band comes from the deposit.
+  const toSchedule = remainingPaise ?? caseRow.maturityAmountPaise;
+  if (toSchedule <= 0n) throw new Error('Nothing left to schedule on this case');
+
   // `windowDays` is the TOTAL working-day window, not the payout count. The policy decides how
   // many of those days carry a payout and how far apart they sit: ₹1 lakh and over pays every
   // working day, below that every other one, both finishing inside the same window.
   const plan = payoutPlanFor(caseRow.maturityAmountPaise, caseRow.windowDays);
 
   const result = generateSchedule({
-    totalPaise: caseRow.maturityAmountPaise,
+    totalPaise: toSchedule,
     days: plan.payoutDays,
     roundingPaise: caseRow.roundingPaise,
     startDate: anchor,

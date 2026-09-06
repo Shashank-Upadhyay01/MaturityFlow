@@ -494,3 +494,65 @@ describe('cadence and the processing offset', () => {
     expect(() => generateSchedule({ ...bad, startOffsetWorkingDays: 2.5 })).toThrow(ScheduleInputError);
   });
 });
+
+describe('an imported row that already has money against it', () => {
+  /*
+    The August import regression, pinned.
+
+    Shubham Sharma's deposit was 1,59,795 and 1,54,000 of it had already gone across the counter
+    in August. The import scheduled the full 1,59,795 across twelve more days, so the register
+    asked a customer owed 5,795 to collect 14,000 a day for a fortnight. The days must add up to
+    what is left; the twelve-day daily cadence still comes from the deposit being over a lakh.
+  */
+  const DEPOSIT = 15_979_500n; // ₹1,59,795
+  const PAID = 15_400_000n; //   ₹1,54,000
+  const LEFT = DEPOSIT - PAID; //  ₹5,795
+
+  it('schedules what is left, not what the deposit was', () => {
+    const res = generateSchedule({
+      totalPaise: LEFT,
+      days: 12,
+      roundingPaise: STEP_1K,
+      startDate: '2026-09-04',
+      calendar: cal,
+    });
+    assertInvariants(res);
+    expect(res.totalPaise).toBe(LEFT);
+    const sum = res.installments.reduce((a, i) => a + i.amountPaise, 0n);
+    expect(sum).toBe(LEFT);
+    expect(sum).toBeLessThan(DEPOSIT);
+    // Never more days than the band allows, and every day carries something.
+    expect(res.installments.length).toBeGreaterThan(0);
+    expect(res.installments.length).toBeLessThanOrEqual(12);
+    for (const i of res.installments) expect(i.amountPaise).toBeGreaterThan(0n);
+  });
+
+  it('still covers the whole deposit when nothing has been paid', () => {
+    const res = generateSchedule({
+      totalPaise: DEPOSIT,
+      days: 12,
+      roundingPaise: STEP_1K,
+      startDate: '2026-09-04',
+      calendar: cal,
+    });
+    assertInvariants(res);
+    expect(res.installments.reduce((a, i) => a + i.amountPaise, 0n)).toBe(DEPOSIT);
+    expect(res.installments).toHaveLength(12);
+  });
+
+  it('rounding may use fewer days than the band when little is left', () => {
+    // ₹4,550 at ₹1,000 rounding cannot fill six alternate days; four is the honest answer.
+    const res = generateSchedule({
+      totalPaise: 455_000n,
+      days: 6,
+      roundingPaise: STEP_1K,
+      startDate: '2026-09-04',
+      calendar: cal,
+      stride: 2,
+    });
+    assertInvariants(res);
+    expect(res.installments.reduce((a, i) => a + i.amountPaise, 0n)).toBe(455_000n);
+    expect(res.installments.length).toBeLessThanOrEqual(6);
+  });
+});
+

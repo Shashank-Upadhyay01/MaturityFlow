@@ -245,6 +245,7 @@ async function scheduleCaseInTx(
   actor: Pick<SessionUser, 'id'>,
   caseRow: MaturityCase,
   anchor: string,
+  remainingPaise?: bigint,
 ) {
   const policy = await getBranchPolicy(caseRow.branchId, tx);
   const schedule = await persistSchedule({
@@ -253,6 +254,7 @@ async function scheduleCaseInTx(
     calendar: policy.calendar,
     anchorDate: anchor,
     branchDailyCashComfortPaise: policy.dailyCashComfortPaise,
+    remainingPaise,
   });
 
   await logEvent(tx, caseRow.id, 'SCHEDULE_GENERATED', actor.id, {
@@ -281,6 +283,11 @@ export async function approveAndScheduleInTx(
   actor: Pick<SessionUser, 'id'>,
   caseRow: MaturityCase,
   calendar: WorkingDayCalendar,
+  /**
+   * What is left to pay, when the row arrives with payments already made against it. Left unset
+   * by every caller approving a fresh case, where the whole amount is still outstanding.
+   */
+  remainingPaise?: bigint,
 ) {
   const anchor = anchorForCase(caseRow, calendar);
   await tx
@@ -293,7 +300,7 @@ export async function approveAndScheduleInTx(
       updatedAt: new Date(),
     })
     .where(eq(maturityCases.id, caseRow.id));
-  const schedule = await scheduleCaseInTx(tx, actor, caseRow, anchor);
+  const schedule = await scheduleCaseInTx(tx, actor, caseRow, anchor, remainingPaise);
   return { anchor, schedule };
 }
 
