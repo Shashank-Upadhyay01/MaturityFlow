@@ -55,6 +55,17 @@ describe('branch template workbook', () => {
     }
   });
 
+  it('keeps date entry as day-first text instead of letting the computer locale swap it', async () => {
+    const wb = await open(false);
+    const ws = wb.worksheets[0];
+    for (const label of ['Maturity Date', 'Form Submission Date', 'Approval Date', 'Payment Date']) {
+      const col = templateHeaders(false).indexOf(label) + 1;
+      expect(col).toBeGreaterThan(0);
+      expect(ws.getColumn(col).numFmt).toBe('@');
+      expect(ws.getRow(1).getCell(col).note).toMatch(/DD-MM-YYYY/);
+    }
+  });
+
   it('adds a branch column only for the compiled workbook', async () => {
     expect(templateHeaders(false)[0]).toBe('Account Number');
     expect(templateHeaders(true)[0]).toBe('Branch Code');

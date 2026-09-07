@@ -4,10 +4,12 @@ import {
   blankRowCount,
   cellAddress,
   cellInSelection,
+  clearBlankDraftCells,
   cellsInRange,
   columnLetter,
   fillDownPairs,
   fillRightPairs,
+  fullySelectedLiveRows,
   growSheetLength,
   initialSheetLength,
   jumpToEdge,
@@ -154,6 +156,32 @@ describe('the register sheet always keeps 500 empty rows under the book', () => 
     expect(MAX_REGISTER_PASTE_ROWS).toBe(MAX_BLANK_ROWS);
     expect(PASTE_CHUNK_ROWS).toBeGreaterThan(0);
     expect(PASTE_CHUNK_ROWS).toBeLessThan(MAX_REGISTER_PASTE_ROWS);
+  });
+});
+
+describe('blank-row drafts', () => {
+  it('clears selected unsaved cells without touching live rows or neighbouring drafts', () => {
+    const result = clearBlankDraftCells(
+      {
+        0: { account: '1602643', customer: 'ANURAG SAO' },
+        1: { customer: 'SANJEET SINGH' },
+      },
+      [{ r: 24, c: 0 }, { r: 25, c: 0 }, { r: 25, c: 1 }],
+      25,
+      ['account', 'customer'],
+    );
+    expect(result.cleared).toBe(2);
+    expect(result.drafts).toEqual({ 1: { customer: 'SANJEET SINGH' } });
+  });
+});
+
+describe('whole-row selection', () => {
+  it('finds only live rows whose complete data width is selected', () => {
+    expect(fullySelectedLiveRows([
+      { r: 0, c: 0 }, { r: 0, c: 1 }, { r: 0, c: 2 },
+      { r: 1, c: 0 }, { r: 1, c: 1 },
+      { r: 5, c: 0 }, { r: 5, c: 1 }, { r: 5, c: 2 },
+    ], 5, 3)).toEqual([0]);
   });
 });
 

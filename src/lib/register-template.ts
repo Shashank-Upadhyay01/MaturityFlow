@@ -34,10 +34,10 @@ export const TEMPLATE_EXAMPLE: Record<string, string | number> = {
 
 /** What each system-filled column is, for the note on its heading. */
 export const TEMPLATE_DERIVED_NOTE: Record<string, string> = {
-  'Maturity Date': 'Optional. Leave blank and the register dates the case from the day it is imported.',
-  'Form Submission Date': 'Optional. Blank falls back to the maturity date, or the import date.',
-  'Approval Date': 'Filled in as three days after the form date. Only Ops Head, Admin, CEO or CMD can change it later.',
-  'Payment Date': 'Optional. Blank means three days after maturity, rolled onto the next open day. Payouts start here.',
+  'Maturity Date': 'Optional import value. Type DD-MM-YYYY. Blank dates the case from the day it is imported.',
+  'Form Submission Date': 'Optional import value. Type DD-MM-YYYY. Blank falls back to the maturity date, or the import date.',
+  'Approval Date': 'Optional import value. Type DD-MM-YYYY. Blank is filled from the workflow and remains editable by authorised roles.',
+  'Payment Date': 'Optional import value. Type DD-MM-YYYY. Blank means three days after maturity, rolled onto the next open day.',
   Remaining: 'Maturity amount minus what has actually been paid. Missed days never reduce it.',
   Paid: 'Everything handed over on this case so far.',
   'Missed Amount': 'Earlier due days the customer did not collect.',
@@ -45,6 +45,20 @@ export const TEMPLATE_DERIVED_NOTE: Record<string, string> = {
   'Total Amount': "Missed amount plus today's \u2014 what the customer can collect now.",
   'Actual Paid': 'What was handed over today. Typed at the counter, not here.',
 };
+
+/**
+ * Keep day-first input as text while a branch fills the workbook.
+ *
+ * A `dd-mm-yyyy` display format alone cannot do this: Excel first interprets the typed value using
+ * the computer locale. On a month-first installation, `03-09-2026` is already stored as 9 March
+ * before the display format runs. Text cells preserve the exact value for the importer to parse.
+ */
+export const TEMPLATE_DATE_HEADERS = new Set([
+  'Maturity Date',
+  'Form Submission Date',
+  'Approval Date',
+  'Payment Date',
+]);
 
 export function templateHeaders(compiled: boolean): string[] {
   return [...(compiled ? ['Branch Code'] : []), ...REGISTER_TEMPLATE_HEADERS];
@@ -89,6 +103,7 @@ export async function buildRegisterTemplate({
   });
   ws.columns.forEach((c, i) => {
     c.width = Math.max(14, String(headers[i] ?? '').length + 4);
+    if (TEMPLATE_DATE_HEADERS.has(String(headers[i] ?? ''))) c.numFmt = '@';
   });
   ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: headers.length } };
 
@@ -108,6 +123,7 @@ export async function buildRegisterTemplate({
   ex.getRow(4).font = { italic: true, color: { argb: 'FF7F7F7F' } };
   ex.columns.forEach((c, i) => {
     c.width = Math.max(14, String(headers[i] ?? '').length + 4);
+    if (TEMPLATE_DATE_HEADERS.has(String(headers[i] ?? ''))) c.numFmt = '@';
   });
 
   return (await wb.xlsx.writeBuffer()) as ArrayBuffer;

@@ -171,7 +171,9 @@ describe('parseRegisterGrid', () => {
     expect(rows.every((r) => r.maturityRupees > 0)).toBe(true);
     expect(rows.every((r) => r.formSubmittedOn)).toBe(true);
     const kunti = rows.find((r) => r.customerName === 'KUNTI');
-    expect(kunti?.instrumentMaturityOn).toBe('2026-06-09');
+    // The fixture cell is an actual Excel date serial for 6 September. Import preserves that
+    // specific day instead of applying the removed blanket day/month swap.
+    expect(kunti?.instrumentMaturityOn).toBe('2026-09-06');
     expect(kunti?.formSubmittedOn).toBe('2026-07-29');
     expect(kunti?.paymentOn).toBe('2026-08-03');
     expect(rows.filter((r) => r.paymentOn).length).toBeGreaterThan(80);

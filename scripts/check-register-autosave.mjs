@@ -50,6 +50,14 @@ try {
   const newAccount = page.locator('input[aria-label="Account number for new register row"]').first();
   const newCustomer = page.locator('input[aria-label="Customer name for new register row"]').first();
 
+  // Blank rows are client-side drafts until they are complete. Delete must clear that draft just
+  // like it clears a saved cell; otherwise a selected block appears undeletable.
+  await newAccount.click();
+  await newAccount.fill('DELETE-ME');
+  await newAccount.selectText();
+  await newAccount.press('Delete');
+  if ((await newAccount.inputValue()) !== '') failures.push('Delete did not clear a blank-row draft.');
+
   await newAccount.fill(account);
   await newCustomer.fill(originalName);
   // This is the clerk's normal path: Down leaves the logical row and must trigger its save.
@@ -66,6 +74,19 @@ try {
 
   const persisted = await page.locator(`input[value="${editedName}"]`).count();
   if (persisted !== 1) failures.push(`Expected one persisted edited row, found ${persisted}.`);
+
+  // Selecting the row number and pressing Delete should offer the audited Remove flow. This is
+  // how old placeholder rows can be cleaned without silently deleting database history.
+  if (persisted === 1) {
+    const savedCell = page.locator(`input[value="${editedName}"]`);
+    await savedCell.click();
+    await savedCell.press('Shift+Space');
+    await page.waitForTimeout(100);
+    await page.keyboard.press('Delete');
+    const removePrompt = page.getByText(/Remove 1 row from the register\?/);
+    if ((await removePrompt.count()) !== 1) failures.push('Delete on a complete row did not open Remove confirmation.');
+    else await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  }
   console.log(JSON.stringify({ ok: failures.length === 0, account, persisted, failures }, null, 2));
 } finally {
   await browser.close();

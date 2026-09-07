@@ -21,7 +21,7 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
-import { Fragment, createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { Fragment, createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -61,8 +61,10 @@ import {
   PASTE_CHUNK_ROWS,
   cellInSelection,
   cellKey,
+  clearBlankDraftCells,
   columnLetter,
   fillDownPairs,
+  fullySelectedLiveRows,
   identifiesNewRow,
   fillRightPairs,
   jumpToEdge,
@@ -77,6 +79,7 @@ import {
   toggleCellInSelection,
   unionSelection,
   type CellPos,
+  type BlankSheetDrafts,
   type SheetRange,
 } from '@/lib/sheet-grid';
 import { excelCellRaw } from '@/lib/excel-register';
@@ -624,6 +627,8 @@ function BlankRows({
   registerScrollTo,
   isSelected,
   onCommit,
+  drafts,
+  onDraftsChange,
 }: {
   count: number;
   offset: number;
@@ -634,13 +639,14 @@ function BlankRows({
   registerScrollTo: React.RefObject<((index: number) => void) | null>;
   isSelected: (r: number, c: number) => boolean;
   onCommit: (patch: Record<string, string>) => Promise<boolean>;
+  drafts: BlankSheetDrafts;
+  onDraftsChange: Dispatch<SetStateAction<BlankSheetDrafts>>;
 }) {
   /*
     Drafts belong to the logical sheet rows, not to the twenty DOM rows the virtualiser happens
     to have mounted. This keeps half-entered data intact when an arrow key scrolls its row out of
     view, and it also lets a failed server save leave the exact values in place for correction.
   */
-  const [drafts, setDrafts] = useState<Record<number, Record<string, string>>>({});
   const virtualizer = useVirtualizer({
     count,
     getScrollElement: () => scrollRef.current,
@@ -679,7 +685,7 @@ function BlankRows({
           disabled={disabled}
           values={drafts[item.index] ?? {}}
           onValueChange={(column, value) => {
-            setDrafts((current) => ({
+            onDraftsChange((current) => ({
               ...current,
               [item.index]: { ...current[item.index], [column]: value },
             }));
@@ -688,7 +694,7 @@ function BlankRows({
           onCommit={async (patch) => {
             const saved = await onCommit(patch);
             if (saved) {
-              setDrafts((current) => {
+              onDraftsChange((current) => {
                 const next = { ...current };
                 delete next[item.index];
                 return next;
@@ -1031,6 +1037,8 @@ export function RegisterSheet(props: {
     a number, not six thousand inputs.
   */
   const blankRows = MAX_BLANK_ROWS;
+  /** Draft values in virtual rows; kept here so a sheet-level Delete can clear them. */
+  const [blankDrafts, setBlankDrafts] = useState<BlankSheetDrafts>({});
 
   /** Rows whose off-screen columns are expanded. */
   const [openExtras, setOpenExtras] = useState<Record<string, boolean>>({});
@@ -2301,7 +2309,8 @@ export function RegisterSheet(props: {
       const line: string[] = [];
       for (let c = bounds.c0; c <= bounds.c1; c++) {
         const col = colIds[c];
-        line.push(picked.has(cellKey(r, c)) && row && col ? cellText(row, col) : '');
+        const blank = blankDrafts[r - visible.length]?.[col ?? ''] ?? '';
+        line.push(picked.has(cellKey(r, c)) && col ? (row ? cellText(row, col) : blank) : '');
       }
       block.push(line);
     }
@@ -2317,6 +2326,11 @@ export function RegisterSheet(props: {
       const row = visible[pos.r];
       if (!col || !row) continue;
       if (await applyCell(row, col, '')) n++;
+    }
+    const blankResult = clearBlankDraftCells(blankDrafts, cells, visible.length, colIds);
+    if (blankResult.cleared > 0) {
+      setBlankDrafts(blankResult.drafts);
+      n += blankResult.cleared;
     }
     if (n > 0) toast.success(n === 1 ? 'Cleared 1 cell' : `Cleared ${n} cells`);
   }
@@ -2371,6 +2385,9 @@ export function RegisterSheet(props: {
       const inSheet = Boolean(target?.closest('[data-register-sheet]'));
       if (!inSheet && shortcut.action !== 'undo' && shortcut.action !== 'redo' && shortcut.action !== 'find') return;
       const block = selectedCells.length > 1;
+      const fullySelectedIds = fullySelectedLiveRows(selectedCells, visible.length, colIds.length)
+        .map((rowIndex) => visible[rowIndex]?.id)
+        .filter((id): id is string => Boolean(id));
       const range = selection ?? (focusCell ? { r0: focusCell.r, c0: focusCell.c, r1: focusCell.r, c1: focusCell.c } : null);
       const editable = props.canEdit && !locked;
 
@@ -2431,9 +2448,13 @@ export function RegisterSheet(props: {
           toast.message('Your account cannot remove rows from this register.');
           return;
         }
-        if (selIds.length === 0) {
-          toast.message('Tick the rows you want to remove first.');
+        const targetIds = selIds.length > 0 ? selIds : fullySelectedIds;
+        if (targetIds.length === 0) {
+          toast.message('Tick rows or select complete rows before removing them.');
           return;
+        }
+        if (selIds.length === 0) {
+          setSelected(Object.fromEntries(targetIds.map((id) => [id, true])));
         }
         setBulkMenu('remove');
         return;
@@ -2442,6 +2463,13 @@ export function RegisterSheet(props: {
         if (!editable) return;
         if (!block && input && !wholeCellSelected(input)) return;
         event.preventDefault();
+        // A complete row selection means the row itself, not just its text. Keep the cancellation
+        // audited and reversible in the case history by opening the existing confirmation panel.
+        if (fullySelectedIds.length > 0 && props.canRemove && !locked) {
+          setSelected(Object.fromEntries(fullySelectedIds.map((id) => [id, true])));
+          setBulkMenu('remove');
+          return;
+        }
         void clearSelected();
         return;
       }
@@ -4346,6 +4374,8 @@ export function RegisterSheet(props: {
                     router.refresh();
                     return true;
                   }}
+                  drafts={blankDrafts}
+                  onDraftsChange={setBlankDrafts}
                 />
               )}
             </tbody>

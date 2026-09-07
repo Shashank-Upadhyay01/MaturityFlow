@@ -124,6 +124,57 @@ export function normalizeRange(a: { r: number; c: number }, b: { r: number; c: n
 
 export type CellPos = { r: number; c: number };
 
+export type BlankSheetDrafts = Record<number, Record<string, string>>;
+
+/**
+ * Clear selected cells in the unsaved, virtual part of a sheet.
+ *
+ * Live rows clear through audited server actions. Blank rows have no database identity yet, so
+ * Delete/Backspace clears their client-side draft instead of silently doing nothing.
+ */
+export function clearBlankDraftCells(
+  drafts: BlankSheetDrafts,
+  cells: readonly CellPos[],
+  liveRowCount: number,
+  columnIds: readonly string[],
+): { drafts: BlankSheetDrafts; cleared: number } {
+  const next: BlankSheetDrafts = { ...drafts };
+  let cleared = 0;
+  for (const pos of cells) {
+    const blankIndex = pos.r - liveRowCount;
+    const column = columnIds[pos.c];
+    if (blankIndex < 0 || !column) continue;
+    const row = next[blankIndex];
+    if (!row || !row[column]) continue;
+    const changed = { ...row };
+    delete changed[column];
+    if (Object.keys(changed).length === 0) delete next[blankIndex];
+    else next[blankIndex] = changed;
+    cleared += 1;
+  }
+  return { drafts: next, cleared };
+}
+
+/** Live row indexes for which every data cell is part of the current sheet selection. */
+export function fullySelectedLiveRows(
+  cells: readonly CellPos[],
+  liveRowCount: number,
+  columnCount: number,
+): number[] {
+  if (columnCount <= 0) return [];
+  const columnsByRow = new Map<number, Set<number>>();
+  for (const pos of cells) {
+    if (pos.r < 0 || pos.r >= liveRowCount || pos.c < 0 || pos.c >= columnCount) continue;
+    const columns = columnsByRow.get(pos.r) ?? new Set<number>();
+    columns.add(pos.c);
+    columnsByRow.set(pos.r, columns);
+  }
+  return [...columnsByRow.entries()]
+    .filter(([, columns]) => columns.size === columnCount)
+    .map(([row]) => row)
+    .sort((a, b) => a - b);
+}
+
 export function cellsInRange(range: SheetRange): CellPos[] {
   const out: CellPos[] = [];
   for (let r = range.r0; r <= range.r1; r++) {
