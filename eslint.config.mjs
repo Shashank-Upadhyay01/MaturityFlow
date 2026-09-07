@@ -40,6 +40,11 @@ export default tseslint.config(
     },
   },
   {
+    // Playwright evaluation callbacks execute in the page, alongside Node test orchestration.
+    files: ['scripts/check-grid-keyboard.mjs', 'scripts/check-whats-new.mjs'],
+    languageOptions: { globals: { ...globals.browser } },
+  },
+  {
     // Scripts are operator tools: they print, and they run in Node, outside the app runtime.
     files: ['scripts/**/*.{ts,mjs,js}', 'tests/**/*.ts', '*.config.{ts,mjs}', 'drizzle.config.ts'],
     languageOptions: { globals: { ...globals.node } },

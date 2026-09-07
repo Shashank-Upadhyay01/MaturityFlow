@@ -27,6 +27,8 @@ export interface CalendarSnapshot {
   holidays: string[];
   sundaysOff: boolean;
   saturdayRule: SaturdayRule;
+  monthStartBlockedDays?: number;
+  monthsOpenAtStart?: string[];
 }
 
 export interface SchedulePreviewInput {
@@ -37,6 +39,7 @@ export interface SchedulePreviewInput {
   distribution: Distribution;
   cashPolicy: CashPolicy;
   startOnNextWorkingDay: boolean;
+  allowClosedStartDate?: boolean;
   /** Working days reserved by policy before the payout portion of the window. */
   processingDays?: number;
   /** Offset from startDate to day one. Usually zero because startDate is already the anchor. */
@@ -59,6 +62,7 @@ export function useSchedule(input: SchedulePreviewInput): {
     startDate,
     distribution,
     startOnNextWorkingDay,
+    allowClosedStartDate = false,
     processingDays = 3,
     startOffsetWorkingDays = 0,
     calendar,
@@ -72,7 +76,8 @@ export function useSchedule(input: SchedulePreviewInput): {
       const cal = makeCalendar(calendar.holidays, {
         sundaysOff: calendar.sundaysOff,
         saturdayRule: calendar.saturdayRule,
-      });
+        ...(calendar.monthStartBlockedDays !== undefined ? { monthStartBlockedDays: calendar.monthStartBlockedDays } : {}),
+      }, calendar.monthsOpenAtStart ?? []);
       // `days` is the TOTAL working-day window, exactly as `windowDays` is on the case. Run it
       // through the same policy the server uses in persistSchedule, or this preview would show
       // the clerk a schedule the server is never going to write — which is the one thing the
@@ -91,7 +96,10 @@ export function useSchedule(input: SchedulePreviewInput): {
               ? { kind: 'CASH_CAP', cashCapPerDayPaise: cashCap ?? 0n }
               : { kind: cashKind },
           startOnNextWorkingDay,
+          allowClosedStartDate,
+          preservePayoutCount: true,
           stride: plan.stride,
+          calendarDayGap: plan.calendarDayGap,
           startOffsetWorkingDays,
           policyMaxDays: plan.payoutDays,
         }),
@@ -109,6 +117,7 @@ export function useSchedule(input: SchedulePreviewInput): {
     cashKind,
     cashCap,
     startOnNextWorkingDay,
+    allowClosedStartDate,
     processingDays,
     startOffsetWorkingDays,
     calendar,

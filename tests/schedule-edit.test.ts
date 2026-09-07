@@ -125,9 +125,17 @@ describe('rebalanceAfter', () => {
     expect(total(res.instalments)).toBe(6_000_000n);
   });
 
-  it('refuses when the later rows cannot absorb the increase', () => {
-    // Days 3-6 hold ₹40,000 between them; asking day 2 for ₹60,000 cannot be paid for.
+  it('uses earlier unpaid rows when a custom full payout exhausts the later rows', () => {
     const res = rebalanceAfter(sixDays(), 'i2', 6_000_000n, STEP);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.instalments[1].amountPaise).toBe(6_000_000n);
+    expect(res.instalments.filter((row) => row.amountPaise > 0n)).toHaveLength(1);
+    expect(total(res.instalments)).toBe(6_000_000n);
+  });
+
+  it('refuses when every unpaid row together cannot absorb the increase', () => {
+    const res = rebalanceAfter(sixDays(), 'i2', 6_000_001n, STEP);
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.error).toBe('AMOUNT_EXCEEDS_REMAINING');

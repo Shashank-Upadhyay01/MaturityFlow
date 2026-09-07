@@ -146,7 +146,7 @@ async function loadDashboardStats(actor: Actor, date: string): Promise<Dashboard
     .where(
       and_(
         eq(payoutInstalments.dueOn, date),
-        inArray(payoutInstalments.status, ['PENDING', 'PARTIAL']),
+        inArray(payoutInstalments.status, ['PENDING', 'PARTIAL', 'MISSED']),
         inArray(maturityCases.status, LIVE),
         scope,
       ),
@@ -395,7 +395,7 @@ export async function getNavBadges(
 
   const [due] = await db
     .select({
-      dueToday: sql<number>`COUNT(*) FILTER (WHERE ${payoutInstalments.dueOn} = ${date} AND ${payoutInstalments.status} IN ('PENDING','PARTIAL'))::int`,
+      dueToday: sql<number>`COUNT(*) FILTER (WHERE ${payoutInstalments.dueOn} = ${date} AND ${payoutInstalments.status} IN ('PENDING','PARTIAL','MISSED'))::int`,
       overdue: sql<number>`COUNT(*) FILTER (WHERE ${payoutInstalments.dueOn} < ${date} AND ${payoutInstalments.status} IN ('PENDING','PARTIAL','MISSED'))::int`,
     })
     .from(payoutInstalments)
@@ -425,7 +425,7 @@ export async function getUpcomingLoad(actor: Actor, days = 14, from = todayISO()
       and(
         gte(payoutInstalments.dueOn, from),
         lte(payoutInstalments.dueOn, to),
-        inArray(payoutInstalments.status, ['PENDING', 'PARTIAL']),
+        inArray(payoutInstalments.status, ['PENDING', 'PARTIAL', 'MISSED']),
         inArray(maturityCases.status, LIVE),
         ...(scope ? [scope] : []),
       ),
@@ -1393,7 +1393,7 @@ export async function getCaseDetail(actor: Actor, caseId: string) {
     .where(
       and(
         eq(payoutInstalments.caseId, caseId),
-        eq(payoutInstalments.scheduleVersion, row.c.scheduleVersion),
+        sql`${payoutInstalments.status} NOT IN ('SUPERSEDED', 'CANCELLED')`,
       ),
     )
     .orderBy(asc(payoutInstalments.seq));
@@ -2000,20 +2000,17 @@ export async function getUserDossier(userId: string, currentTokenId?: string) {
 // ── Follow-up: the four lists that chase money that has not moved ──────────
 
 /**
- * "Missed" is DERIVED, never read from a stored flag.
+ * A due day can be unanswered (PENDING/PARTIAL) or explicitly marked not taken (MISSED).
  *
- * `markMissedInstalments()` exists in schedule-service.ts and would set `status = 'MISSED'`, but
- * calling it here would mean writing on a read path: a transaction on every page view, fired by
- * anyone holding `case.view` including the read-only Auditor, changing stored state with no audit
- * row. The predicate below is the same answer, needs no write, and cannot drift from a column
- * because it does not consult one.
+ * The register's explicit Not-taken action writes MISSED with its own audit row. Automatic overdue
+ * marking remains a separate job; a read path never changes a case.
  *
  * One definition, so the four tabs cannot disagree about what "missed" means.
  */
 export function isOverdueInstalment(asOf: string) {
   return and(
     sql`${payoutInstalments.dueOn} < ${asOf}`,
-    inArray(payoutInstalments.status, ['PENDING', 'PARTIAL']),
+    inArray(payoutInstalments.status, ['PENDING', 'PARTIAL', 'MISSED']),
   );
 }
 
@@ -2074,7 +2071,7 @@ export async function listNotTakenToday(actor: Actor, asOf: string) {
     .where(
       and(
         sql`${payoutInstalments.dueOn} = ${asOf}`,
-        inArray(payoutInstalments.status, ['PENDING', 'PARTIAL']),
+        inArray(payoutInstalments.status, ['PENDING', 'PARTIAL', 'MISSED']),
         ...(scope ? [scope] : []),
       ),
     )
@@ -2097,7 +2094,7 @@ export async function listPriorityCases(actor: Actor, asOf: string) {
         FROM payout_instalments pi
         WHERE pi.case_id = ${maturityCases.id}
           AND pi.due_on = ${asOf}
-          AND pi.status IN ('PENDING','PARTIAL')
+          AND pi.status IN ('PENDING','PARTIAL','MISSED')
       ), 0)`,
     })
     .from(maturityCases)

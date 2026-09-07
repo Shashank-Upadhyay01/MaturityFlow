@@ -17,10 +17,11 @@ import { writeAudit, type AuditAction } from '@/lib/audit';
 import type { SessionUser } from '@/lib/auth/session';
 import { formatPaise } from '@/lib/money';
 import { formatCaseNumber, newId } from '@/lib/id';
-import { nextWorkingDay, todayISO, type WorkingDayCalendar } from '@/lib/working-days';
-import { scheduleAnchorFor } from '@/lib/payout-policy';
+import { parseISODate, todayISO, type WorkingDayCalendar } from '@/lib/working-days';
+import { caseScheduleAnchorFor, MAX_WINDOW_DAYS, MIN_WINDOW_DAYS } from '@/lib/payout-policy';
 import { getBranchPolicy } from './calendar-service';
 import { persistSchedule, persistReschedule, persistReplanWindow } from './schedule-service';
+import { ensureAllocatedLedgerInTx } from './payout-ledger';
 
 export class WorkflowError extends Error {
   constructor(
@@ -134,6 +135,32 @@ export async function createCase(
   input: CreateCaseInput,
   meta: { ip?: string | null; userAgent?: string | null } = {},
 ): Promise<{ id: string; caseNumber: string }> {
+  if (input.maturityAmountPaise <= 0n) {
+    throw new WorkflowError('Maturity amount must be greater than zero.', 'VALIDATION');
+  }
+  if (
+    !Number.isInteger(input.windowDays) ||
+    input.windowDays < MIN_WINDOW_DAYS ||
+    input.windowDays > MAX_WINDOW_DAYS
+  ) {
+    throw new WorkflowError(
+      `Window must be between ${MIN_WINDOW_DAYS} and ${MAX_WINDOW_DAYS} days.`,
+      'VALIDATION',
+    );
+  }
+  if (input.roundingPaise <= 0n) {
+    throw new WorkflowError('Rounding must be greater than zero.', 'VALIDATION');
+  }
+  if (input.cashPolicy === 'CASH_CAP' && (input.cashCapPerDayPaise ?? 0n) < 0n) {
+    throw new WorkflowError('Daily cash limit cannot be negative.', 'VALIDATION');
+  }
+  try {
+    parseISODate(input.formSubmittedOn);
+    if (input.instrumentMaturityOn) parseISODate(input.instrumentMaturityOn);
+  } catch {
+    throw new WorkflowError('Use valid ISO dates for the form and maturity.', 'VALIDATION');
+  }
+
   return db.transaction(async (tx) => {
     const [branch] = await tx
       .select({ code: branches.code, id: branches.id })
@@ -143,21 +170,28 @@ export async function createCase(
     if (!branch) throw new WorkflowError('Branch not found', 'NOT_FOUND');
 
     const [agent] = await tx
-      .select({ id: agents.id, branchId: agents.branchId })
+      .select({ id: agents.id, branchId: agents.branchId, isActive: agents.isActive })
       .from(agents)
       .where(eq(agents.id, input.agentId))
       .limit(1);
     if (!agent) throw new WorkflowError('Agent not found', 'NOT_FOUND');
+    if (!agent.isActive) throw new WorkflowError('Select an active agent.', 'INACTIVE_AGENT');
     if (agent.branchId !== input.branchId) {
       throw new WorkflowError('That agent does not belong to the selected branch', 'MISMATCH');
     }
 
     const [customer] = await tx
-      .select({ id: customers.id, branchId: customers.branchId, name: customers.name })
+      .select({ id: customers.id, branchId: customers.branchId, agentId: customers.agentId, name: customers.name })
       .from(customers)
       .where(eq(customers.id, input.customerId))
       .limit(1);
     if (!customer) throw new WorkflowError('Customer not found', 'NOT_FOUND');
+    if (customer.branchId !== input.branchId) {
+      throw new WorkflowError('That customer does not belong to the selected branch.', 'MISMATCH');
+    }
+    if (customer.agentId && customer.agentId !== input.agentId) {
+      throw new WorkflowError('Select the customer’s assigned agent, or update the customer assignment first.', 'MISMATCH');
+    }
 
     const year = Number(input.formSubmittedOn.slice(0, 4));
     const caseNumber = await nextCaseNumber(tx, branch.code, year);
@@ -326,16 +360,19 @@ function anchorForCase(caseRow: MaturityCase, calendar: WorkingDayCalendar): str
     branch dated last week really is late, and the missed columns exist to say so rather than to
     have the date quietly moved.
   */
-  if (caseRow.paymentOn) return nextWorkingDay(caseRow.paymentOn, calendar);
-
-  if (!caseRow.instrumentMaturityOn) {
+  if (!caseRow.paymentOn && !caseRow.opsReviewedOn && !caseRow.instrumentMaturityOn) {
     throw new WorkflowError(
       `${caseRow.caseNumber} has no maturity date and no payment date, so its first payout cannot ` +
         'be worked out. Add one of them and submit again.',
       'NO_MATURITY_DATE',
     );
   }
-  return scheduleAnchorFor(caseRow.instrumentMaturityOn, todayISO(), calendar);
+  return caseScheduleAnchorFor({
+    ...caseRow,
+    formSubmittedOn: caseRow.formSubmittedOn,
+    instrumentMaturityOn: caseRow.instrumentMaturityOn,
+    today: todayISO(),
+  }, calendar);
 }
 
 // ── Submit / return ───────────────────────────────────────────────────────
@@ -529,6 +566,7 @@ export async function rescheduleCase(actor: SessionUser, caseId: string, reason:
     if (!['APPROVED', 'IN_PROGRESS', 'ON_HOLD'].includes(c.status)) {
       throw new WorkflowError('Only an approved, in-progress or held case can be rescheduled.', 'NOT_SCHEDULABLE');
     }
+    await ensureAllocatedLedgerInTx(tx, actor, c, meta);
     const policy = await getBranchPolicy(c.branchId, tx);
     const out = await persistReschedule({
       tx,
@@ -577,6 +615,7 @@ export async function replanWithWindow(
     if (!['APPROVED', 'IN_PROGRESS', 'ON_HOLD'].includes(c.status)) {
       throw new WorkflowError('Only an approved, in-progress or held case can be re-planned.', 'NOT_SCHEDULABLE');
     }
+    await ensureAllocatedLedgerInTx(tx, actor, c, meta);
     const policy = await getBranchPolicy(c.branchId, tx);
     const out = await persistReplanWindow({
       tx,

@@ -9,11 +9,14 @@ import { customers, maturityCases } from '@/db/schema';
 import { requestMeta, requireActor } from '@/lib/auth/session';
 import { newId } from '@/lib/id';
 import { parseRupeesToPaise } from '@/lib/money';
-import { MIN_WINDOW_DAYS, windowDaysForPayoutCount } from '@/lib/payout-policy';
+import { MAX_WINDOW_DAYS, MIN_WINDOW_DAYS, windowDaysForPayoutCount } from '@/lib/payout-policy';
 import { assertCan } from '@/lib/rbac';
 import { writeAudit } from '@/lib/audit';
+import { accountKey, customerNameKey } from '@/lib/customer-identity';
+import { assertCustomerBranchAgent, customersForAccount } from '@/services/customer-identity';
 import { persistInstalmentEdit, persistInstalmentLegs } from '@/services/schedule-service';
 import { setInstalmentDueOn } from '@/services/admin-dates';
+import { ensureAllocatedLedgerInTx } from '@/services/payout-ledger';
 import {
   cancelCase,
   createCase,
@@ -56,9 +59,9 @@ export async function saveRegisterRowAction(
       if (
         !Number.isInteger(patch.windowDays) ||
         patch.windowDays < MIN_WINDOW_DAYS ||
-        patch.windowDays > 60
+        patch.windowDays > MAX_WINDOW_DAYS
       ) {
-        return fail(`Days must be between ${MIN_WINDOW_DAYS} and 60`, 'VALIDATION');
+        return fail(`Days must be between ${MIN_WINDOW_DAYS} and ${MAX_WINDOW_DAYS}`, 'VALIDATION');
       }
       set.windowDays = patch.windowDays;
     }
@@ -97,6 +100,7 @@ export async function saveRegisterRowAction(
 }
 
 function revalidateCase(id?: string) {
+  revalidatePath('/', 'layout');
   revalidatePath('/dashboard');
   revalidatePath('/maturities');
   revalidatePath('/maturity-operations');
@@ -119,8 +123,8 @@ const createSchema = z.object({
   windowDays: z.coerce
     .number()
     .int()
-    .min(MIN_WINDOW_DAYS, `At least ${MIN_WINDOW_DAYS} days — the first 3 are processing`)
-    .max(366),
+    .min(MIN_WINDOW_DAYS, `At least ${MIN_WINDOW_DAYS} day(s)`)
+    .max(MAX_WINDOW_DAYS),
   roundingPaise: z.string().min(1),
   distribution: z.enum(['FRONT_LOADED', 'BACK_LOADED', 'EVEN']),
   cashPolicy: z.enum(['CASH_ONLY', 'ONLINE_ONLY', 'CASH_CAP']),
@@ -211,14 +215,14 @@ export async function createCaseAction(
 // ── Quick customer creation from inside the intake form ───────────────────
 
 const customerSchema = z.object({
-  name: z.string().trim().min(2, 'Enter the customer name'),
+  name: z.string().trim().min(2, 'Enter the customer name').max(200),
   phone: z.string().trim().optional().nullable(),
-  accountNumber: z.string().trim().optional().nullable(),
+  accountNumber: z.string().trim().max(100).optional().nullable(),
   branchId: z.string().min(1),
   agentId: z.string().min(1),
   payoutBank: z.string().optional().nullable(),
   payoutAccount: z.string().optional().nullable(),
-  payoutIfsc: z.string().optional().nullable(),
+  payoutIfsc: z.string().trim().toUpperCase().refine((value) => !value || /^[A-Z]{4}0[A-Z0-9]{6}$/.test(value), 'Enter an 11-character IFSC code').optional().nullable(),
 });
 
 export async function createCustomerAction(
@@ -236,13 +240,23 @@ export async function createCustomerAction(
     const d = parsed.data;
     assertCan(actor, 'customer.manage', { branchId: d.branchId, agentId: d.agentId });
 
-    const id = newId('cus');
+    let id = newId('cus');
     await db.transaction(async (tx) => {
+      await assertCustomerBranchAgent(tx, d.branchId, d.agentId);
+      const matches = await customersForAccount(tx, d.branchId, d.accountNumber ?? '');
+      if (matches.length > 1) throw new Error('This account has duplicate customer records. Correct the duplicate account numbers on the Register first.');
+      if (matches[0]) {
+        if (customerNameKey(matches[0].name) !== customerNameKey(d.name) || matches[0].agentId !== d.agentId) {
+          throw new Error('This account already belongs to a customer in this branch. Select the existing customer and their agent.');
+        }
+        id = matches[0].id;
+        return;
+      }
       await tx.insert(customers).values({
         id,
         name: d.name,
         phone: d.phone || null,
-        accountNumber: d.accountNumber || null,
+        accountNumber: accountKey(d.accountNumber ?? '') || null,
         branchId: d.branchId,
         agentId: d.agentId,
         payoutBank: d.payoutBank || null,
@@ -260,6 +274,7 @@ export async function createCustomerAction(
     });
 
     revalidatePath('/maturities/new');
+    revalidatePath('/customers');
     return ok({ id, name: d.name });
   } catch (e) {
     return toActionError(e);
@@ -383,8 +398,8 @@ export async function replanWithWindowAction(
 ): Promise<ActionResult<{ slaBreachUnavoidable: boolean; lastPayoutOn: string; instalments: number; windowDays: number }>> {
   try {
     const { session, actor } = await requireActor();
-    if (!Number.isInteger(windowDays) || windowDays < MIN_WINDOW_DAYS || windowDays > 60) {
-      return fail(`Enter between ${MIN_WINDOW_DAYS} and 60 working days`, 'VALIDATION');
+    if (!Number.isInteger(windowDays) || windowDays < MIN_WINDOW_DAYS || windowDays > MAX_WINDOW_DAYS) {
+      return fail(`Enter between ${MIN_WINDOW_DAYS} and ${MAX_WINDOW_DAYS} working days`, 'VALIDATION');
     }
     const c = await loadCaseScope(caseId);
     if (!c) return fail('Case not found', 'NOT_FOUND');
@@ -470,9 +485,9 @@ export async function applyPlanAction(
       const amount = amounts.get(id);
       if (amount == null) throw new Error('Row no longer exists');
       const windowDays = windowDaysForPayoutCount(BigInt(amount), parts);
-      if (windowDays > 60) {
+      if (windowDays > MAX_WINDOW_DAYS) {
         throw new Error(
-          `${parts} parts would need a ${windowDays}-working-day window; 60 is the most allowed.`,
+          `${parts} parts would need a ${windowDays}-working-day window; ${MAX_WINDOW_DAYS} is the most allowed.`,
         );
       }
       await replanWithWindow(session, id, windowDays, `${why} (${parts} parts)`, meta);
@@ -520,6 +535,8 @@ export async function setInstalmentAmountAction(
         .for('update')
         .limit(1);
       if (!row) throw new Error('Case not found');
+
+      await ensureAllocatedLedgerInTx(tx, session, row, await requestMeta());
 
       const res = await persistInstalmentEdit({
         tx,
@@ -574,6 +591,7 @@ export async function setInstalmentLegsAction(
         .for('update')
         .limit(1);
       if (!row) throw new Error('Case not found');
+      await ensureAllocatedLedgerInTx(tx, session, row, await requestMeta());
       await persistInstalmentLegs({ tx, caseRow: row, instalmentId, cashPaise, onlinePaise });
       await writeAudit(tx, session, {
         action: 'schedule.adjusted',
@@ -598,7 +616,7 @@ export async function setInstalmentDueOnAction(
 ): Promise<ActionResult> {
   try {
     const { session } = await requireActor();
-    const out = await setInstalmentDueOn(session, instalmentId, dueOn);
+    const out = await setInstalmentDueOn(session, instalmentId, dueOn, await requestMeta());
     revalidateCase(out.caseId);
     return ok();
   } catch (e) {

@@ -25,9 +25,11 @@ normal register columns. After import, the screen reports created/skipped counts
 ## Data ownership and audit
 
 Each maturity case, customer and imported agent is written with the resolved `branch_id`.
-Customer account-number matching and generated agent records are branch-local. Each branch batch
-runs in its own transaction and writes its own `data.imported` audit row. A failure cannot leave a
-half-written branch batch; another branch already committed by the same upload remains auditable.
+Customer account-number matching and generated agent records are branch-local. Each row runs
+in its own transaction and writes its own `data.imported` audit row. Invalid rows are reported
+without discarding valid rows. A branch summary records the final created/skipped counts.
+Historical paid amounts are allocated to the schedule in that same transaction. Re-import
+matches the persisted fallback maturity date, including when the source cell was blank.
 
 ## Adding the next branch
 

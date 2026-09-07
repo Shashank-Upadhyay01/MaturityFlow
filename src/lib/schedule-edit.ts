@@ -85,7 +85,10 @@ export function rebalanceAfter(
   // Later unpaid days first; if this is the last unpaid day, earlier unpaid days absorb it.
   const later = next.slice(idx + 1).filter((r) => r.paidPaise < r.amountPaise);
   const earlier = next.slice(0, idx).filter((r) => r.paidPaise < r.amountPaise).reverse();
-  const movable = later.length > 0 ? later : earlier;
+  const laterHeadroom = later.reduce((sum, row) => sum + row.amountPaise - row.paidPaise, 0n);
+  const movable = delta < 0n && -delta > laterHeadroom
+    ? [...later, ...earlier]
+    : later.length > 0 ? later : earlier;
   if (movable.length === 0) {
     return fail(
       'NO_LATER_UNPAID_DAYS',

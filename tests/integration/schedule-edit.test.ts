@@ -220,7 +220,7 @@ describe('persistInstalmentEdit', () => {
           newAmountPaise: 1n,
         });
       }),
-    ).rejects.toThrow(/already been paid/i);
+    ).rejects.toThrow(/already been handed over|already been paid/i);
   });
 
   it('refuses an edit the later days cannot fund', async () => {

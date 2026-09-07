@@ -160,7 +160,6 @@ await withPage({ width: 1440, height: 900 }, async (page) => {
   await page.goto(`${base}/deposit-interest`, { waitUntil: 'domcontentloaded', timeout: 120000 });
   await page.waitForTimeout(1500);
   const url = page.url();
-  const body = (await page.textContent('body')) ?? '';
   check('cashier is redirected away', !url.includes('/deposit-interest'), url);
   const planning = page.getByRole('button', { name: 'Planning' });
   if (await planning.count()) await planning.click();

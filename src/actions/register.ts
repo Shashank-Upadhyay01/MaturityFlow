@@ -23,6 +23,7 @@ import {
   markInstalmentMissed,
   markInstalmentTaken,
   replaceInstalmentPayout,
+  setCasePaidTotal,
   type Tender,
   settleRegisterRow,
   takeRegisterDays,
@@ -40,6 +41,7 @@ import {
 import { fail, ok, toActionError, type ActionResult } from './_result';
 
 function revalidate() {
+  revalidatePath('/', 'layout');
   revalidatePath('/maturities');
   revalidatePath('/maturity-operations');
   revalidatePath('/cash-planner');
@@ -89,6 +91,7 @@ async function scopeByCase(caseId: string) {
       caseId: maturityCases.id,
       branchId: maturityCases.branchId,
       agentId: maturityCases.agentId,
+      paidOnlinePaise: maturityCases.paidOnlinePaise,
     })
     .from(maturityCases)
     .where(eq(maturityCases.id, caseId))
@@ -295,7 +298,7 @@ export async function toggleFormSubmittedAction(caseId: string, submitted: boole
     if (!c) return fail('Row not found', 'NOT_FOUND');
     assertCanTypeRegister(actor);
     assertCan(actor, 'case.submit', c);
-    await setFormSubmitted(session, caseId, submitted);
+    await setFormSubmitted(session, caseId, submitted, await requestMeta());
     revalidate();
     return ok();
   } catch (e) {
@@ -331,7 +334,7 @@ export async function markTakenAction(
     if (!c) return fail('Row not found', 'NOT_FOUND');
     assertCanTypeRegister(actor);
     assertCan(actor, 'payout.record', c);
-    await markInstalmentTaken(session, instalmentId, tender, reference);
+    await markInstalmentTaken(session, instalmentId, tender, reference, await requestMeta());
     revalidate();
     return ok();
   } catch (e) {
@@ -355,7 +358,7 @@ export async function markNotTakenAction(
     if (!c) return fail('Row not found', 'NOT_FOUND');
     assertCanTypeRegister(actor);
     assertCan(actor, 'payout.record', c);
-    await markInstalmentMissed(session, instalmentId, { clear });
+    await markInstalmentMissed(session, instalmentId, { clear }, await requestMeta());
     revalidate();
     return ok();
   } catch (e) {
@@ -433,6 +436,42 @@ export async function correctRegisterDayPaidAction(
     await correctInstalmentPaid(
       session,
       { instalmentId, cashPaise, onlinePaise, reason, reference, valueDate },
+      await requestMeta(),
+    );
+    revalidate();
+    return ok();
+  } catch (e) {
+    return toActionError(e);
+  }
+}
+
+/** HQ correction for the cumulative Paid column in the Register.
+ *
+ * The Register displays one total while the ledger stores one receipt per instalment.  Never
+ * write that total directly: the service reverses/replaces receipts and rebalances the live
+ * instalments under the case lock, preserving a complete audit trail.  A simple total edit keeps
+ * the existing online tender where possible; the day-level correction dialog remains available
+ * when an exact cash/online split is needed.
+ */
+export async function saveRegisterPaidTotalAction(
+  caseId: string,
+  paidRupees: string,
+  reason: string,
+): Promise<ActionResult> {
+  try {
+    const { session, actor } = await requireActor();
+    const c = await scopeByCase(caseId);
+    if (!c) return fail('Row not found', 'NOT_FOUND');
+    assertCanTypeRegister(actor);
+    assertCan(actor, 'payout.reverse', c);
+    const paidPaise = tryParseRupeesToPaise(paidRupees.trim());
+    if (paidPaise == null) return fail('Enter a whole rupee amount.', 'VALIDATION');
+    if (!reason?.trim()) return fail('A reason is required to correct Paid.', 'VALIDATION');
+    const onlinePaise = c.paidOnlinePaise < paidPaise ? c.paidOnlinePaise : paidPaise;
+    await setCasePaidTotal(
+      session,
+      caseId,
+      { cashPaise: paidPaise - onlinePaise, onlinePaise, reason: reason.trim() },
       await requestMeta(),
     );
     revalidate();
@@ -657,7 +696,7 @@ export async function bulkSetFormSubmittedAction(
     assertCanTypeRegister(actor);
     const outcome = await runBulk(ids, refs, async (id, ref) => {
       assertCan(actor, 'case.submit', ref);
-      await setFormSubmitted(session, id, submitted);
+      await setFormSubmitted(session, id, submitted, await requestMeta());
     });
     return bulkResult(outcome);
   } catch (e) {

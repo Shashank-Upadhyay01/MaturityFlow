@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { toast } from 'sonner';
 
 import { setInstalmentDueOnAction } from '@/actions/cases';
@@ -21,8 +21,12 @@ export function AdminDateCell({
   className?: string;
 }) {
   const [draft, setDraft] = useState(value);
+  const [previousValue, setPreviousValue] = useState(value);
   const [busy, setBusy] = useState(false);
-  useEffect(() => setDraft(value), [value]);
+  if (previousValue !== value) {
+    setPreviousValue(value);
+    setDraft(value);
+  }
 
   async function commit() {
     if (!draft || draft === value) {

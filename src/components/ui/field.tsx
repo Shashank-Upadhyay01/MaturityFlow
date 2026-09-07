@@ -189,7 +189,7 @@ export function Stepper({
   value,
   onChange,
   min = 1,
-  max = 60,
+  max = 366,
   label,
   suffix,
 }: {

@@ -19,11 +19,13 @@ import type { Paise } from './money';
 import {
   type ISODate,
   type WorkingDayCalendar,
+  addDays,
   collectWorkingDays,
   compareISO,
   daysBetween,
   isWorkingDay,
   nextWorkingDay,
+  parseISODate,
 } from './working-days';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,6 +64,12 @@ export interface ScheduleInput {
    * 2 = every other working day, for maturities below the priority threshold.
    */
   stride?: number;
+  /** Calendar days between payouts, rolling each candidate forward to an open day. */
+  calendarDayGap?: number;
+  /** Explicit customer-agreed first date may be a normally closed day. Later dates use the calendar. */
+  allowClosedStartDate?: boolean;
+  /** Keep the requested count, lowering the recommended rounding step when necessary. */
+  preservePayoutCount?: boolean;
   /**
    * Working days to skip after the anchor before the first payout — the processing days.
    * Default 0, which is the historical behaviour.
@@ -86,6 +94,7 @@ export interface PlannedInstallment {
 export type ScheduleWarningCode =
   | 'ROUNDING_STEP_EXCEEDS_AMOUNT'
   | 'AMOUNT_TOO_SMALL_FOR_DAYS'
+  | 'ROUNDING_REDUCED_FOR_DAYS'
   | 'RESIDUE_ON_FINAL_DAY'
   | 'CASH_CAP_SPLITS_TO_ONLINE'
   | 'CASH_CAP_UNUSED'
@@ -154,17 +163,21 @@ export function generateSchedule(input: ScheduleInput): ScheduleResult {
   const {
     totalPaise,
     days: requestedDays,
-    roundingPaise,
+    roundingPaise: requestedRoundingPaise,
     startDate,
     calendar,
     distribution = 'FRONT_LOADED',
     cashPolicy = DEFAULT_CASH_POLICY,
     startOnNextWorkingDay = false,
     stride = 1,
+    calendarDayGap,
+    allowClosedStartDate = false,
+    preservePayoutCount = false,
     startOffsetWorkingDays = 0,
     policyMaxDays = 15,
     branchDailyCashComfortPaise,
   } = input;
+  let roundingPaise = requestedRoundingPaise;
 
   // ── Step 0: preconditions. Throw loudly; never guess with money. ──────────
   if (typeof totalPaise !== 'bigint') {
@@ -185,9 +198,13 @@ export function generateSchedule(input: ScheduleInput): ScheduleResult {
   if (!Number.isInteger(stride) || stride < 1) {
     throw new ScheduleInputError('stride must be a whole number of at least 1');
   }
+  if (calendarDayGap !== undefined && (!Number.isInteger(calendarDayGap) || calendarDayGap < 1 || calendarDayGap > 366)) {
+    throw new ScheduleInputError('calendarDayGap must be a whole number between 1 and 366');
+  }
   if (!Number.isInteger(startOffsetWorkingDays) || startOffsetWorkingDays < 0) {
     throw new ScheduleInputError('startOffsetWorkingDays must be a whole number of at least 0');
   }
+  parseISODate(startDate);
   if (cashPolicy.kind === 'CASH_CAP') {
     const cap = cashPolicy.cashCapPerDayPaise;
     if (typeof cap !== 'bigint' || cap < 0n) {
@@ -196,6 +213,18 @@ export function generateSchedule(input: ScheduleInput): ScheduleResult {
   }
 
   const warnings: ScheduleWarning[] = [];
+  if (preservePayoutCount) {
+    if (totalPaise < BigInt(requestedDays)) {
+      throw new ScheduleInputError('Each payment needs at least one paisa. Reduce the payment count.');
+    }
+    while (totalPaise / roundingPaise < BigInt(requestedDays)) {
+      roundingPaise = roundingPaise >= 10n ? roundingPaise / 10n : 1n;
+    }
+    if (roundingPaise !== requestedRoundingPaise) warnings.push({
+      code: 'ROUNDING_REDUCED_FOR_DAYS', severity: 'INFO',
+      message: 'The rounding step was reduced to keep the requested number of payments; the total is unchanged.',
+    });
+  }
 
   // ── Step 1: convert money into rounding units ────────────────────────────
   const units = totalPaise / roundingPaise;
@@ -274,12 +303,18 @@ export function generateSchedule(input: ScheduleInput): ScheduleResult {
   // computed above — this step only decides which dates the amounts are stamped onto.
   const anchor = startOnNextWorkingDay
     ? nextWorkingDay(addOneDay(startDate), calendar)
-    : nextWorkingDay(startDate, calendar);
+    : allowClosedStartDate ? startDate : nextWorkingDay(startDate, calendar);
   const payoutAnchor =
     startOffsetWorkingDays > 0
       ? collectWorkingDays(anchor, startOffsetWorkingDays + 1, calendar)[startOffsetWorkingDays]
       : anchor;
-  const dates = collectWorkingDays(payoutAnchor, effectiveDays, calendar, stride);
+  const dates = [payoutAnchor];
+  while (dates.length < effectiveDays) {
+    const previous = dates[dates.length - 1];
+    dates.push(calendarDayGap !== undefined
+      ? nextWorkingDay(addDays(previous, calendarDayGap), calendar)
+      : collectWorkingDays(nextWorkingDay(addDays(previous, 1), calendar), stride, calendar)[stride - 1]);
+  }
 
   // ── Step 8: split each instalment into cash and online legs ──────────────
   const installments: PlannedInstallment[] = [];
@@ -297,8 +332,11 @@ export function generateSchedule(input: ScheduleInput): ScheduleResult {
         `Leg split broken on instalment ${i + 1}: ${cash} + ${online} !== ${amount}`,
       );
     }
-    if (!isWorkingDay(dates[i], calendar)) {
+    if (!isWorkingDay(dates[i], calendar) && !(i === 0 && allowClosedStartDate)) {
       throw new ScheduleIntegrityError(`Instalment ${i + 1} landed on a non-working day (${dates[i]})`);
+    }
+    if (i > 0 && dates[i] <= dates[i - 1]) {
+      throw new ScheduleIntegrityError('Payout dates must be strictly increasing.');
     }
 
     if (online > 0n && cash > 0n) anySplit = true;
@@ -416,6 +454,10 @@ export interface RescheduleInput {
   branchDailyCashComfortPaise?: Paise;
   /** Keeps a sub-threshold case on alternate days when its remainder is re-planned. */
   cadence?: 'DAILY' | 'ALTERNATE';
+  /** A typed payment date can open an otherwise closed first day. */
+  allowClosedStartDate?: boolean;
+  /** Explicit custom count; otherwise use the eligible dates through the deadline. */
+  payoutCount?: number;
 }
 
 export interface RescheduleResult extends ScheduleResult {
@@ -440,40 +482,53 @@ export function rescheduleRemaining(input: RescheduleInput): RescheduleResult {
     cashPolicy = DEFAULT_CASH_POLICY,
     branchDailyCashComfortPaise,
     cadence = 'DAILY',
+    allowClosedStartDate = false,
+    payoutCount,
   } = input;
 
   if (remainingPaise <= 0n) {
     throw new ScheduleInputError('Nothing remaining to reschedule');
   }
 
-  const start = nextWorkingDay(fromDate, calendar);
+  parseISODate(fromDate);
+  parseISODate(deadlineDate);
+  const start = allowClosedStartDate ? fromDate : nextWorkingDay(fromDate, calendar);
   let availableDays = 0;
   if (compareISO(start, deadlineDate) <= 0) {
     let d = start;
     while (compareISO(d, deadlineDate) <= 0 && availableDays < MAX_SCHEDULE_DAYS) {
-      if (isWorkingDay(d, calendar)) availableDays++;
+      if (isWorkingDay(d, calendar) || (d === start && allowClosedStartDate)) availableDays++;
       d = addOneDay(d);
     }
   }
 
-  const slaBreachUnavoidable = availableDays < 1;
+  let slaBreachUnavoidable = availableDays < 1;
   const days = Math.max(1, availableDays);
 
   // An alternate-day case must stay on alternate days when it is re-planned, or a small maturity
   // would quietly become a daily one the first time anything slipped. `availableDays` counts the
   // working days left; at stride 2 only every other one can carry a payout.
   const stride = cadence === 'ALTERNATE' ? 2 : 1;
-  const payoutSlots = cadence === 'ALTERNATE' ? Math.ceil(days / 2) : days;
+  let payoutSlots = days;
+  if (cadence === 'ALTERNATE') {
+    payoutSlots = 0;
+    for (let date = start; date <= deadlineDate && payoutSlots < MAX_SCHEDULE_DAYS;
+      date = nextWorkingDay(addDays(date, 2), calendar)) payoutSlots++;
+    payoutSlots = Math.max(1, payoutSlots);
+  }
 
   const result = generateSchedule({
     totalPaise: remainingPaise,
-    days: payoutSlots,
+    days: payoutCount ?? payoutSlots,
     roundingPaise,
     startDate: start,
     calendar,
     distribution,
     cashPolicy,
     stride,
+    calendarDayGap: cadence === 'ALTERNATE' ? 2 : undefined,
+    allowClosedStartDate,
+    preservePayoutCount: payoutCount !== undefined,
     policyMaxDays: payoutSlots,
     branchDailyCashComfortPaise,
   });
@@ -487,6 +542,7 @@ export function rescheduleRemaining(input: RescheduleInput): RescheduleResult {
         'breach its commitment — escalate now rather than at the counter.',
     });
   } else if (compareISO(result.lastPayoutDate, deadlineDate) > 0) {
+    slaBreachUnavoidable = true;
     result.warnings.unshift({
       code: 'SLA_BREACH_UNAVOIDABLE',
       severity: 'CRITICAL',

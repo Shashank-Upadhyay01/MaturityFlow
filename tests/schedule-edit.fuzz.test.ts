@@ -69,9 +69,17 @@ describe(`rebalanceAfter — ${ITERATIONS.toLocaleString('en-IN')} randomised ed
           throw new Error(`Row ${now.id} fell below what was paid. ${ctx}`);
         }
         if (now.amountPaise < 0n) throw new Error(`Negative row ${now.id}. ${ctx}`);
-        const laterUnpaid = rows.some((r) => r.seq > pick.seq && r.paidPaise < r.amountPaise);
-        // Rows before the edit stay put unless this is the last unpaid day.
-        if (laterUnpaid && was.seq < pick.seq && now.amountPaise !== was.amountPaise) {
+        const later = rows.filter((r) => r.seq > pick.seq && r.paidPaise < r.amountPaise);
+        const laterHeadroom = later.reduce((total, r) => total + r.amountPaise - r.paidPaise, 0n);
+        const increaseNeed = newAmount - pick.amountPaise;
+        const earlierUnpaid = rows.some((r) => r.seq < pick.seq && r.paidPaise < r.amountPaise);
+        const earlierMayMove =
+          (later.length === 0 && earlierUnpaid) ||
+          (increaseNeed > 0n && increaseNeed > laterHeadroom);
+        // Earlier unpaid rows are touched only when a larger edited day cannot be funded by the
+        // remaining headroom after it.  A decrease still prefers later days and never rewrites
+        // the earlier plan while one of those days is available.
+        if (was.seq < pick.seq && now.amountPaise !== was.amountPaise && !earlierMayMove) {
           throw new Error(`Row ${now.id} before the edit changed. ${ctx}`);
         }
         // Other fully paid rows are never rewritten. The edited day itself may grow.

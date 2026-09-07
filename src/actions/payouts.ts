@@ -59,6 +59,7 @@ export async function payRegisterRowAction(
 }
 
 function revalidateAll(caseId?: string) {
+  revalidatePath('/', 'layout');
   revalidatePath('/payouts');
   revalidatePath('/dashboard');
   revalidatePath('/maturities');
@@ -145,7 +146,7 @@ export async function setPayoutValueDateAction(
 ): Promise<ActionResult> {
   try {
     const { session } = await requireActor();
-    const out = await setPayoutValueDate(session, transactionId, valueDate);
+    const out = await setPayoutValueDate(session, transactionId, valueDate, await requestMeta());
     revalidateAll(out.caseId);
     return ok();
   } catch (e) {

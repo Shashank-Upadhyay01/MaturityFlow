@@ -1,3 +1,5 @@
+import { MAX_WINDOW_DAYS } from './payout-policy';
+
 /**
  * Organisation-wide dials the Admin can change without a code deploy.
  *
@@ -71,7 +73,7 @@ export function parseOrgSettings(rows: { key: string; value: unknown }[]): OrgSe
     orgName: asString(map.get(ORG_KEYS.name), ORG_DEFAULTS.orgName),
     orgShortName: asString(map.get(ORG_KEYS.shortName), ORG_DEFAULTS.orgShortName),
     cashCapPaise: asPaise(map.get(ORG_KEYS.cashCapPaise), ORG_DEFAULTS.cashCapPaise),
-    defaultWindowDays: asInt(map.get(ORG_KEYS.maxWindowDays), ORG_DEFAULTS.defaultWindowDays, 1, 60),
+    defaultWindowDays: asInt(map.get(ORG_KEYS.maxWindowDays), ORG_DEFAULTS.defaultWindowDays, 1, MAX_WINDOW_DAYS),
     defaultRoundingPaise: asPaise(
       map.get(ORG_KEYS.defaultRoundingPaise),
       ORG_DEFAULTS.defaultRoundingPaise,

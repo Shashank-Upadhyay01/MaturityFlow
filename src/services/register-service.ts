@@ -3,7 +3,6 @@ import 'server-only';
 import { and, eq, inArray } from 'drizzle-orm';
 import { db, type Tx } from '@/db';
 import {
-  agents,
   branchCashPositions,
   branches,
   caseEvents,
@@ -18,16 +17,19 @@ import { formatCaseNumber, newId } from '@/lib/id';
 import { DEFAULT_CASH_CAP_PAISE } from '@/lib/org-settings';
 import { loadOrgSettings } from '@/services/org-settings';
 import { parseRupeesToPaise } from '@/lib/money';
-import { APPROVAL_LEAD_CALENDAR_DAYS, MIN_WINDOW_DAYS, paymentFollowingApproval } from '@/lib/payout-policy';
+import { MAX_WINDOW_DAYS, MIN_WINDOW_DAYS, paymentFollowingApproval } from '@/lib/payout-policy';
 import { firstPayoutOn } from '@/lib/payout-policy';
 import { bulkTodayAmount, type BulkTodayMode } from '@/lib/register-view';
 import { parseRegisterDate } from '@/lib/excel-register';
-import { addDays, makeCalendar, todayISO } from '@/lib/working-days';
+import { addDays, makeCalendar, nextWorkingDay, todayISO } from '@/lib/working-days';
 import { sql } from 'drizzle-orm';
 import { caseCounters } from '@/db/schema';
 import { getBranchPolicy } from '@/services/calendar-service';
+import { submitCase } from '@/services/case-service';
 import { persistReschedule, persistSchedule } from '@/services/schedule-service';
-import { canOverrideDates } from '@/lib/rbac';
+import { ensureAllocatedLedgerInTx } from '@/services/payout-ledger';
+import { customersForAccount, findOrCreateRegisterAgent } from '@/services/customer-identity';
+import { accountKey } from '@/lib/customer-identity';
 
 export function recommendSplit(todayPaise: bigint, remainingPaise: bigint, cap = DEFAULT_CASH_CAP_PAISE) {
   const need = todayPaise < remainingPaise ? todayPaise : remainingPaise;
@@ -41,18 +43,7 @@ async function defaultCashCap(): Promise<bigint> {
 }
 
 async function agentIdFor(branchId: string, name: string): Promise<string> {
-  const trimmed = name.trim() || 'Unassigned';
-  const existing = await db.select().from(agents).where(eq(agents.branchId, branchId));
-  const hit = existing.find((a) => a.name.trim().toLowerCase() === trimmed.toLowerCase());
-  if (hit) return hit.id;
-  const id = newId('agt');
-  await db.insert(agents).values({
-    id,
-    code: `AG${String(existing.length + 1).padStart(3, '0')}`,
-    name: trimmed,
-    branchId,
-  });
-  return id;
+  return db.transaction((tx) => findOrCreateRegisterAgent(tx, branchId, name));
 }
 
 /** Hard ceiling on one "add rows" click. Guards against a typo like 10000 in the count box. */
@@ -188,20 +179,27 @@ export async function updateRegisterRow(
     if (!row) throw new Error('Row not found');
 
     const [customer] = await tx.select().from(customers).where(eq(customers.id, row.customerId)).limit(1);
+    if (!customer || customer.branchId !== row.branchId) throw new Error('The customer does not belong to this branch.');
     const setCase: Record<string, unknown> = { updatedAt: new Date() };
 
     if (patch.customerName != null || patch.accountNumber != null) {
+      if (patch.accountNumber?.trim()) {
+        const matches = await customersForAccount(tx, row.branchId, patch.accountNumber);
+        if (matches.some((match) => match.id !== customer.id)) {
+          throw new Error('This account already belongs to another customer in this branch. Select that customer when creating the maturity instead of assigning their account to a different customer.');
+        }
+      }
       await tx
         .update(customers)
         .set({
           ...(patch.customerName != null ? { name: patch.customerName.trim() || customer.name } : {}),
-          ...(patch.accountNumber != null ? { accountNumber: patch.accountNumber.trim() || null } : {}),
+          ...(patch.accountNumber != null ? { accountNumber: accountKey(patch.accountNumber) || null } : {}),
           updatedAt: new Date(),
         })
         .where(eq(customers.id, row.customerId));
     }
     if (patch.agentName != null) {
-      const agentId = await agentIdFor(row.branchId, patch.agentName);
+      const agentId = await findOrCreateRegisterAgent(tx, row.branchId, patch.agentName);
       setCase.agentId = agentId;
       await tx.update(customers).set({ agentId, updatedAt: new Date() }).where(eq(customers.id, row.customerId));
     }
@@ -232,17 +230,18 @@ export async function updateRegisterRow(
       setCase.opsReviewedAt = reviewedOn ? new Date() : null;
       setCase.opsReviewedById = reviewedOn ? actor.id : null;
     }
-    if (canOverrideDates(actor.role)) {
-      if (patch.firstPayoutOn !== undefined) setCase.firstPayoutOn = parseDate(patch.firstPayoutOn);
-      if (patch.deadlineOn !== undefined) setCase.deadlineOn = parseDate(patch.deadlineOn);
+    if (patch.firstPayoutOn !== undefined) {
+      setCase.firstPayoutOn = parseDate(patch.firstPayoutOn);
+      setCase.paymentOn = setCase.firstPayoutOn;
     }
+    if (patch.deadlineOn !== undefined) setCase.deadlineOn = parseDate(patch.deadlineOn);
     if (patch.windowDays != null) {
       if (
         !Number.isInteger(patch.windowDays) ||
         patch.windowDays < MIN_WINDOW_DAYS ||
-        patch.windowDays > 60
+        patch.windowDays > MAX_WINDOW_DAYS
       ) {
-        throw new Error(`Days must be ${MIN_WINDOW_DAYS}–60`);
+        throw new Error(`Days must be ${MIN_WINDOW_DAYS}–${MAX_WINDOW_DAYS}`);
       }
       setCase.windowDays = patch.windowDays;
     }
@@ -257,21 +256,21 @@ export async function updateRegisterRow(
     const affectsSchedule =
       patch.instrumentMaturityOn !== undefined ||
       patch.paymentOn !== undefined ||
-      // Approval now drags the payment date three days behind it, so it moves the schedule too.
+      patch.firstPayoutOn !== undefined ||
+      patch.deadlineOn !== undefined ||
       patch.opsReviewedOn !== undefined ||
       patch.maturityRupees !== undefined ||
       patch.windowDays !== undefined;
     const alreadyPaid = row.paidCashPaise + row.paidOnlinePaise;
-    const adminOverride = canOverrideDates(actor.role);
-    if (affectsSchedule && row.scheduleVersion > 0 && alreadyPaid > 0n && !adminOverride) {
-      throw new Error(
-        'Maturity amount and schedule dates are locked after payment starts. Reverse the payout first, then edit the row.',
-      );
-    }
+    if (amount < alreadyPaid) throw new Error('Maturity amount cannot be less than money already paid. Correct the receipt first.');
 
     const policy = affectsSchedule ? await getBranchPolicy(row.branchId, tx) : null;
-    const finalMaturity = (setCase.instrumentMaturityOn as string | null | undefined) ?? row.instrumentMaturityOn;
-    let finalPayment = (setCase.paymentOn as string | null | undefined) ?? row.paymentOn ?? row.firstPayoutOn;
+    const finalMaturity = setCase.instrumentMaturityOn !== undefined
+      ? (setCase.instrumentMaturityOn as string | null)
+      : row.instrumentMaturityOn;
+    let finalPayment = setCase.paymentOn !== undefined
+      ? (setCase.paymentOn as string | null)
+      : (row.paymentOn ?? row.firstPayoutOn);
     if (affectsSchedule && finalMaturity && policy) {
       const earliest =
         patch.paymentOn !== undefined
@@ -281,32 +280,9 @@ export async function updateRegisterRow(
         finalPayment = earliest;
         setCase.paymentOn = earliest;
       }
-      if (!adminOverride && finalPayment && finalPayment < earliest) {
-        throw new Error(`Payment date cannot be before ${earliest} (the fourth calendar day).`);
-      }
     }
 
     const finalForm = (setCase.formSubmittedOn as string | undefined) ?? row.formSubmittedOn;
-
-    /*
-      Approval date defaults to three calendar days after the form went in.
-
-      A default, not a decision. The date is filled so a case waiting to be looked at shows when
-      it is expected rather than a blank cell, but `opsReviewedAt` and `opsReviewedById` stay
-      null until somebody actually holding `case.approve` confirms it — writing an approver here
-      would forge the one maker-checker record in the money path.
-
-      Skipped when the payout is already dated earlier than the default would land. A back-dated
-      case must not become unsaveable because of a date nobody typed.
-    */
-    if (
-      patch.formSubmittedOn != null &&
-      patch.opsReviewedOn === undefined &&
-      !row.opsReviewedOn
-    ) {
-      const suggested = addDays(finalForm, APPROVAL_LEAD_CALENDAR_DAYS);
-      if (!finalPayment || suggested <= finalPayment) setCase.opsReviewedOn = suggested;
-    }
 
     const finalReview =
       setCase.opsReviewedOn === null
@@ -325,35 +301,17 @@ export async function updateRegisterRow(
     */
     if (patch.opsReviewedOn != null && patch.paymentOn === undefined && finalReview) {
       const followsApproval = paymentFollowingApproval(finalReview);
-      setCase.paymentOn = followsApproval;
-      finalPayment = followsApproval;
+      // The displayed default is the next calendar day, rolled forward when the counter is
+      // closed.  Only an explicitly typed Payment Date is allowed to remain on a closed day.
+      const recommendedPayment = policy ? nextWorkingDay(followsApproval, policy.calendar) : followsApproval;
+      setCase.paymentOn = recommendedPayment;
+      finalPayment = recommendedPayment;
     }
-    if (!adminOverride) {
-      if (finalMaturity && finalForm < finalMaturity) {
-        throw new Error('Form submission date cannot be before the maturity date.');
-      }
-      if (finalReview && finalReview < finalForm) {
-        throw new Error('Operations review date cannot be before form submission.');
-      }
-      if (finalPayment && finalReview && finalPayment < finalReview) {
-        throw new Error('Payment date cannot be before Operations review.');
-      }
-    }
-
-    const remainingNow = () =>
-      amount - ((setCase.paidCashPaise as bigint | undefined) ?? row.paidCashPaise) - row.paidOnlinePaise;
-
     if (patch.paidRupees != null) {
-      const paid = parseRupeesToPaise(patch.paidRupees.trim() || '0');
-      if (paid < 0n) throw new Error('Paid cannot be negative');
-      if (paid > amount) throw new Error('Paid cannot exceed maturity amount');
-      setCase.paidCashPaise = paid;
-      setCase.paidOnlinePaise = 0n;
-      setCase.status = paid >= amount ? 'COMPLETED' : row.status === 'COMPLETED' ? 'IN_PROGRESS' : row.status;
-      setCase.completedAt = paid >= amount ? new Date() : null;
+      throw new Error('Use the recorded-payment correction to change Paid; every amount must have a receipt.');
     }
 
-    const remaining = amount - ((setCase.paidCashPaise as bigint | undefined) ?? row.paidCashPaise) - ((setCase.paidOnlinePaise as bigint | undefined) ?? row.paidOnlinePaise);
+    const remaining = amount - alreadyPaid;
 
     if (patch.todayRupees != null) {
       let todayAmt = parseRupeesToPaise(patch.todayRupees.trim() || '0');
@@ -367,7 +325,7 @@ export async function updateRegisterRow(
       const cash = patch.todayCashRupees != null ? parseRupeesToPaise(patch.todayCashRupees.trim() || '0') : row.todayCashPaise;
       const online = patch.todayOnlineRupees != null ? parseRupeesToPaise(patch.todayOnlineRupees.trim() || '0') : row.todayOnlinePaise;
       const total = cash + online;
-      if (total > remainingNow()) throw new Error('Today cash + online cannot exceed remaining');
+      if (total > remaining) throw new Error('Today cash + online cannot exceed remaining');
       setCase.todayCashPaise = cash;
       setCase.todayOnlinePaise = online;
       setCase.todayApprovedPaise = total;
@@ -375,6 +333,13 @@ export async function updateRegisterRow(
 
     if (affectsSchedule && row.scheduleVersion > 0 && !finalPayment) {
       throw new Error('A scheduled row must have a payment date.');
+    }
+
+    // Any operation that may rewrite instalments first repairs/validates legacy receipts while
+    // the CASE row is already locked.  This keeps register timeline edits on the same ledger
+    // invariant as payout recording and schedule edits.
+    if (affectsSchedule && row.scheduleVersion > 0) {
+      await ensureAllocatedLedgerInTx(tx, actor, row);
     }
 
     await tx.update(maturityCases).set(setCase).where(eq(maturityCases.id, caseId));
@@ -533,41 +498,81 @@ export async function setTodayAmount(
   });
 }
 
-export async function setFormSubmitted(actor: SessionUser, caseId: string, submitted: boolean) {
+export async function setFormSubmitted(
+  actor: SessionUser,
+  caseId: string,
+  submitted: boolean,
+  meta: { ip?: string | null; userAgent?: string | null } = {},
+) {
+  /*
+   * Submission is the workflow transition that makes a case payable.  Keep this register
+   * affordance on the same audited path as the case page; the old implementation only changed
+   * the status to SUBMITTED and left the case with no schedule at all.
+   */
+  if (submitted) return submitCase(actor, caseId, meta);
+
   return db.transaction(async (tx) => {
-    const [row] = await tx.select().from(maturityCases).where(eq(maturityCases.id, caseId)).for('update').limit(1);
+    const [row] = await tx
+      .select()
+      .from(maturityCases)
+      .where(eq(maturityCases.id, caseId))
+      .for('update')
+      .limit(1);
     if (!row) throw new Error('Row not found');
-    if (submitted) {
-      if (row.status === 'DRAFT' || row.status === 'RETURNED') {
-        await tx
-          .update(maturityCases)
-          .set({
-            status: 'SUBMITTED',
-            submittedAt: new Date(),
-            updatedAt: new Date(),
-          })
-          .where(eq(maturityCases.id, caseId));
-        await tx.insert(caseEvents).values({
-          id: newId('evt'),
-          caseId,
-          type: 'SUBMITTED',
-          fromStatus: row.status,
-          toStatus: 'SUBMITTED',
-          actorId: actor.id,
-        });
-      }
-    } else {
-      await tx
-        .update(maturityCases)
-        .set({ status: 'DRAFT', submittedAt: null, updatedAt: new Date() })
-        .where(eq(maturityCases.id, caseId));
+
+    if (row.status === 'DRAFT') return;
+    if (!['SUBMITTED', 'RETURNED'].includes(row.status)) {
+      throw new Error('A scheduled or paid case cannot be marked Form out. Return it through the case workflow first.');
     }
+    if (row.paidCashPaise + row.paidOnlinePaise > 0n) {
+      throw new Error('A case with recorded payments cannot be marked Form out. Correct or reverse the payments first.');
+    }
+
+    const live = await tx
+      .select({ id: payoutInstalments.id })
+      .from(payoutInstalments)
+      .where(
+        and(
+          eq(payoutInstalments.caseId, caseId),
+          sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`,
+        ),
+      )
+      .limit(1);
+    if (live.length > 0) {
+      throw new Error('This case already has a payout schedule. Edit or return the case instead of clearing Form in.');
+    }
+
+    await tx
+      .update(maturityCases)
+      .set({
+        status: 'DRAFT',
+        submittedAt: null,
+        approvedOn: null,
+        approvedAt: null,
+        approvedById: null,
+        firstPayoutOn: null,
+        deadlineOn: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(maturityCases.id, caseId));
+    await tx.insert(caseEvents).values({
+      id: newId('evt'),
+      caseId,
+      type: 'EDITED',
+      fromStatus: row.status,
+      toStatus: 'DRAFT',
+      actorId: actor.id,
+      note: 'Form submission cleared before any schedule or payment existed.',
+    });
     await writeAudit(tx, actor, {
-      action: submitted ? 'case.submitted' : 'case.updated',
+      action: 'case.updated',
       entity: 'MaturityCase',
       entityId: caseId,
       branchId: row.branchId,
-      summary: `${row.caseNumber}: form ${submitted ? 'submitted' : 'unsubmitted'}`,
+      summary: `${row.caseNumber}: form submission cleared`,
+      before: { status: row.status, submittedAt: row.submittedAt },
+      after: { status: 'DRAFT', submittedAt: null },
+      ...meta,
     });
   });
 }

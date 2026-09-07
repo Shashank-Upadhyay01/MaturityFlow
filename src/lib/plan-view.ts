@@ -20,13 +20,13 @@ import {
   type Distribution,
 } from './payout-engine';
 import {
-  PROCESSING_WORKING_DAYS,
+  caseScheduleAnchorFor,
   isPriorityCase,
   payoutPlanFor,
   strideFor,
   type Cadence,
 } from './payout-policy';
-import { legsAfterPayment } from './register-view';
+import { reconcileInstalmentLegs } from './payment-rules';
 import type { WorkingDayCalendar } from './working-days';
 
 /** A case as the board receives it — money already serialised to strings. */
@@ -51,6 +51,10 @@ export interface PlanCase {
   startOnNextWorkingDay: boolean;
   approvedOn: string | null;
   deadlineOn: string | null;
+  instrumentMaturityOn?: string | null;
+  paymentOn?: string | null;
+  opsReviewedOn?: string | null;
+  formSubmittedOn?: string | null;
 }
 
 export interface PlanInstalment {
@@ -144,7 +148,7 @@ function remainingLegs(
   const leftover = amount > paid ? amount - paid : 0n;
   if (leftover === 0n) return { cashPaise: 0n, onlinePaise: 0n };
   if (paid === 0n) return { cashPaise: plannedCash, onlinePaise: plannedOnline };
-  const aligned = legsAfterPayment(amount, givenCash, givenOnline);
+  const aligned = reconcileInstalmentLegs(amount, plannedCash, givenCash, givenOnline);
   const remainCash = aligned.cashPaise > givenCash ? aligned.cashPaise - givenCash : 0n;
   return { cashPaise: remainCash, onlinePaise: leftover - remainCash };
 }
@@ -189,7 +193,8 @@ export function buildPlanRow(
   const givenPaise = big(c.paidCashPaise) + big(c.paidOnlinePaise);
   const remainingPaise = maturityPaise > givenPaise ? maturityPaise - givenPaise : 0n;
   const band = bandOf(maturityPaise);
-  const cadence: Cadence = c.cadence === 'ALTERNATE' || band === 'SMALL' ? 'ALTERNATE' : 'DAILY';
+  const cadence: Cadence = c.approvedOn && (c.cadence === 'DAILY' || c.cadence === 'ALTERNATE')
+    ? c.cadence : band === 'SMALL' ? 'ALTERNATE' : 'DAILY';
 
   const base = {
     caseId: c.caseId,
@@ -230,7 +235,8 @@ export function buildPlanRow(
   };
 
   // ── the real schedule, when there is one and nobody is asking "what if" ──
-  const real = instalments.filter((i) => i.caseId === c.caseId).sort((a, b) => a.seq - b.seq);
+  const real = instalments.filter((i) => i.caseId === c.caseId && i.status !== 'SUPERSEDED' && i.status !== 'CANCELLED')
+    .sort((a, b) => a.dueOn.localeCompare(b.dueOn) || a.seq - b.seq);
 
   if (customParts == null && real.length > 0) {
     return finish(
@@ -244,6 +250,7 @@ export function buildPlanRow(
   if (maturityPaise <= 0n) {
     return finish([], true, 'No maturity amount on this row yet.');
   }
+  if (remainingPaise <= 0n) return finish([], true, null);
 
   const parts = customParts ?? defaultPartsFor(maturityPaise, c.windowDays);
   if (!Number.isInteger(parts) || parts < 1) {
@@ -252,23 +259,31 @@ export function buildPlanRow(
 
   try {
     const res = generateSchedule({
-      totalPaise: maturityPaise,
+      totalPaise: remainingPaise,
       days: parts,
       roundingPaise: big(c.roundingPaise) || 1n,
       // An unapproved case is projected from today: "if this were approved now". An approved one
       // keeps its real anchor so the dates match what was promised.
-      startDate: c.approvedOn ?? today,
+      startDate: c.paymentOn ?? c.approvedOn ?? caseScheduleAnchorFor({
+        formSubmittedOn: c.formSubmittedOn ?? today,
+        instrumentMaturityOn: c.instrumentMaturityOn,
+        opsReviewedOn: c.opsReviewedOn,
+        today,
+      }, cal),
       calendar: cal,
       distribution: (c.distribution as Distribution) ?? 'FRONT_LOADED',
       cashPolicy:
         c.cashPolicy === 'CASH_CAP'
           ? { kind: 'CASH_CAP', cashCapPerDayPaise: big(c.cashCapPerDayPaise) }
           : { kind: c.cashPolicy === 'ONLINE_ONLY' ? 'ONLINE_ONLY' : 'CASH_ONLY' },
-      startOnNextWorkingDay: c.startOnNextWorkingDay,
+      startOnNextWorkingDay: false,
+      allowClosedStartDate: Boolean(c.paymentOn),
+      preservePayoutCount: true,
       stride: strideFor(cadence),
+      calendarDayGap: cadence === 'ALTERNATE' ? 2 : undefined,
       // A persisted approvedOn is already the schedule anchor (maturity + three calendar days).
       // Draft projections start from today and still need the policy's processing gap.
-      startOffsetWorkingDays: c.approvedOn ? 0 : PROCESSING_WORKING_DAYS,
+      startOffsetWorkingDays: 0,
       policyMaxDays: parts,
     });
 

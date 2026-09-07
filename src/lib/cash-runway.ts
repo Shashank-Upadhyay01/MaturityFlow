@@ -146,7 +146,7 @@ export function buildRunway(input: RunwayInput): RunwayResult {
     else pipelinePaise += left;
 
     const cap = c.cashCapPaise > 0n ? c.cashCapPaise : defaultCashCapPaise;
-    const window = Math.max(1, Math.min(c.windowDays || 15, 60));
+    const window = Math.max(1, Math.min(c.windowDays || 15, 366));
     const pinned = c.todayApprovedPaise > 0n ? (c.todayApprovedPaise < left ? c.todayApprovedPaise : left) : 0n;
 
     if (pinned > 0n) {

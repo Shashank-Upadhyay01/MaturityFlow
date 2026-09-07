@@ -31,8 +31,8 @@ describe('parseOrgSettings', () => {
     expect(parseOrgSettings(rows)).toEqual(ORG_DEFAULTS);
   });
 
-  it('clamps the window to 1–60', () => {
-    expect(parseOrgSettings([{ key: 'policy.maxWindowDays', value: 99 }]).defaultWindowDays).toBe(60);
+  it('clamps the window to 1–366', () => {
+    expect(parseOrgSettings([{ key: 'policy.maxWindowDays', value: 999 }]).defaultWindowDays).toBe(366);
     expect(parseOrgSettings([{ key: 'policy.maxWindowDays', value: 0 }]).defaultWindowDays).toBe(1);
   });
 });

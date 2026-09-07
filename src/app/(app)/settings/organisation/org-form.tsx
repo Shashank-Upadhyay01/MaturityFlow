@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { saveOrgSettingsAction } from '@/actions/admin';
 import { Button } from '@/components/ui/button';
 import { Field, Input, MoneyInput, Stepper } from '@/components/ui/field';
-import { MIN_WINDOW_DAYS } from '@/lib/payout-policy';
+import { MAX_WINDOW_DAYS, MIN_WINDOW_DAYS } from '@/lib/payout-policy';
 import { Glass } from '@/components/ui/glass';
 
 export function OrgForm(props: {
@@ -50,9 +50,9 @@ export function OrgForm(props: {
         <Field label="Default rounding step" required error={fe.defaultRounding} hint="Used when a new branch is created">
           <MoneyInput name="defaultRounding" defaultValue={props.defaultRounding.replace(/\.00$/, '')} required />
         </Field>
-        <Field label="Default payout window" error={fe.defaultWindowDays} hint="Working days, 1–60">
+        <Field label="Default payout window" error={fe.defaultWindowDays} hint={`Working days, ${MIN_WINDOW_DAYS}–${MAX_WINDOW_DAYS}`}>
           <input type="hidden" name="defaultWindowDays" value={windowDays} />
-          <Stepper value={windowDays} onChange={setWindowDays} min={MIN_WINDOW_DAYS} max={60} label="window days" suffix="days" />
+          <Stepper value={windowDays} onChange={setWindowDays} min={MIN_WINDOW_DAYS} max={MAX_WINDOW_DAYS} label="window days" suffix="days" />
         </Field>
         <Button type="submit" variant="primary" loading={pending}>
           Save organisation

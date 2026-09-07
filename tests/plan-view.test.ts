@@ -9,7 +9,7 @@ import {
   type PlanCase,
   type PlanInstalment,
 } from '../src/lib/plan-view';
-import { countWorkingDaysBetween, makeCalendar } from '../src/lib/working-days';
+import { addDays, countWorkingDaysBetween, makeCalendar, nextWorkingDay } from '../src/lib/working-days';
 
 const cal = makeCalendar();
 const TODAY = '2026-08-25'; // a Tuesday
@@ -87,7 +87,7 @@ describe('projecting an unapproved case', () => {
     expect(r.parts).toBe(6);
     expect(sum(r.days)).toBe(6_000_000n);
     for (let i = 0; i + 1 < r.days.length; i++) {
-      expect(countWorkingDaysBetween(r.days[i].dueOn, r.days[i + 1].dueOn, cal)).toBe(3);
+      expect(r.days[i + 1].dueOn).toBe(nextWorkingDay(addDays(r.days[i].dueOn, 2), cal));
     }
   });
 
@@ -98,9 +98,9 @@ describe('projecting an unapproved case', () => {
     expect(r.cadence).toBe('ALTERNATE');
   });
 
-  it('leaves the first three working days clear for processing', () => {
+  it('starts after the form day and the approval day', () => {
     const r = buildPlanRow(mk(), [], cal, TODAY);
-    expect(countWorkingDaysBetween(TODAY, r.days[0].dueOn, cal)).toBe(4); // W0..W3 inclusive
+    expect(r.days[0].dueOn).toBe('2026-08-27');
   });
 
   it('does not apply the processing gap twice to an approved case projection', () => {
@@ -171,7 +171,7 @@ describe('a real schedule is shown as fact', () => {
     expect(buildPlanRow(mk(), mixed, cal, TODAY).days).toHaveLength(1);
   });
 
-  it('shows a cash visit as cash given, not leftover online from the old plan', () => {
+  it('shows the actual cash given and preserves the unpaid tender plan', () => {
     const r = buildPlanRow(
       mk({ approvedOn: '2026-09-01', paidCashPaise: '10000000' }),
       [
@@ -209,8 +209,8 @@ describe('a real schedule is shown as fact', () => {
       givenCashPaise: 1_200_000n,
       givenOnlinePaise: 0n,
       paidPaise: 1_200_000n,
-      cashPaise: 7_600_000n,
-      onlinePaise: 0n,
+      cashPaise: 1_300_000n,
+      onlinePaise: 6_300_000n,
       state: 'PARTIAL',
     });
   });
@@ -372,8 +372,8 @@ describe('daily withdrawal requirements', () => {
       {
         dueOn: TODAY,
         totalPaise: 1_500_000n,
-        cashPaise: 1_500_000n,
-        onlinePaise: 0n,
+        cashPaise: 1_000_000n,
+        onlinePaise: 500_000n,
         committedPaise: 1_500_000n,
         projectedPaise: 0n,
         count: 1,

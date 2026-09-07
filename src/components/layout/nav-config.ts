@@ -20,6 +20,7 @@ export interface NavItem {
     | 'reports'
     | 'audit'
     | 'settings'
+    | 'operationsHealth'
     | 'depositInterest'
     | 'whatsNew';
   permission: Permission;
@@ -157,6 +158,13 @@ export const NAV: { section: string; items: NavItem[] }[] = [
         icon: 'audit',
         permission: 'audit.view',
         description: 'Every action, immutable',
+      },
+      {
+        href: '/settings/operations-health',
+        label: 'Operations health',
+        icon: 'operationsHealth',
+        permission: 'settings.manage',
+        description: 'Check receipts, paid totals and schedule integrity',
       },
       {
         href: '/settings',

@@ -11,6 +11,7 @@ import { checkPasswordStrength, hashPassword } from '@/lib/auth/password';
 import { requestMeta, requireActor, revokeAllSessions } from '@/lib/auth/session';
 import { newId } from '@/lib/id';
 import { formatPaise, parseRupeesToPaise } from '@/lib/money';
+import { MAX_WINDOW_DAYS } from '@/lib/payout-policy';
 import { ASSIGNABLE_ROLES, assertCan } from '@/lib/rbac';
 import { fail, ok, toActionError, type ActionResult } from './_result';
 
@@ -196,7 +197,7 @@ const branchSchema = z.object({
   state: z.string().trim().optional().nullable(),
   phone: z.string().trim().optional().nullable(),
   ifsc: z.string().trim().optional().nullable(),
-  defaultWindowDays: z.coerce.number().int().min(1).max(60),
+  defaultWindowDays: z.coerce.number().int().min(1).max(MAX_WINDOW_DAYS),
   defaultRounding: z.string().min(1),
   dailyCashComfort: z.string().min(1),
   saturdayRule: z.enum(['NONE', 'ALL', 'SECOND_FOURTH']),
@@ -468,8 +469,8 @@ export async function saveOrgSettingsAction(
     const fe: Record<string, string> = {};
     if (orgName.length < 2) fe.orgName = 'Enter the organisation name';
     if (orgShortName.length < 2) fe.orgShortName = 'Enter a short name';
-    if (!Number.isInteger(windowRaw) || windowRaw < 1 || windowRaw > 60) {
-      fe.defaultWindowDays = 'Window must be between 1 and 60 working days';
+    if (!Number.isInteger(windowRaw) || windowRaw < 1 || windowRaw > MAX_WINDOW_DAYS) {
+      fe.defaultWindowDays = `Window must be between 1 and ${MAX_WINDOW_DAYS} working days`;
     }
 
     let cashCapPaise: bigint;

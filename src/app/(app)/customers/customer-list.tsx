@@ -14,7 +14,7 @@ import { buildPlanRow, type PlanCase, type PlanInstalment } from '@/lib/plan-vie
 import { cn } from '@/lib/utils';
 import { formatDMY, makeCalendar, weekdayShort, type SaturdayRule } from '@/lib/working-days';
 
-export interface CustomerCase extends PlanCase, BookCase {
+export interface CustomerCase extends Omit<PlanCase, 'formSubmittedOn' | 'paymentOn' | 'instrumentMaturityOn'>, BookCase {
   customerId: string;
   customerCode: string | null;
   email: string | null;

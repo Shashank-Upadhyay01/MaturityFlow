@@ -204,6 +204,8 @@ function UpdateEditor({
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Local timezone is only known after hydration; initialise the editor's browser-local date.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!when) setWhen(toDateTimeLocal(new Date().toISOString()));
   }, [when]);
 

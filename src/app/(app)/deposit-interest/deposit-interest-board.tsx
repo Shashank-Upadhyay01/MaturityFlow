@@ -153,6 +153,8 @@ export function DepositInterestBoard({ seed, today }: { seed: SeedDeposit[]; tod
   useEffect(() => {
     const saved = loadStored();
     if (saved && saved.rows.some(isFilled)) {
+      // Restore browser storage only after hydration; server and initial client markup must match.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setRateDraft(saved.rateDraft || formatBpsAsPercent(DEFAULT_INTEREST_BPS));
       setRows(ensureTrailingBlanks(saved.rows));
     }

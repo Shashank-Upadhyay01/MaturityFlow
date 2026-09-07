@@ -87,7 +87,7 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
   },
   paymentDate: {
     id: 'paymentDate', label: 'Payment date', excel: 'Payment Date', w: 'w-[5.2rem]', priority: 1,
-    hint: 'The first day of this case\u2019s payout window. Filled in three days after the approval date, and editable \u2014 payouts start from whatever it says here.',
+    hint: 'The first payout date. Recommended from the next open day after approval, and editable to the customer-agreed date.',
   },
   amount: {
     id: 'amount', label: 'Maturity amount', excel: 'Maturity Amount', right: true, required: true, w: 'w-[5.2rem]', priority: 1,

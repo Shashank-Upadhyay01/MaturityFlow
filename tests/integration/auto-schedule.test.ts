@@ -29,9 +29,11 @@ import {
 import type { SessionUser } from '@/lib/auth/session';
 import { newId } from '@/lib/id';
 import { rupees } from '@/lib/money';
-import { scheduleAnchorFor } from '@/lib/payout-policy';
+import { caseScheduleAnchorFor } from '@/lib/payout-policy';
 import { permissionsOf } from '@/lib/rbac';
 import { createCase, submitCase } from '@/services/case-service';
+import { importRegisterRows } from '@/services/import-service';
+import type { RegisterRow } from '@/lib/excel-register';
 import { makeCalendar, todayISO } from '@/lib/working-days';
 
 function session(id: string, name: string, role: SessionUser['role'], branchId: string): SessionUser {
@@ -146,6 +148,40 @@ const readEvents = async (id: string) =>
 const readAudit = async (id: string) =>
   db.select().from(auditLog).where(eq(auditLog.entityId, id));
 
+describe('register import integrity', () => {
+  const row: RegisterRow = {
+    branchReference: '', accountNumber: 'IMPORT-REGRESSION', customerName: 'Import Regression',
+    agentName: 'Auto-schedule Agent', instrumentMaturityOn: null, formSubmittedOn: '2026-09-07',
+    approvedOn: null, paymentOn: null, maturityRupees: 120000, maturityPaise: '12000000',
+    paidRupees: 10000, paidPaise: '1000000', remainingRupees: 110000,
+    todayPayableRupees: 0, windowDays: 15, rowNumber: 2, warnings: [],
+  };
+  it('re-imports a blank maturity date without duplicating its case or historical receipt', async () => {
+    const first = await importRegisterRows(admin, branchId, [row]);
+    expect(first.errors).toEqual([]);
+    expect(first.created).toBe(1);
+    const second = await importRegisterRows(admin, branchId, [row]);
+    expect(second.errors).toEqual([]);
+    expect(second.created).toBe(0);
+    expect(second.skipped).toBe(1);
+    const importedCustomers = await db.select().from(customers).where(eq(customers.accountNumber, row.accountNumber));
+    expect(importedCustomers).toHaveLength(1);
+    const cases = await db.select().from(maturityCases).where(eq(maturityCases.customerId, importedCustomers[0].id));
+    expect(cases).toHaveLength(1);
+    const receipts = await db.select().from(payoutTransactions).where(eq(payoutTransactions.caseId, cases[0].id));
+    expect(receipts.filter((r) => !r.reversedAt).reduce((sum, r) => sum + r.totalPaise, 0n)).toBe(1000000n);
+  });
+  it('rejects malformed money, dates and custom windows independently', async () => {
+    const result = await importRegisterRows(admin, branchId, [
+      { ...row, paidPaise: '-1', rowNumber: 3 },
+      { ...row, paymentOn: '2026-02-30', rowNumber: 4 },
+      { ...row, windowDays: 0, rowNumber: 5 },
+    ]);
+    expect(result.created).toBe(0);
+    expect(result.errors).toHaveLength(3);
+  });
+});
+
 describe('submitting schedules the case', () => {
   it('moves straight to APPROVED with a full schedule', async () => {
     const { id } = await draft({ maturityOn: '2026-09-20', amount: '120000' });
@@ -154,7 +190,11 @@ describe('submitting schedules the case', () => {
     expect(res.ok).toBe(true);
     expect(res.instalments).toBe(12);
 
-    const expected = scheduleAnchorFor('2026-09-20', todayISO(), makeCalendar());
+    const expected = caseScheduleAnchorFor({
+      formSubmittedOn: todayISO(),
+      instrumentMaturityOn: '2026-09-20',
+      today: todayISO(),
+    }, makeCalendar());
     expect(res.firstPayoutOn).toBe(expected);
 
     const row = await readCase(id);

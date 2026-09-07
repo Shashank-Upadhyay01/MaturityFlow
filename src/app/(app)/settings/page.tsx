@@ -3,6 +3,7 @@ import {
   FileSpreadsheet,
   Landmark,
   Shield,
+  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   UserCircle2,
@@ -42,6 +43,13 @@ export default async function SettingsPage() {
       title: 'Organisation',
       body: 'Bank name, daily cash cap, default rounding and payout window. No code change needed.',
       icon: SlidersHorizontal,
+      allowed: roleCan(session.role, 'settings.manage'),
+    },
+    {
+      href: '/settings/operations-health',
+      title: 'Operations health',
+      body: 'Check case totals against receipts, investigate discrepancies and reconcile eligible paid totals with an audit reason.',
+      icon: ShieldCheck,
       allowed: roleCan(session.role, 'settings.manage'),
     },
     {

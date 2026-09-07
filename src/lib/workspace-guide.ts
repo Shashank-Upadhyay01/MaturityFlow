@@ -23,9 +23,23 @@ export const GUIDE_TIPS: GuideTip[] = [
     keywords: ['type', 'edit', 'cell', 'excel', 'sheet', 'enter', 'arrow'],
   },
   {
+    id: 'sheet-auto-rows',
+    title: 'Empty rows appear as you move',
+    body: 'The Maturities register and Operations sheet hold 500 rows, like the daily cashbook. Type into an empty row or paste a block from Excel — you do not need Add row. Scroll or arrow down to reveal more, up to 500. Nothing is saved until you type and leave a row. Due today is not padded with blanks. Choose a branch first; All branches cannot take new rows.',
+    screens: ['/maturities', '/maturity-operations'],
+    keywords: ['row', 'add', 'blank', 'arrow', 'enter', 'new', 'empty', '100', 'sheet'],
+  },
+  {
+    id: 'sheet-blank',
+    title: 'Open a blank sheet',
+    body: 'Blank sheet is a fresh 500-row grid on this branch, like the cashbook. Type or paste from Excel, then leave the row to create a case. It does not delete or hide the live register — that stays on Operations work.',
+    screens: ['/maturity-operations'],
+    keywords: ['blank sheet', 'new sheet', 'empty sheet', 'paste', 'new register'],
+  },
+  {
     id: 'sheet-copy-paste',
     title: 'Copy and paste from Excel',
-    body: 'Select cells (click, then Shift-click the opposite corner) and press Ctrl+C to copy. Click the first cell you want to fill and press Ctrl+V — rows and columns from Excel or Google Sheets land in the same shape. Each cell still saves the audited way, one row at a time.',
+    body: 'Shift-click or Shift+arrows select a block. Ctrl-click adds or removes a single cell. Drag across cells. Ctrl+C copies, Ctrl+X cuts, Ctrl+V pastes from Excel or Google Sheets. Each cell still saves the audited way, one row at a time.',
     screens: ['/maturities', '/maturity-operations'],
     keywords: ['copy', 'paste', 'excel', 'google sheets', 'ctrl+c', 'ctrl+v', 'clipboard'],
   },
@@ -35,6 +49,13 @@ export const GUIDE_TIPS: GuideTip[] = [
     body: 'Ctrl+Z puts the last cell edit back. Ctrl+Y does it again. This undoes typing on the sheet, not a Taken payment — Taken is a money movement and needs its own correction.',
     screens: ['/maturities', '/maturity-operations'],
     keywords: ['undo', 'redo', 'ctrl+z', 'mistake'],
+  },
+  {
+    id: 'sheet-shortcuts',
+    title: 'Spreadsheet shortcuts',
+    body: 'Ctrl+C copy, Ctrl+X cut, Ctrl+V paste, Ctrl+Z undo, Ctrl+Y redo, Ctrl+A select all. Delete clears selected name/date/amount cells. Ctrl+D fills down, Ctrl+R fills right. Ctrl+Home goes to A1, Ctrl+arrows jump to the next filled cell. Ctrl+F focuses the filter. Paid and Taken are not bulk-cleared because they move money.',
+    screens: ['/maturities', '/maturity-operations'],
+    keywords: ['shortcut', 'ctrl+a', 'ctrl+x', 'ctrl+y', 'ctrl+d', 'ctrl+r', 'delete', 'hotkey', 'keyboard'],
   },
   {
     id: 'sheet-filter',

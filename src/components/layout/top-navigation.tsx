@@ -17,6 +17,7 @@ import {
   type LucideIcon,
   Percent,
   ScrollText,
+  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Vault,
@@ -46,6 +47,7 @@ const ICONS: Record<NavItem['icon'], LucideIcon> = {
   reports: ChartNoAxesCombined,
   audit: ScrollText,
   settings: SlidersHorizontal,
+  operationsHealth: ShieldCheck,
   depositInterest: Percent,
   whatsNew: Sparkles,
 };
@@ -55,8 +57,12 @@ export interface NavBadges {
   overdue?: number;
 }
 
+const NAV_PATHS = [...TOP_LEVEL_NAV, ...NAV.flatMap((section) => section.items)]
+  .map((item) => item.href)
+  .sort((a, b) => b.length - a.length);
+
 function isActive(pathname: string, href: string) {
-  return pathname === href || (href !== '/dashboard' && pathname.startsWith(`${href}/`));
+  return NAV_PATHS.find((path) => pathname === path || (path !== '/dashboard' && pathname.startsWith(`${path}/`))) === href;
 }
 
 function badgeText(count: number | undefined) {

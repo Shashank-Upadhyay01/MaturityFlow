@@ -64,6 +64,8 @@ function GuideInner({ latestUpdate: latestFromServer = null }: { latestUpdate?: 
   useEffect(() => {
     if (!latestUpdate) return;
     try {
+      // Browser-only persisted badge state is read after hydration.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setUnseen(localStorage.getItem(SEEN_KEY) !== latestUpdate.id);
     } catch {
       setUnseen(true);

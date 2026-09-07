@@ -9,12 +9,13 @@ import {
   firstPayoutOn,
   isPriorityCase,
   payoutPlanFor,
-  PROCESSING_WORKING_DAYS,
 } from './payout-policy';
 import {
+  addDays,
   countWorkingDaysBetween,
   makeCalendar,
   nextWorkingDayAfter,
+  nextWorkingDay,
   type ISODate,
   type WorkingDayCalendar,
 } from './working-days';
@@ -166,20 +167,34 @@ export function projectForecastPayments(
         `No open payout day remains for ${forecast.id} inside ${window.startsOn}–${window.endsOn}.`,
       );
     }
-    const plan = payoutPlanFor(
-      forecast.amountPaise,
-      PROCESSING_WORKING_DAYS + availableWorkingDays,
-    );
+    // A forecast follows the same fixed customer rule as an activated case: twelve payouts at
+    // or above ₹1 lakh, six on alternate working days below it.  The cohort window may contain
+    // fewer eligible slots (the August test window intentionally has only ten/five), so shorten
+    // the plan to fit rather than silently turning a small case into fifteen payments.
+    const policyPlan = payoutPlanFor(forecast.amountPaise, 15);
+    let availablePayoutSlots = availableWorkingDays;
+    if (!isPriorityCase(forecast.amountPaise)) {
+      availablePayoutSlots = 0;
+      for (
+        let date = startDate;
+        date <= window.endsOn && availablePayoutSlots < 6;
+        date = nextWorkingDay(addDays(date, 2), policy.calendar)
+      ) {
+        availablePayoutSlots += 1;
+      }
+    }
+    const payoutDays = Math.max(1, Math.min(policyPlan.payoutDays, availablePayoutSlots));
     const schedule = generateSchedule({
       totalPaise: forecast.amountPaise,
-      days: plan.payoutDays,
+      days: payoutDays,
       roundingPaise: policy.roundingPaise,
       startDate,
       calendar: policy.calendar,
       distribution: 'FRONT_LOADED',
       cashPolicy: policy.cashPolicy,
-      stride: plan.stride,
-      policyMaxDays: plan.payoutDays,
+      stride: policyPlan.stride,
+      calendarDayGap: policyPlan.calendarDayGap,
+      policyMaxDays: payoutDays,
       branchDailyCashComfortPaise: policy.dailyCashComfortPaise,
     });
 

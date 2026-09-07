@@ -12,12 +12,13 @@ import {
   rescheduleRemaining,
 } from '@/lib/payout-engine';
 import {
+  MAX_WINDOW_DAYS,
   MIN_WINDOW_DAYS,
-  PROCESSING_WORKING_DAYS,
   payoutPlanFor,
   type Cadence,
 } from '@/lib/payout-policy';
 import { rebalanceAfter, type EditableInstalment } from '@/lib/schedule-edit';
+import { reconcileInstalmentLegs } from '@/lib/payment-rules';
 import type { WorkingDayCalendar } from '@/lib/working-days';
 import { todayISO } from '@/lib/working-days';
 
@@ -92,8 +93,11 @@ export async function persistSchedule({
     calendar,
     distribution: caseRow.distribution,
     cashPolicy: cashPolicyOf(caseRow),
-    startOnNextWorkingDay: caseRow.startOnNextWorkingDay,
+    startOnNextWorkingDay: false,
+    allowClosedStartDate: Boolean(caseRow.paymentOn),
+    preservePayoutCount: true,
     stride: plan.stride,
+    calendarDayGap: plan.calendarDayGap,
     startOffsetWorkingDays: 0,
     policyMaxDays: plan.payoutDays,
     branchDailyCashComfortPaise,
@@ -143,12 +147,16 @@ export async function persistReschedule({
   calendar,
   fromDate,
   branchDailyCashComfortPaise,
+  payoutCount,
+  allowClosedStartDate = false,
 }: {
   tx: Queryable;
   caseRow: MaturityCase;
   calendar: WorkingDayCalendar;
   fromDate?: string;
   branchDailyCashComfortPaise?: bigint;
+  payoutCount?: number;
+  allowClosedStartDate?: boolean;
 }): Promise<{ result: ReturnType<typeof rescheduleRemaining>; carriedOverPaise: bigint } | null> {
   const paid = caseRow.paidCashPaise + caseRow.paidOnlinePaise;
   const remaining = caseRow.maturityAmountPaise - paid;
@@ -163,13 +171,12 @@ export async function persistReschedule({
     .where(
       and(
         eq(payoutInstalments.caseId, caseRow.id),
-        eq(payoutInstalments.scheduleVersion, caseRow.scheduleVersion),
+        sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`,
       ),
-    );
+    ).for('update');
 
   const settled = live.filter((i) => i.paidCashPaise + i.paidOnlinePaise > 0n);
-  const settledTotal = settled.reduce((a, i) => a + i.paidCashPaise + i.paidOnlinePaise, 0n);
-  const carriedOverPaise = caseRow.maturityAmountPaise - settledTotal;
+  const carriedOverPaise = remaining;
 
   const openIds = live
     .filter((i) => i.paidCashPaise + i.paidOnlinePaise === 0n)
@@ -217,6 +224,8 @@ export async function persistReschedule({
     // Carried from the case, not re-derived: a sub-₹1-lakh maturity must not become a daily
     // one the first time its remainder is re-planned.
     cadence: caseRow.cadence as Cadence,
+    payoutCount,
+    allowClosedStartDate,
   });
 
   const version = caseRow.scheduleVersion + 1;
@@ -246,7 +255,7 @@ export async function persistReschedule({
   if (settled.length > 0) {
     await tx
       .update(payoutInstalments)
-      .set({ scheduleVersion: version, updatedAt: new Date() })
+      .set({ scheduleVersion: version, isFinal: false, updatedAt: new Date() })
       .where(
         inArray(
           payoutInstalments.id,
@@ -257,7 +266,9 @@ export async function persistReschedule({
 
   await tx
     .update(maturityCases)
-    .set({ scheduleVersion: version, scheduleGeneratedAt: new Date(), updatedAt: new Date() })
+    .set({ scheduleVersion: version, scheduleGeneratedAt: new Date(),
+      firstPayoutOn: settled.length > 0 ? caseRow.firstPayoutOn : result.firstPayoutDate,
+      updatedAt: new Date() })
     .where(eq(maturityCases.id, caseRow.id));
 
   return { result, carriedOverPaise };
@@ -289,12 +300,12 @@ export async function persistInstalmentEdit({
       and(
         eq(payoutInstalments.caseId, caseRow.id),
         eq(payoutInstalments.scheduleVersion, caseRow.scheduleVersion),
-        ne(payoutInstalments.status, 'SUPERSEDED'),
+        sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`,
       ),
     )
     .for('update');
 
-  const ordered = [...live].sort((a, b) => a.seq - b.seq);
+  const ordered = [...live].sort((a, b) => a.dueOn.localeCompare(b.dueOn) || a.seq - b.seq);
   const editable: EditableInstalment[] = ordered.map((i) => ({
     id: i.id,
     seq: i.seq,
@@ -308,22 +319,43 @@ export async function persistInstalmentEdit({
   if (!res.ok) throw new Error(res.message);
 
   let changed = 0;
+  const finalId = res.instalments.filter((i) => i.amountPaise > 0n).at(-1)?.id;
   for (let k = 0; k < res.instalments.length; k++) {
     const now = res.instalments[k];
     const was = ordered[k];
-    if (now.amountPaise === was.amountPaise) continue;
-    const cash = caseRow.cashPolicy === 'ONLINE_ONLY' ? 0n : now.amountPaise;
+    if (now.amountPaise === was.amountPaise && was.isFinal === (now.id === finalId)) continue;
+    if (now.amountPaise === 0n) {
+      // Retain the original positive row as history: the database never accepts a zero payout.
+      await tx.update(payoutInstalments).set({
+        status: 'SUPERSEDED', isFinal: false, supersededAt: new Date(), updatedAt: new Date(),
+      }).where(eq(payoutInstalments.id, now.id));
+      changed++;
+      continue;
+    }
+    const plannedCash = caseRow.cashPolicy === 'ONLINE_ONLY' ? 0n
+      : caseRow.cashPolicy === 'CASH_CAP' && (caseRow.cashCapPerDayPaise ?? 0n) < now.amountPaise
+        ? caseRow.cashCapPerDayPaise ?? 0n : now.amountPaise;
+    const legs = reconcileInstalmentLegs(now.amountPaise, plannedCash, was.paidCashPaise, was.paidOnlinePaise);
     await tx
       .update(payoutInstalments)
       .set({
         amountPaise: now.amountPaise,
-        cashLegPaise: cash,
-        onlineLegPaise: now.amountPaise - cash,
+        cashLegPaise: legs.cashPaise,
+        onlineLegPaise: legs.onlinePaise,
+        isFinal: now.id === finalId,
+        status: now.amountPaise === was.paidCashPaise + was.paidOnlinePaise ? 'PAID'
+          : was.paidCashPaise + was.paidOnlinePaise > 0n ? 'PARTIAL' : 'PENDING',
         updatedAt: new Date(),
       })
       .where(eq(payoutInstalments.id, now.id));
     changed++;
   }
+  const remainingRows = res.instalments.filter((i) => i.amountPaise > 0n);
+  await tx.update(maturityCases).set({
+    firstPayoutOn: remainingRows[0].dueOn,
+    deadlineOn: remainingRows[remainingRows.length - 1].dueOn,
+    updatedAt: new Date(),
+  }).where(eq(maturityCases.id, caseRow.id));
   return { changed };
 }
 
@@ -351,16 +383,20 @@ export async function persistInstalmentLegs({
       and(
         eq(payoutInstalments.id, instalmentId),
         eq(payoutInstalments.caseId, caseRow.id),
-        ne(payoutInstalments.status, 'SUPERSEDED'),
+        sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`,
       ),
     )
     .for('update')
     .limit(1);
   if (!inst) throw new Error('That day is not on this schedule.');
+  if (cashPaise < inst.paidCashPaise || onlinePaise < inst.paidOnlinePaise) {
+    throw new Error('The planned cash/online amounts cannot be below the recorded payment. Correct the receipt first.');
+  }
   const total = cashPaise + onlinePaise;
   if (total !== inst.amountPaise) {
     await persistInstalmentEdit({ tx, caseRow, instalmentId, newAmountPaise: total });
   }
+  if (total === 0n) return;
   await tx
     .update(payoutInstalments)
     .set({
@@ -391,13 +427,21 @@ export async function persistReplanWindow({
   fromDate: string;
   branchDailyCashComfortPaise?: bigint;
 }): Promise<{ result: ReturnType<typeof rescheduleRemaining>; carriedOverPaise: bigint } | null> {
-  if (!Number.isInteger(windowDays) || windowDays < MIN_WINDOW_DAYS || windowDays > 366) {
+  if (!Number.isInteger(windowDays) || windowDays < MIN_WINDOW_DAYS || windowDays > MAX_WINDOW_DAYS) {
     throw new Error(
-      `Window must be between ${MIN_WINDOW_DAYS} and 366 working days — the first ` +
-        `${PROCESSING_WORKING_DAYS} are processing days and carry no payout.`,
+      `Window must be between ${MIN_WINDOW_DAYS} and ${MAX_WINDOW_DAYS} days.`,
     );
   }
-  const deadline = deriveDeadline(fromDate, windowDays, calendar, false);
+  const remaining = caseRow.maturityAmountPaise - caseRow.paidCashPaise - caseRow.paidOnlinePaise;
+  if (remaining <= 0n) return null;
+  const plan = payoutPlanFor(caseRow.maturityAmountPaise, windowDays);
+  const deadline = generateSchedule({
+    totalPaise: remaining,
+    days: plan.payoutDays, roundingPaise: caseRow.roundingPaise, startDate: fromDate,
+    calendar, stride: plan.stride, calendarDayGap: plan.calendarDayGap,
+    allowClosedStartDate: Boolean(caseRow.paymentOn && caseRow.paymentOn === fromDate),
+    preservePayoutCount: true,
+  }).lastPayoutDate;
   await tx
     .update(maturityCases)
     .set({
@@ -409,10 +453,12 @@ export async function persistReplanWindow({
 
   return persistReschedule({
     tx,
-    caseRow: { ...caseRow, windowDays, deadlineOn: deadline },
+    caseRow: { ...caseRow, windowDays, deadlineOn: deadline, cadence: plan.cadence },
     calendar,
     fromDate,
     branchDailyCashComfortPaise,
+    payoutCount: plan.payoutDays,
+    allowClosedStartDate: Boolean(caseRow.paymentOn && caseRow.paymentOn === fromDate),
   });
 }
 

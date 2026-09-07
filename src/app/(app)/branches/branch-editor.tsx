@@ -9,6 +9,7 @@ import { upsertBranchAction } from '@/actions/admin';
 import { Button } from '@/components/ui/button';
 import { Field, Input, MoneyInput, Select } from '@/components/ui/field';
 import { Glass } from '@/components/ui/glass';
+import { MAX_WINDOW_DAYS } from '@/lib/payout-policy';
 
 export interface EditableBranch {
   id: string;
@@ -111,7 +112,7 @@ export function BranchEditor({ branches }: { branches: EditableBranch[] }) {
                     name="defaultWindowDays"
                     type="number"
                     min={1}
-                    max={60}
+                    max={MAX_WINDOW_DAYS}
                     required
                     defaultValue={b?.defaultWindowDays ?? 15}
                   />

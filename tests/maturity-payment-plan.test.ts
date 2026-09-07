@@ -60,18 +60,25 @@ describe('maturity forecast payment projection', () => {
       maturityOn: '2026-09-01',
       amountPaise: 9_000_000n,
     }));
-    const daily = aggregateForecastPayments(projectForecastPayments('2026-09', rows, basePolicy));
+    const instalments = projectForecastPayments('2026-09', rows, basePolicy);
+    const daily = aggregateForecastPayments(instalments);
     const busiest = daily.reduce((max, day) => day.totalPaise > max ? day.totalPaise : max, 0n);
     const quietest = daily.reduce(
       (min, day) => min === null || day.totalPaise < min ? day.totalPaise : min,
       null as bigint | null,
     )!;
 
-    expect(daily.length).toBeGreaterThan(20);
+    // Twenty small cases are split into six alternate payouts each.  The two open-day tracks
+    // overlap for the middle five dates; the edge dates carry one track only.
+    expect(instalments).toHaveLength(20 * 6);
+    expect(daily.length).toBe(7);
     expect(daily[0]?.dueOn).toBe('2026-09-04');
-    expect(daily.at(-1)?.dueOn).toBe('2026-10-12');
+    expect(daily.at(-1)?.dueOn).toBe('2026-09-18');
     expect(daily.every((day) => day.cases > 0)).toBe(true);
-    expect(busiest - quietest).toBeLessThanOrEqual(1_000_000n);
+    expect(daily[0]?.cases).toBe(10);
+    expect(daily.at(-1)?.cases).toBe(10);
+    expect(busiest).toBe(30_000_000n);
+    expect(quietest).toBe(15_000_000n);
     expect(daily.reduce((sum, day) => sum + day.totalPaise, 0n)).toBe(180_000_000n);
   });
 });

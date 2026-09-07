@@ -45,6 +45,7 @@ import {
   requestCloseDayAction,
   saveDayCashAction,
   saveRegisterFieldsAction,
+  saveRegisterPaidTotalAction,
   settleRegisterRowAction,
 } from '@/actions/register';
 import { AdminDateCell } from '@/components/domain/admin-date-cell';
@@ -134,7 +135,7 @@ import {
   REGISTER_COL_DEFS,
 } from '@/lib/register-layout';
 import { tickPlanFor } from '@/lib/mark-confirm';
-import { formatPaise, tryParseRupeesToPaise } from '@/lib/money';
+import { formatPaise, paiseToDecimalString, tryParseRupeesToPaise } from '@/lib/money';
 import { payoutPlanFor, windowDaysForPayoutCount } from '@/lib/payout-policy';
 import { cn } from '@/lib/utils';
 import { formatDMY } from '@/lib/working-days';
@@ -1329,7 +1330,9 @@ export function RegisterSheet(props: {
   const dueStats = useMemo(() => summariseDueToday(props.rows, props.today), [props.rows, props.today]);
 
   const paidTodayP = BigInt(props.paidTodayPaise);
-  const stillToGive = dueStats.total > paidTodayP ? dueStats.total - paidTodayP : 0n;
+  // summariseDueToday already excludes paid amounts; subtracting receipts again understates cash needed.
+  const stillToGive = dueStats.total;
+  const todaysListCount = props.rows.filter(isOnTodaysList).length;
 
   const allRemaining = props.rows.reduce((a, r) => a + BigInt(r.remainingPaise), 0n);
   const cashHandP = tryParseRupeesToPaise(cashHand) ?? 0n;
@@ -1610,6 +1613,18 @@ export function RegisterSheet(props: {
     else { rememberGridFocus(); router.refresh(); }
   }
 
+  async function savePaidTotal(row: RegisterRow, paidRupees: string) {
+    if (!props.canCorrectPay) return;
+    const reason = window.prompt(
+      `Reason for correcting cumulative Paid for ${row.customerName}:`,
+      'Register paid-total correction',
+    );
+    if (!reason?.trim()) return;
+    const result = await saveRegisterPaidTotalAction(row.id, paidRupees, reason.trim());
+    if (!result.ok) toast.error(result.error);
+    else { rememberGridFocus(); router.refresh(); }
+  }
+
   async function saveLegs(row: RegisterRow, cashRupees: string, onlineRupees: string, instalmentId: string | null) {
     if (!instalmentId) {
       toast.error('This row has no scheduled payment for that day.');
@@ -1641,11 +1656,11 @@ export function RegisterSheet(props: {
    */
   async function savePaidSplit(
     row: RegisterRow,
-    cashRupees: bigint,
-    onlineRupees: bigint,
+    cashPaise: bigint,
+    onlinePaise: bigint,
     suppliedReference: string | null = null,
   ): Promise<boolean> {
-    const total = cashRupees + onlineRupees;
+    const totalPaise = cashPaise + onlinePaise;
     /*
       What this figure is allowed to reach, measured as the server will measure it.
 
@@ -1663,18 +1678,18 @@ export function RegisterSheet(props: {
     const capacity =
       dueTodayOutstanding + BigInt(row.overduePaise) + BigInt(row.paidTodayActualPaise);
 
-    if (capacity === 0n && total > 0n && !row.todayInstalmentId) {
+    if (capacity === 0n && totalPaise > 0n && !row.todayInstalmentId) {
       toast.error('Nothing is due on this row today or earlier.');
       return false;
     }
 
-    const reference = onlineRupees <= 0n
+    const reference = onlinePaise <= 0n
       ? null
       : (suppliedReference ?? window.prompt('Enter UTR / transfer reference for the online amount:'));
-    if (onlineRupees > 0n && !reference?.trim()) return false;
+    if (onlinePaise > 0n && !reference?.trim()) return false;
 
     const replacing = BigInt(row.paidTodayActualPaise) > 0n;
-    const payingAhead = total * 100n > capacity;
+    const payingAhead = totalPaise > capacity;
     let reason: string | null = 'Register entry';
     if (payingAhead) {
       reason = window.prompt(
@@ -1689,8 +1704,8 @@ export function RegisterSheet(props: {
 
     const result = await settleRegisterRowAction(
       row.id,
-      cashRupees.toString(),
-      onlineRupees.toString(),
+      paiseToDecimalString(cashPaise),
+      paiseToDecimalString(onlinePaise),
       reference?.trim() || null,
       reason?.trim() || null,
     );
@@ -1806,7 +1821,7 @@ export function RegisterSheet(props: {
     try {
       if (typedRupees != null) {
         const plan = tickPlanFor(day, typedRupees);
-        if (await savePaidSplit(row, typedRupees - plan.onlinePaise / 100n, plan.onlinePaise / 100n, reference)) {
+        if (await savePaidSplit(row, plan.totalPaise - plan.onlinePaise, plan.onlinePaise, reference)) {
           toast.success('Marked taken');
         }
         return;
@@ -2063,7 +2078,7 @@ export function RegisterSheet(props: {
    * "All branches" cannot take new rows. Due today's cash figure lives on the desk, not in
    * these empty rows.
    */
-  const sheetUnfiltered = !q.trim() && !agentId && !props.compiledView;
+  const sheetUnfiltered = tab === 'all' && !isRangeActive(range) && !q.trim() && !agentId && !props.compiledView;
   const canTypeBlanks = sheetUnfiltered && props.canEdit && props.canCreate && !locked;
   const blankRowCount = canTypeBlanks ? blankRows : 0;
 
@@ -2578,7 +2593,7 @@ export function RegisterSheet(props: {
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-2">
               <div className="flex max-w-full overflow-x-auto rounded-[10px] border border-[var(--input-border)] p-0.5">
                 {(['due', 'missed', 'today', 'pending', 'all'] as Tab[]).map((t) => {
-                  const badge = t === 'due' ? dueStats.count : t === 'missed' ? missedCount : 0;
+                  const badge = t === 'due' ? todaysListCount : t === 'missed' ? missedCount : 0;
                   return (
                     <button
                       key={t}
@@ -3999,12 +4014,12 @@ export function RegisterSheet(props: {
                             ariaLabel={`${c.label} for ${r.customerName}`}
                             group
                             className={cn(num, paidP > 0n && 'bg-[var(--row-taken)] text-[var(--row-taken-fg)]')}
-                            disabled={!edit}
+                            disabled={!props.canCorrectPay}
                             value={paidDraft}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paid: v } }))}
                             onCommit={(v) => {
                               if (v.trim() === rupeesStr(BigInt(r.paidPaise))) return;
-                              void save(r.id, { paidRupees: v });
+                              void savePaidTotal(r, v);
                             }}
                           />
                         )}
@@ -4167,8 +4182,10 @@ export function RegisterSheet(props: {
                             onCommit={(v) => {
                               if (!props.canCorrectPay) return;
                               if (v.trim() === rupeesStr(paidView.total)) return;
-                              const total = BigInt(v || '0');
-                              const currentOnline = BigInt(d(r.id, 'paidOnlineActual', rupeesStr(paidView.online)) || '0');
+                              const total = tryParseRupeesToPaise(v || '0') ?? 0n;
+                              const currentOnline = tryParseRupeesToPaise(
+                                d(r.id, 'paidOnlineActual', rupeesStr(paidView.online)) || '0',
+                              ) ?? 0n;
                               const online = currentOnline > total ? 0n : currentOnline;
                               void savePaidSplit(r, total - online, online);
                             }}
@@ -4184,8 +4201,11 @@ export function RegisterSheet(props: {
                             onCommit={(v) => {
                               if (!props.canCorrectPay) return;
                               if (v.trim() === rupeesStr(paidView.cash)) return;
-                              const online = BigInt(d(r.id, 'paidOnlineActual', rupeesStr(paidView.online)) || '0');
-                              void savePaidSplit(r, BigInt(v || '0'), online);
+                              const cash = tryParseRupeesToPaise(v || '0') ?? 0n;
+                              const online = tryParseRupeesToPaise(
+                                d(r.id, 'paidOnlineActual', rupeesStr(paidView.online)) || '0',
+                              ) ?? 0n;
+                              void savePaidSplit(r, cash, online);
                             }}
                           />
                         )}
@@ -4199,8 +4219,11 @@ export function RegisterSheet(props: {
                             onCommit={(v) => {
                               if (!props.canCorrectPay) return;
                               if (v.trim() === rupeesStr(paidView.online)) return;
-                              const cash = BigInt(d(r.id, 'paidCashActual', rupeesStr(paidView.cash)) || '0');
-                              void savePaidSplit(r, cash, BigInt(v || '0'));
+                              const cash = tryParseRupeesToPaise(
+                                d(r.id, 'paidCashActual', rupeesStr(paidView.cash)) || '0',
+                              ) ?? 0n;
+                              const online = tryParseRupeesToPaise(v || '0') ?? 0n;
+                              void savePaidSplit(r, cash, online);
                             }}
                           />
                         )}

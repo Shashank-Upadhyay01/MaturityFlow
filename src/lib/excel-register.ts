@@ -5,6 +5,7 @@
 import { isPriorityCase, windowDaysForPayoutCount } from './payout-policy';
 import { DEFAULT_REGISTER_LAYOUT, excelHeadersForLayout } from './register-layout';
 import { parseISODate, type ISODate } from './working-days';
+import { parseRupeesToPaise } from './money';
 
 export const REGISTER_COLUMNS = excelHeadersForLayout(DEFAULT_REGISTER_LAYOUT);
 
@@ -80,6 +81,10 @@ export interface RegisterRow {
   approvedOn: ISODate | null;
   paymentOn: ISODate | null;
   maturityRupees: number;
+  /** Exact values from the spreadsheet boundary; services must use these when present. */
+  maturityPaise?: string;
+  paidPaise?: string;
+  todayPayablePaise?: string;
   paidRupees: number;
   remainingRupees: number;
   agentName: string;
@@ -107,7 +112,7 @@ export function toISO(y: number, m: number, d: number): ISODate | null {
 /** Excel serial (days since 1899-12-30) → ISO. */
 export function excelSerialToISO(n: number): ISODate | null {
   if (!Number.isFinite(n) || n < 20000 || n > 80000) return null;
-  const utc = Date.UTC(1899, 11, 30) + Math.round(n) * 86_400_000;
+  const utc = Date.UTC(1899, 11, 30) + Math.floor(n) * 86_400_000;
   const dt = new Date(utc);
   return toISO(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate());
 }
@@ -164,6 +169,7 @@ export function parseRegisterDate(raw: unknown): ISODate | null {
     return parseRegisterDate((raw as { result: unknown }).result);
   }
   const s = String(raw).trim();
+  if (/^\d{5}(?:\.\d+)?$/.test(s)) return excelSerialToISO(Number(s));
   const dmy = s.match(DMY);
   if (dmy) return toISO(Number(dmy[3]), Number(dmy[2]), Number(dmy[1]));
   const dmy2 = s.match(DMY2);
@@ -190,8 +196,10 @@ export function parseRegisterGrid(grid: unknown[][]): { rows: RegisterRow[]; err
   const errors: string[] = [];
   if (grid.length < 2) return { rows: [], errors: ['The sheet is empty.'] };
 
-  const header = grid[0].map((h) => String(h ?? '').trim().toLowerCase());
-  const idx = (label: string) => header.findIndex((h) => h.includes(label));
+  const key = (value: unknown) => String(excelCellRaw(value) ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const headerIndex = grid.findIndex((line) => Array.isArray(line) && line.some((h) => key(h) === 'customername') && line.some((h) => key(h) === 'maturityamount'));
+  const header = (grid[headerIndex] ?? []).map(key);
+  const idx = (label: string) => header.indexOf(key(label));
   const firstIdx = (...labels: string[]) => {
     for (const label of labels) {
       const i = idx(label);
@@ -199,20 +207,23 @@ export function parseRegisterGrid(grid: unknown[][]): { rows: RegisterRow[]; err
     }
     return -1;
   };
-  const iAcct = idx('account');
+  const iAcct = firstIdx('account number', 'savings account number', 'account no', 'account');
   const iName = firstIdx('customer name', 'customer');
   const iMat = firstIdx('date of maturity', 'maturity date', 'maturity');
-  const iSub = firstIdx('form submission', 'submission', 'form in', 'form date');
+  // Match the complete header first.  The workbook uses "Form Submission Date"; the shorter
+  // aliases remain for older branch sheets, but must not be treated as prefixes because e.g.
+  // "Maturity" could otherwise match the Maturity Amount column.
+  const iSub = firstIdx('form submission date', 'form submission', 'submission date', 'submission', 'form in date', 'form in', 'form date');
   const iPay = firstIdx('payment date', 'payment');
-  const iAmt = header.findIndex((h) => h === 'maturity amount' || h.includes('maturity amount'));
-  const iPaid = idx('paid');
-  const iRem = idx('remaining');
-  const iAgent = idx('agent');
-  const iToday = firstIdx('due payment', 'today');
+  const iAmt = idx('maturity amount');
+  const iPaid = firstIdx('paid', 'paid maturity', 'paid amount');
+  const iRem = firstIdx('remaining', 'remaining amount');
+  const iAgent = firstIdx('agent name', "customer's agent name", 'agent');
+  const iToday = firstIdx('due payment', "today's amount", "today's approved withdrawalable amount", 'today');
   const iApproval = firstIdx('approval date', 'approval');
   const iWin = firstIdx('window days', 'window', 'days');
-  const iBranchCode = header.findIndex((h) => h === 'branch code' || h.includes('branch code'));
-  const iBranchName = header.findIndex((h) => h === 'branch name' || h.includes('branch name'));
+  const iBranchCode = idx('branch code');
+  const iBranchName = idx('branch name');
   const iBranch = iBranchCode >= 0 ? iBranchCode : iBranchName >= 0 ? iBranchName : header.indexOf('branch');
 
   if (iName < 0 || iAmt < 0) {
@@ -223,20 +234,43 @@ export function parseRegisterGrid(grid: unknown[][]): { rows: RegisterRow[]; err
   }
 
   const rows: RegisterRow[] = [];
-  for (let r = 1; r < grid.length; r++) {
+  for (let r = headerIndex + 1; r < grid.length; r++) {
     const line = grid[r] ?? [];
     const customerName = String(excelCellRaw(line[iName]) ?? '').trim();
-    if (!customerName) continue;
+    if (!customerName) {
+      if (iAcct >= 0 && String(excelCellRaw(line[iAcct]) ?? '').trim()) errors.push(`Row ${r + 1}: Customer Name is required.`);
+      continue;
+    }
+    if (/^(?:grand\s+)?total(?:s)?$/i.test(customerName) || key(customerName) === 'customername') continue;
     const warnings: string[] = [];
     const formSubmittedOn = iSub >= 0 ? parseRegisterDate(excelCellRaw(line[iSub])) : null;
     let paymentOn = iPay >= 0 ? parseRegisterDate(excelCellRaw(line[iPay])) : null;
     const instrumentMaturityOn = iMat >= 0 ? parseRegisterDate(excelCellRaw(line[iMat])) : null;
     const approvedOn = iApproval >= 0 ? parseRegisterDate(excelCellRaw(line[iApproval])) : null;
-    const maturityRupees = parseRupeesNumber(excelCellRaw(line[iAmt]));
-    const paidRupees = iPaid >= 0 ? parseRupeesNumber(excelCellRaw(line[iPaid])) : 0;
-    let remainingRupees = iRem >= 0 ? parseRupeesNumber(excelCellRaw(line[iRem])) : maturityRupees - paidRupees;
-    if (Math.abs(maturityRupees - paidRupees - remainingRupees) > 1) {
-      remainingRupees = Math.max(0, maturityRupees - paidRupees);
+    const invalidDate = [[iSub, formSubmittedOn, 'Form Submission Date'], [iPay, paymentOn, 'Payment Date'], [iMat, instrumentMaturityOn, 'Maturity Date'], [iApproval, approvedOn, 'Approval Date']]
+      .find(([column, date]) => Number(column) >= 0 && String(excelCellRaw(line[Number(column)]) ?? '').trim() !== '' && !date);
+    if (invalidDate) {
+      errors.push(`Row ${r + 1} (${customerName}): invalid ${invalidDate[2]}; use dd-mm-yyyy or a valid Excel date.`);
+      continue;
+    }
+    let maturityPaise: bigint;
+    let paidPaise: bigint;
+    let todayPaise: bigint;
+    try {
+      const moneyAt = (column: number) => parseRupeesToPaise((column < 0 ? '' : excelCellRaw(line[column])) as string | number || '0');
+      maturityPaise = moneyAt(iAmt);
+      paidPaise = moneyAt(iPaid);
+      todayPaise = moneyAt(iToday);
+      if (maturityPaise <= 0n) throw new Error('Maturity Amount must be greater than zero.');
+      if (paidPaise > maturityPaise) throw new Error('Paid exceeds Maturity Amount.');
+    } catch (error) {
+      errors.push(`Row ${r + 1} (${customerName}): ${error instanceof Error ? error.message : 'Invalid money value.'}`);
+      continue;
+    }
+    const maturityRupees = Number(maturityPaise) / 100;
+    const paidRupees = Number(paidPaise) / 100;
+    const remainingRupees = Number(maturityPaise - paidPaise) / 100;
+    if (iRem >= 0 && String(excelCellRaw(line[iRem]) ?? '').trim() !== '' && parseRupeesNumber(excelCellRaw(line[iRem])) !== remainingRupees) {
       warnings.push('Remaining did not match amount − paid; remaining was recomputed.');
     }
     if (!formSubmittedOn) {
@@ -246,32 +280,46 @@ export function parseRegisterGrid(grid: unknown[][]): { rows: RegisterRow[]; err
       warnings.push('Maturity date is blank.');
     }
     if (paymentOn && formSubmittedOn && paymentOn < formSubmittedOn) {
-      const iso = String(excelCellRaw(line[iPay]) ?? '').match(ISO);
+      // A legacy workbook may contain a payment cell that Excel parsed month-first while the
+      // form date is typed day-first (for example ISO 2026-03-08 for an intended 03-08-2026).
+      // Only accept the swap when it repairs the impossible chronology; ordinary ISO/Date input
+      // remains untouched everywhere else.
+      const rawPayment = String(excelCellRaw(line[iPay]) ?? '').trim();
+      const iso = rawPayment.match(ISO);
       const swapped = iso ? toISO(Number(iso[1]), Number(iso[3]), Number(iso[2])) : null;
       if (swapped && swapped >= formSubmittedOn) paymentOn = swapped;
-      else {
-        warnings.push('Payment date was before submission; using submission date as approval.');
-        paymentOn = formSubmittedOn;
-      }
+      else warnings.push('Payment date is before form submission; the supplied date is preserved.');
     }
     const windowDays =
       iWin >= 0
-        ? Math.max(1, Math.round(parseRupeesNumber(excelCellRaw(line[iWin])) || 15))
+        ? Number(excelCellRaw(line[iWin]) || defaultWindowDaysFor(maturityRupees))
         : defaultWindowDaysFor(maturityRupees);
+    if (!Number.isInteger(windowDays) || windowDays < 1 || windowDays > 366) {
+      errors.push(`Row ${r + 1} (${customerName}): Window Days must be a whole number from 1 to 366.`);
+      continue;
+    }
+    const account = iAcct >= 0 ? excelCellRaw(line[iAcct]) : '';
+    if (typeof account === 'number' && (!Number.isSafeInteger(account) || account < 0) || typeof account === 'string' && /^\d+(?:\.\d+)?e[+-]?\d+$/i.test(account)) {
+      errors.push(`Row ${r + 1} (${customerName}): account number lost precision in Excel; format the account column as Text and enter it again.`);
+      continue;
+    }
     const agentName = iAgent >= 0 ? String(excelCellRaw(line[iAgent]) ?? '').trim() || 'Unassigned' : 'Unassigned';
     rows.push({
-      branchReference: iBranch >= 0 ? String(excelCellRaw(line[iBranch]) ?? '').trim() : '',
+      branchReference: iBranch >= 0 ? String(excelCellRaw(line[iBranch]) || (iBranchName >= 0 ? excelCellRaw(line[iBranchName]) : '') || '').trim() : '',
       accountNumber: iAcct >= 0 ? accountString(excelCellRaw(line[iAcct])) : '',
       customerName,
       instrumentMaturityOn,
       formSubmittedOn,
       paymentOn,
       maturityRupees,
+      maturityPaise: maturityPaise.toString(),
+      paidPaise: paidPaise.toString(),
+      todayPayablePaise: todayPaise.toString(),
       paidRupees,
       remainingRupees,
       agentName,
       approvedOn,
-      todayPayableRupees: iToday >= 0 ? parseRupeesNumber(excelCellRaw(line[iToday])) : 0,
+      todayPayableRupees: Number(todayPaise) / 100,
       windowDays,
       rowNumber: r + 1,
       warnings,

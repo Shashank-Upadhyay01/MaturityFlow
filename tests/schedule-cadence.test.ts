@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generateSchedule, rescheduleRemaining } from '../src/lib/payout-engine';
-import { countWorkingDaysBetween, makeCalendar } from '../src/lib/working-days';
+import { addDays, countWorkingDaysBetween, makeCalendar, nextWorkingDay } from '../src/lib/working-days';
 import { payoutPlanFor } from '../src/lib/payout-policy';
 
 const cal = makeCalendar();
@@ -17,9 +17,9 @@ describe('rescheduling keeps the cadence', () => {
   it('an alternate-day case stays on alternate days', () => {
     const r = rescheduleRemaining({ ...common, cadence: 'ALTERNATE' });
     for (let i = 0; i + 1 < r.installments.length; i++) {
-      expect(
-        countWorkingDaysBetween(r.installments[i].dueDate, r.installments[i + 1].dueDate, cal),
-      ).toBe(3); // two working days apart, inclusive count
+      expect(r.installments[i + 1].dueDate).toBe(
+        nextWorkingDay(addDays(r.installments[i].dueDate, 2), cal),
+      );
     }
     expect(r.installments.reduce((s, i) => s + i.amountPaise, 0n)).toBe(common.remainingPaise);
   });
@@ -52,6 +52,7 @@ describe('rescheduling keeps the cadence', () => {
       processingDays: 3,
       payoutDays: 6,
       stride: 2,
+      calendarDayGap: 2,
     });
   });
 });

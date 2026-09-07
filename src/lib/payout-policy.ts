@@ -17,19 +17,18 @@ import { addDays, nextWorkingDay, type ISODate, type WorkingDayCalendar } from '
 export const LARGE_CASE_THRESHOLD_PAISE = 10_000_000n;
 
 /**
- * Working days after approval that carry no payout.
- *
- * The form is checked, the schedule signed off and the cash arranged before a rupee moves, so
- * the window opens on the fourth working day. A constant, not a branch setting — see the spec's
- * non-goals before making it configurable.
+ * The three intake days in the recommended window: maturity, form submission, approval.
+ * These are already spent before payout day one; never add them after approval.
  */
 export const PROCESSING_WORKING_DAYS = 3;
 
+/** Database-supported upper bound for a custom payout window. */
+export const MAX_WINDOW_DAYS = 366;
+
 /**
- * The shortest window that can actually pay anything: the processing days plus one payout day.
- * Validate against this at input, so a case cannot be created that can never be approved.
+ * Custom plans may settle the entire balance in one payment.
  */
-export const MIN_WINDOW_DAYS = PROCESSING_WORKING_DAYS + 1;
+export const MIN_WINDOW_DAYS = 1;
 
 export type Cadence = 'DAILY' | 'ALTERNATE';
 
@@ -50,28 +49,51 @@ export const AUTO_APPROVAL_CALENDAR_DAYS = 3;
  * payment date and never on this. It exists so a case waiting to be looked at shows the date it
  * is expected by, instead of a blank cell nobody can chase.
  */
-export const APPROVAL_LEAD_CALENDAR_DAYS = 3;
+export const APPROVAL_LEAD_CALENDAR_DAYS = 1;
 
 /**
  * Calendar days between the approval date and the day the payouts start.
  *
- * The office types the approval date; the payment date follows it by three days and the sheet
- * fills it in. Counted in CALENDAR days for the same reason the maturity gap is: "three days
- * after approval" is a promise a customer can check on a wall calendar. The clerk can still
+ * The office types the approval date; the payment date follows it by one calendar day.
+ * The clerk can still
  * overwrite the payment date afterwards — this is the default, not a lock.
  */
-export const PAYMENT_LEAD_CALENDAR_DAYS = 3;
+export const PAYMENT_LEAD_CALENDAR_DAYS = 1;
 
 /**
  * The payment date an approval date implies.
  *
  * Deliberately NOT rolled onto the next working day. The office reads this as plain arithmetic —
- * approval on the 1st, payment on the 4th — and a date that silently jumped a Sunday would stop
- * matching what they wrote on the form. `scheduleAnchorFor` still rolls the first payout onto an
- * open day when the schedule is built, which is where that belongs.
+ * approval on the 1st, payment on the 2nd. `caseScheduleAnchorFor` rolls a recommended start
+ * onto an open day; an explicitly supplied payment date is retained exactly.
  */
 export function paymentFollowingApproval(approvalOn: ISODate): ISODate {
   return addDays(approvalOn, PAYMENT_LEAD_CALENDAR_DAYS);
+}
+
+/** One definition for intake, register edits and preview. Explicit dates are customer overrides. */
+export function caseScheduleAnchorFor(
+  dates: {
+    paymentOn?: ISODate | null;
+    opsReviewedOn?: ISODate | null;
+    instrumentMaturityOn?: ISODate | null;
+    formSubmittedOn: ISODate;
+    /** Automatic schedules for old cases start today, never in the past. */
+    today?: ISODate;
+  },
+  calendar: WorkingDayCalendar,
+): ISODate {
+  if (dates.paymentOn) {
+    // Validate without rolling a customer-agreed date away from what the clerk typed.
+    return addDays(dates.paymentOn, 0);
+  }
+  const maturityApproval = dates.instrumentMaturityOn
+    ? addDays(dates.instrumentMaturityOn, AUTO_APPROVAL_CALENDAR_DAYS - PAYMENT_LEAD_CALENDAR_DAYS)
+    : null;
+  const formApproval = addDays(dates.formSubmittedOn, APPROVAL_LEAD_CALENDAR_DAYS);
+  const approval = dates.opsReviewedOn ?? (maturityApproval && maturityApproval > formApproval ? maturityApproval : formApproval);
+  const promised = nextWorkingDay(paymentFollowingApproval(approval), calendar);
+  return dates.today && promised < dates.today ? nextWorkingDay(dates.today, calendar) : promised;
 }
 
 /**
@@ -153,12 +175,14 @@ export function scheduleAnchorFor(
 
 export interface PayoutPlan {
   cadence: Cadence;
-  /** Working days after approval with no payout. */
+  /** Intake days reserved by the default recommendation, before payout day one. */
   processingDays: number;
   /** How many instalments the schedule should have. */
   payoutDays: number;
   /** Working days between consecutive payouts. */
   stride: 1 | 2;
+  /** Alternate payouts skip one calendar day, then roll holidays forward. */
+  calendarDayGap?: number;
 }
 
 /**
@@ -184,13 +208,9 @@ export function payoutPlanFor(
     );
   }
 
-  const usableDays = windowDays - processingDays;
-  if (usableDays < 1) {
-    throw new PayoutPolicyError(
-      `A ${windowDays}-working-day window with ${processingDays} processing days leaves no day ` +
-        'to pay on. Widen the window or reduce the processing days.',
-    );
-  }
+  // A short custom window means one settlement. Processing is a recommendation, never a gate.
+  const effectiveProcessingDays = Math.min(processingDays, windowDays - 1);
+  const usableDays = windowDays - effectiveProcessingDays;
 
   const cadence = cadenceFor(maturityAmountPaise);
   const stride = strideFor(cadence);
@@ -206,7 +226,13 @@ export function payoutPlanFor(
     );
   }
 
-  return { cadence, processingDays, payoutDays, stride };
+  return {
+    cadence,
+    processingDays: effectiveProcessingDays,
+    payoutDays,
+    stride,
+    ...(cadence === 'ALTERNATE' ? { calendarDayGap: 2 } : {}),
+  };
 }
 
 /**
@@ -216,7 +242,10 @@ export function payoutPlanFor(
  * gap. ₹1 lakh+ at 12 → window 15 daily; below ₹1 lakh at 6 → alternate days inside that window.
  */
 export function windowDaysForPayoutCount(maturityAmountPaise: bigint, payoutDays: number): number {
-  const n = Math.max(1, Math.floor(payoutDays) || 1);
+  if (!Number.isInteger(payoutDays) || payoutDays < 1) {
+    throw new PayoutPolicyError('Payout count must be a whole number of at least 1.');
+  }
+  const n = payoutDays;
   const stride = strideFor(cadenceFor(maturityAmountPaise));
   const usable = stride === 1 ? n : n * stride - (stride - 1);
   return Math.max(MIN_WINDOW_DAYS, usable + PROCESSING_WORKING_DAYS);

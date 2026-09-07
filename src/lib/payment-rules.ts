@@ -11,6 +11,22 @@
 import type { Paise } from './money';
 import { formatPaise } from './money';
 
+/** Keep the unpaid tender recommendation, while actual cash/online always fits its planned leg. */
+export function reconcileInstalmentLegs(
+  amountPaise: bigint,
+  plannedCashPaise: bigint,
+  paidCashPaise: bigint,
+  paidOnlinePaise: bigint,
+): { cashPaise: bigint; onlinePaise: bigint } {
+  if (amountPaise < 0n || paidCashPaise < 0n || paidOnlinePaise < 0n || paidCashPaise + paidOnlinePaise > amountPaise) {
+    throw new Error('Instalment paid total is outside its planned amount.');
+  }
+  const maximumCash = amountPaise - paidOnlinePaise;
+  const cashPaise = plannedCashPaise < paidCashPaise ? paidCashPaise
+    : plannedCashPaise > maximumCash ? maximumCash : plannedCashPaise;
+  return { cashPaise, onlinePaise: amountPaise - cashPaise };
+}
+
 export type PayoutRejectionCode =
   | 'NON_POSITIVE_AMOUNT'
   | 'NEGATIVE_LEG'

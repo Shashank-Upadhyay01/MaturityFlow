@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { and, eq, inArray, isNull, lte, sql } from 'drizzle-orm';
-import { db } from '@/db';
+import { db, type Tx } from '@/db';
 import {
   caseEvents,
   maturityCases,
@@ -13,10 +13,11 @@ import { writeAudit } from '@/lib/audit';
 import type { SessionUser } from '@/lib/auth/session';
 import { newId } from '@/lib/id';
 import { formatPaise } from '@/lib/money';
-import { legsAfterPayment } from '@/lib/register-view';
-import { planSettlement, validatePayout } from '@/lib/payment-rules';
-import { rebalanceAfter } from '@/lib/schedule-edit';
+import { planSettlement, reconcileInstalmentLegs, validatePayout } from '@/lib/payment-rules';
 import { parseISODate, todayISO } from '@/lib/working-days';
+import { canOverrideDates } from '@/lib/rbac';
+import { ensureAllocatedLedgerInTx } from './payout-ledger';
+import { persistInstalmentEdit } from './schedule-service';
 
 export class PayoutError extends Error {
   constructor(
@@ -29,6 +30,14 @@ export class PayoutError extends Error {
 }
 
 const PAYABLE_STATUSES = new Set<MaturityCase['status']>(['APPROVED', 'IN_PROGRESS']);
+
+/** The case is already locked by every caller. Rebalance a custom receipt without changing debt. */
+async function expandInstalmentForPayment(tx: Tx, c: MaturityCase, instalmentId: string, amountPaise: bigint) {
+  await persistInstalmentEdit({ tx, caseRow: c, instalmentId, newAmountPaise: amountPaise });
+  return tx.select().from(payoutInstalments)
+    .where(and(eq(payoutInstalments.caseId, c.id), sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`))
+    .for('update').orderBy(payoutInstalments.dueOn, payoutInstalments.seq);
+}
 
 function resolveValueDate(raw: string | null | undefined, allowPast: boolean): string {
   const today = todayISO();
@@ -45,6 +54,143 @@ function resolveValueDate(raw: string | null | undefined, allowPast: boolean): s
     throw new PayoutError('Only Admin, CMD or CEO can record a payment on an earlier date.', 'FORBIDDEN');
   }
   return value;
+}
+
+export interface SetCasePaidTotalInput {
+  cashPaise: bigint;
+  onlinePaise: bigint;
+  reason: string;
+  reference?: string | null;
+  valueDate?: string | null;
+}
+
+/**
+ * Correct cumulative Register totals through receipts, inside the caller's CASE lock.
+ * Reductions reverse the most recent affected receipts and preserve any retained portion with
+ * its original value date. Increases are new, allocated receipts. No historical receipt is erased.
+ */
+export async function setCasePaidTotalInTx(
+  tx: Tx,
+  actor: SessionUser,
+  c: MaturityCase,
+  input: SetCasePaidTotalInput,
+  meta: { ip?: string | null; userAgent?: string | null } = {},
+) {
+  if (input.cashPaise < 0n || input.onlinePaise < 0n) throw new PayoutError('Paid amounts cannot be negative.', 'NEGATIVE');
+  if (input.cashPaise + input.onlinePaise > c.maturityAmountPaise) {
+    throw new PayoutError('The entered paid total exceeds the maturity amount.', 'EXCEEDS_REMAINING');
+  }
+  if (!input.reason.trim()) throw new PayoutError('Enter a reason for correcting paid totals.', 'REASON_REQUIRED');
+  if (!PAYABLE_STATUSES.has(c.status) && c.status !== 'COMPLETED' && c.status !== 'ON_HOLD') {
+    throw new PayoutError('Submit this case before recording its paid amount.', 'NOT_PAYABLE');
+  }
+  await ensureAllocatedLedgerInTx(tx, actor, c, meta);
+  const originalCash = c.paidCashPaise;
+  const originalOnline = c.paidOnlinePaise;
+  const live = await tx.select().from(payoutInstalments)
+    .where(and(eq(payoutInstalments.caseId, c.id), sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`))
+    .for('update').orderBy(payoutInstalments.dueOn, payoutInstalments.seq);
+  const receipts = await tx.select().from(payoutTransactions)
+    .where(and(eq(payoutTransactions.caseId, c.id), isNull(payoutTransactions.reversedAt)))
+    .for('update').orderBy(payoutTransactions.valueDate, payoutTransactions.createdAt, payoutTransactions.id);
+  const rows = new Map(live.map((row) => [row.id, row]));
+  const now = new Date();
+  const reversedIds: string[] = [];
+  const replacementIds: string[] = [];
+  const changedIds = new Set<string>();
+  let reduceCash = originalCash > input.cashPaise ? originalCash - input.cashPaise : 0n;
+  let reduceOnline = originalOnline > input.onlinePaise ? originalOnline - input.onlinePaise : 0n;
+  for (const receipt of [...receipts].reverse()) {
+    const cash = receipt.cashPaise < reduceCash ? receipt.cashPaise : reduceCash;
+    const online = receipt.onlinePaise < reduceOnline ? receipt.onlinePaise : reduceOnline;
+    if (cash + online === 0n) continue;
+    const row = receipt.instalmentId ? rows.get(receipt.instalmentId) : null;
+    if (!row) throw new PayoutError('An old receipt has no active schedule row.', 'LEDGER_MISMATCH');
+    await tx.update(payoutTransactions).set({ reversedAt: now, reversedById: actor.id, reversalReason: input.reason.trim() })
+      .where(eq(payoutTransactions.id, receipt.id));
+    reversedIds.push(receipt.id);
+    const retainedCash = receipt.cashPaise - cash;
+    const retainedOnline = receipt.onlinePaise - online;
+    if (retainedCash + retainedOnline > 0n) {
+      const id = newId('txn');
+      replacementIds.push(id);
+      await tx.insert(payoutTransactions).values({
+        id, caseId: c.id, instalmentId: row.id, branchId: c.branchId,
+        cashPaise: retainedCash, onlinePaise: retainedOnline, totalPaise: retainedCash + retainedOnline,
+        valueDate: receipt.valueDate, reference: receipt.reference, recordedById: receipt.recordedById,
+        remarks: `Retained portion of receipt ${receipt.id} — ${input.reason.trim()}`,
+      });
+    }
+    row.paidCashPaise -= cash;
+    row.paidOnlinePaise -= online;
+    changedIds.add(row.id);
+    reduceCash -= cash;
+    reduceOnline -= online;
+  }
+  if (reduceCash > 0n || reduceOnline > 0n) throw new PayoutError('The receipt ledger cannot cover this correction.', 'LEDGER_MISMATCH');
+
+  let addCash = input.cashPaise > originalCash ? input.cashPaise - originalCash : 0n;
+  let addOnline = input.onlinePaise > originalOnline ? input.onlinePaise - originalOnline : 0n;
+  if (addOnline > 0n && !input.reference?.trim()) throw new PayoutError('Online payment needs a UTR / reference.', 'REF_REQUIRED');
+  const valueDate = resolveValueDate(input.valueDate, canOverrideDates(actor.role));
+  for (const row of live) {
+    const outstanding = row.amountPaise - row.paidCashPaise - row.paidOnlinePaise;
+    if (outstanding <= 0n || addCash + addOnline <= 0n) continue;
+    const total = outstanding < addCash + addOnline ? outstanding : addCash + addOnline;
+    const cash = addCash < total ? addCash : total;
+    const online = total - cash;
+    const id = newId('txn');
+    replacementIds.push(id);
+    await tx.insert(payoutTransactions).values({
+      id, caseId: c.id, instalmentId: row.id, branchId: c.branchId,
+      cashPaise: cash, onlinePaise: online, totalPaise: total,
+      valueDate, reference: online > 0n ? input.reference?.trim() : null,
+      remarks: `Register paid-total correction — ${input.reason.trim()}`, recordedById: actor.id,
+    });
+    row.paidCashPaise += cash;
+    row.paidOnlinePaise += online;
+    changedIds.add(row.id);
+    addCash -= cash;
+    addOnline -= online;
+  }
+  if (addCash > 0n || addOnline > 0n) throw new PayoutError('The schedule cannot cover this paid total.', 'LEDGER_MISMATCH');
+  for (const row of live) {
+    if (!changedIds.has(row.id)) continue;
+    const paid = row.paidCashPaise + row.paidOnlinePaise;
+    const legs = reconcileInstalmentLegs(row.amountPaise, row.cashLegPaise, row.paidCashPaise, row.paidOnlinePaise);
+    await tx.update(payoutInstalments).set({
+      paidCashPaise: row.paidCashPaise, paidOnlinePaise: row.paidOnlinePaise,
+      cashLegPaise: legs.cashPaise, onlineLegPaise: legs.onlinePaise,
+      status: paid === row.amountPaise ? 'PAID' : paid > 0n ? 'PARTIAL' : 'PENDING', updatedAt: now,
+    }).where(eq(payoutInstalments.id, row.id));
+  }
+  const paid = input.cashPaise + input.onlinePaise;
+  const complete = paid === c.maturityAmountPaise;
+  const status = c.status === 'ON_HOLD' ? c.status : complete ? 'COMPLETED' : paid > 0n ? 'IN_PROGRESS' : 'APPROVED';
+  await tx.update(maturityCases).set({
+    paidCashPaise: input.cashPaise, paidOnlinePaise: input.onlinePaise,
+    status, completedAt: complete ? c.completedAt ?? now : null, updatedAt: now,
+  }).where(eq(maturityCases.id, c.id));
+  await tx.insert(caseEvents).values({
+    id: newId('evt'), caseId: c.id, type: paid >= originalCash + originalOnline ? 'PAYMENT_RECORDED' : 'PAYMENT_REVERSED',
+    actorId: actor.id, note: `Paid total corrected to ${formatPaise(paid)} — ${input.reason.trim()}`,
+  });
+  await writeAudit(tx, actor, {
+    action: 'payout.corrected', entity: 'MaturityCase', entityId: c.id, branchId: c.branchId,
+    summary: `${c.caseNumber}: paid total corrected to ${formatPaise(paid)} — ${input.reason.trim()}`,
+    before: { paidCashPaise: originalCash, paidOnlinePaise: originalOnline },
+    after: { paidCashPaise: input.cashPaise, paidOnlinePaise: input.onlinePaise, reversedReceiptIds: reversedIds, replacementReceiptIds: replacementIds },
+    ...meta,
+  });
+  return { remainingPaise: c.maturityAmountPaise - paid, caseCompleted: complete };
+}
+
+export async function setCasePaidTotal(actor: SessionUser, caseId: string, input: SetCasePaidTotalInput, meta = {}) {
+  return db.transaction(async (tx) => {
+    const [c] = await tx.select().from(maturityCases).where(eq(maturityCases.id, caseId)).for('update');
+    if (!c) throw new PayoutError('Case not found', 'NOT_FOUND');
+    return setCasePaidTotalInTx(tx, actor, c, input, meta);
+  });
 }
 
 export interface RecordPayoutInput {
@@ -89,6 +235,7 @@ export async function recordPayout(
       .for('update')
       .limit(1);
     if (!c) throw new PayoutError('Case not found', 'NOT_FOUND');
+    await ensureAllocatedLedgerInTx(tx, actor, c, meta);
 
     // Re-read the instalment INSIDE the lock. Reading it before the lock was a real bug:
     // twelve cashiers all saw paid = 0, queued on the case lock, and each validated against
@@ -118,8 +265,14 @@ export async function recordPayout(
     );
     if (!check.ok) throw new PayoutError(check.message, check.code);
 
+    const newInstTotal = inst.paidCashPaise + inst.paidOnlinePaise + check.totalPaise;
+    if (newInstTotal > inst.amountPaise) {
+      const updated = await expandInstalmentForPayment(tx, c, inst.id, newInstTotal);
+      Object.assign(inst, updated.find((row) => row.id === inst.id)!);
+    }
+
     const txnId = newId('txn');
-    const valueDate = input.valueDate ?? todayISO();
+    const valueDate = resolveValueDate(input.valueDate, canOverrideDates(actor.role));
 
     await tx.insert(payoutTransactions).values({
       id: txnId,
@@ -138,12 +291,15 @@ export async function recordPayout(
     const newInstCash = inst.paidCashPaise + input.cashPaise;
     const newInstOnline = inst.paidOnlinePaise + input.onlinePaise;
     const instPaid = newInstCash + newInstOnline;
+    const legs = reconcileInstalmentLegs(inst.amountPaise, inst.cashLegPaise, newInstCash, newInstOnline);
 
     await tx
       .update(payoutInstalments)
       .set({
         paidCashPaise: newInstCash,
         paidOnlinePaise: newInstOnline,
+        cashLegPaise: legs.cashPaise,
+        onlineLegPaise: legs.onlinePaise,
         status: instPaid >= inst.amountPaise ? 'PAID' : 'PARTIAL',
         updatedAt: new Date(),
       })
@@ -411,6 +567,7 @@ export async function reversePayout(
   reason: string,
   meta: { ip?: string | null; userAgent?: string | null } = {},
 ) {
+  if (!reason.trim()) throw new PayoutError('Enter a reason for reversing a payment.', 'REASON_REQUIRED');
   return db.transaction(async (tx) => {
     const [ref] = await tx
       .select({ caseId: payoutTransactions.caseId })
@@ -428,8 +585,22 @@ export async function reversePayout(
       .limit(1);
     if (!c) throw new PayoutError('Case not found', 'NOT_FOUND');
 
+    // Read the requested receipt after the CASE lock but do not lock it yet.  Ledger repair
+    // takes the child locks in the global case → instalments → receipts order.
+    const [requested] = await tx
+      .select()
+      .from(payoutTransactions)
+      .where(eq(payoutTransactions.id, txnId))
+      .limit(1);
+    if (!requested) throw new PayoutError('Transaction not found', 'NOT_FOUND');
+    if (requested.reversedAt) throw new PayoutError('This transaction is already reversed.', 'ALREADY_REVERSED');
+
+    const historicalAllocations = await ensureAllocatedLedgerInTx(tx, actor, c, meta);
+    const allocatedIds = historicalAllocations.get(txnId) ?? [txnId];
     // Re-read under the lock so two people reversing the same receipt at the same moment
-    // cannot both get past the already-reversed check and unwind the ledger twice.
+    // cannot both get past the already-reversed check and unwind the ledger twice.  A legacy
+    // unallocated receipt is expected to be reversed by the allocator; its replacements are the
+    // live receipts we unwind below.
     const [txn] = await tx
       .select()
       .from(payoutTransactions)
@@ -437,29 +608,35 @@ export async function reversePayout(
       .for('update')
       .limit(1);
     if (!txn) throw new PayoutError('Transaction not found', 'NOT_FOUND');
-    if (txn.reversedAt) throw new PayoutError('This transaction is already reversed.', 'ALREADY_REVERSED');
-
+    if (txn.reversedAt && !historicalAllocations.has(txnId)) {
+      throw new PayoutError('This transaction is already reversed.', 'ALREADY_REVERSED');
+    }
+    const toReverse = await tx.select().from(payoutTransactions)
+      .where(inArray(payoutTransactions.id, allocatedIds)).for('update');
     await tx
       .update(payoutTransactions)
       .set({ reversedAt: new Date(), reversedById: actor.id, reversalReason: reason })
-      .where(eq(payoutTransactions.id, txnId));
+      .where(inArray(payoutTransactions.id, allocatedIds));
 
-    if (txn.instalmentId) {
+    for (const receipt of toReverse) {
+      if (!receipt.instalmentId) throw new PayoutError('The receipt has no schedule allocation.', 'LEDGER_MISMATCH');
       const [inst] = await tx
         .select()
         .from(payoutInstalments)
-        .where(eq(payoutInstalments.id, txn.instalmentId))
+        .where(eq(payoutInstalments.id, receipt.instalmentId))
         .for('update')
         .limit(1);
-      if (inst) {
-        const cash = inst.paidCashPaise - txn.cashPaise;
-        const online = inst.paidOnlinePaise - txn.onlinePaise;
+      if (!inst) throw new PayoutError('The receipt has no schedule allocation.', 'LEDGER_MISMATCH');
+      {
+        const cash = inst.paidCashPaise - receipt.cashPaise;
+        const online = inst.paidOnlinePaise - receipt.onlinePaise;
         const paid = cash + online;
+        if (cash < 0n || online < 0n) throw new PayoutError('The payout ledger is inconsistent; reversal was not applied.', 'LEDGER_MISMATCH');
         await tx
           .update(payoutInstalments)
           .set({
-            paidCashPaise: cash < 0n ? 0n : cash,
-            paidOnlinePaise: online < 0n ? 0n : online,
+            paidCashPaise: cash,
+            paidOnlinePaise: online,
             status: paid <= 0n ? 'PENDING' : paid >= inst.amountPaise ? 'PAID' : 'PARTIAL',
             updatedAt: new Date(),
           })
@@ -467,16 +644,17 @@ export async function reversePayout(
       }
     }
 
-    const newCash = c.paidCashPaise - txn.cashPaise;
-    const newOnline = c.paidOnlinePaise - txn.onlinePaise;
+    const newCash = c.paidCashPaise - requested.cashPaise;
+    const newOnline = c.paidOnlinePaise - requested.onlinePaise;
     const paid = newCash + newOnline;
+    if (newCash < 0n || newOnline < 0n) throw new PayoutError('The payout ledger is inconsistent; reversal was not applied.', 'LEDGER_MISMATCH');
 
     await tx
       .update(maturityCases)
       .set({
-        paidCashPaise: newCash < 0n ? 0n : newCash,
-        paidOnlinePaise: newOnline < 0n ? 0n : newOnline,
-        status: paid <= 0n ? 'APPROVED' : 'IN_PROGRESS',
+        paidCashPaise: newCash,
+        paidOnlinePaise: newOnline,
+        status: c.status === 'ON_HOLD' ? 'ON_HOLD' : paid <= 0n ? 'APPROVED' : 'IN_PROGRESS',
         completedAt: null,
         updatedAt: new Date(),
       })
@@ -497,7 +675,7 @@ export async function reversePayout(
       branchId: c.branchId,
       summary: `${c.caseNumber}: reversed ${formatPaise(txn.totalPaise)} — ${reason}`,
       before: { casePaidPaise: c.paidCashPaise + c.paidOnlinePaise },
-      after: { casePaidPaise: paid },
+      after: { casePaidPaise: paid, reversedReceiptIds: allocatedIds },
       ...meta,
     });
 
@@ -548,6 +726,7 @@ export async function replaceInstalmentPayout(
     if (!PAYABLE_STATUSES.has(c.status) && c.status !== 'COMPLETED') {
       throw new PayoutError('This row is not open for payment.', 'NOT_PAYABLE');
     }
+    await ensureAllocatedLedgerInTx(tx, actor, c, meta);
 
     const [inst] = await tx
       .select()
@@ -560,7 +739,7 @@ export async function replaceInstalmentPayout(
       throw new PayoutError('This instalment is no longer part of the live schedule.', 'SUPERSEDED');
     }
 
-    const valueDate = input.valueDate ?? todayISO();
+    const valueDate = resolveValueDate(input.valueDate, canOverrideDates(actor.role));
     const current = await tx
       .select()
       .from(payoutTransactions)
@@ -588,12 +767,7 @@ export async function replaceInstalmentPayout(
     ) {
       throw new PayoutError('The payout ledger is inconsistent; correction was not applied.', 'LEDGER_MISMATCH');
     }
-    if (instCashWithoutToday + instOnlineWithoutToday + newTotal > inst.amountPaise) {
-      throw new PayoutError(
-        `Cannot set ${formatPaise(newTotal)} — this day has only ${formatPaise(inst.amountPaise - instCashWithoutToday - instOnlineWithoutToday)} left.`,
-        'EXCEEDS_INSTALMENT',
-      );
-    }
+    const desiredAmount = instCashWithoutToday + instOnlineWithoutToday + newTotal;
     if (caseCashWithoutToday + caseOnlineWithoutToday + newTotal > c.maturityAmountPaise) {
       throw new PayoutError('The entered payment exceeds the case balance.', 'EXCEEDS_REMAINING');
     }
@@ -602,6 +776,10 @@ export async function replaceInstalmentPayout(
     }
     if (oldTotal > 0n && !input.reason?.trim()) {
       throw new PayoutError('Enter a reason for changing a recorded payment.', 'REASON_REQUIRED');
+    }
+    if (desiredAmount > inst.amountPaise) {
+      const updated = await expandInstalmentForPayment(tx, c, inst.id, desiredAmount);
+      Object.assign(inst, updated.find((row) => row.id === inst.id)!);
     }
 
     const now = new Date();
@@ -637,11 +815,14 @@ export async function replaceInstalmentPayout(
     const newInstCash = instCashWithoutToday + input.cashPaise;
     const newInstOnline = instOnlineWithoutToday + input.onlinePaise;
     const newInstPaid = newInstCash + newInstOnline;
+    const legs = reconcileInstalmentLegs(inst.amountPaise, inst.cashLegPaise, newInstCash, newInstOnline);
     await tx
       .update(payoutInstalments)
       .set({
         paidCashPaise: newInstCash,
         paidOnlinePaise: newInstOnline,
+        cashLegPaise: legs.cashPaise,
+        onlineLegPaise: legs.onlinePaise,
         status: newInstPaid <= 0n ? 'PENDING' : newInstPaid >= inst.amountPaise ? 'PAID' : 'PARTIAL',
         updatedAt: now,
       })
@@ -738,6 +919,10 @@ export async function correctInstalmentPaid(
       .limit(1);
     if (!c) throw new PayoutError('Case not found', 'NOT_FOUND');
 
+    await ensureAllocatedLedgerInTx(tx, actor, c, meta);
+    if (!PAYABLE_STATUSES.has(c.status) && c.status !== 'COMPLETED' && c.status !== 'ON_HOLD') {
+      throw new PayoutError('This case is not open for payment correction.', 'NOT_PAYABLE');
+    }
     const live = await tx
       .select()
       .from(payoutInstalments)
@@ -755,37 +940,8 @@ export async function correctInstalmentPaid(
 
     const newTotal = input.cashPaise + input.onlinePaise;
     if (newTotal > inst.amountPaise) {
-      const rounding = c.roundingPaise > 0n ? c.roundingPaise : 100_000n;
-      const balanced = rebalanceAfter(
-        live.map((row) => ({
-          id: row.id,
-          seq: row.seq,
-          dueOn: row.dueOn,
-          amountPaise: row.amountPaise,
-          paidPaise: row.paidCashPaise + row.paidOnlinePaise,
-          isFinal: row.isFinal,
-        })),
-        inst.id,
-        newTotal,
-        rounding,
-      );
-      if (!balanced.ok) throw new PayoutError(balanced.message, balanced.error);
-      const nowEdit = new Date();
-      for (const row of balanced.instalments) {
-        const before = live.find((item) => item.id === row.id);
-        if (!before || before.amountPaise === row.amountPaise) continue;
-        await tx
-          .update(payoutInstalments)
-          .set({
-            amountPaise: row.amountPaise,
-            cashLegPaise: row.amountPaise,
-            onlineLegPaise: 0n,
-            updatedAt: nowEdit,
-          })
-          .where(eq(payoutInstalments.id, row.id));
-        before.amountPaise = row.amountPaise;
-      }
-      inst.amountPaise = newTotal;
+      const updated = await expandInstalmentForPayment(tx, c, inst.id, newTotal);
+      Object.assign(inst, updated.find((row) => row.id === inst.id)!);
     }
 
     const current = await tx
@@ -838,7 +994,7 @@ export async function correctInstalmentPaid(
 
     const newInstPaid = newTotal;
     const legs = newInstPaid > 0n
-      ? legsAfterPayment(inst.amountPaise, input.cashPaise, input.onlinePaise)
+      ? reconcileInstalmentLegs(inst.amountPaise, inst.cashLegPaise, input.cashPaise, input.onlinePaise)
       : { cashPaise: inst.cashLegPaise, onlinePaise: inst.onlineLegPaise };
     await tx
       .update(payoutInstalments)
@@ -937,81 +1093,29 @@ export async function recordRegisterPayout(
   },
   meta: { ip?: string | null; userAgent?: string | null } = {},
 ) {
-  return db.transaction(async (tx) => {
-    const [c] = await tx
-      .select()
-      .from(maturityCases)
-      .where(eq(maturityCases.id, input.caseId))
-      .for('update')
-      .limit(1);
-    if (!c) throw new PayoutError('Row not found', 'NOT_FOUND');
-    if (!PAYABLE_STATUSES.has(c.status)) {
-      throw new PayoutError('This row is not open for payment.', 'NOT_PAYABLE');
-    }
-
-    const total = input.cashPaise + input.onlinePaise;
-    if (total <= 0n) throw new PayoutError('Enter an amount to pay.', 'ZERO');
-    const remaining = c.maturityAmountPaise - c.paidCashPaise - c.paidOnlinePaise;
-    if (total > remaining) {
-      throw new PayoutError(
-        `Cannot pay ${formatPaise(total)} — only ${formatPaise(remaining)} is left.`,
-        'EXCEEDS_REMAINING',
-      );
-    }
-    if (input.onlinePaise > 0n && !input.reference?.trim()) {
-      throw new PayoutError('Online payment needs a UTR / reference.', 'REF_REQUIRED');
-    }
-
-    const valueDate = input.valueDate ?? todayISO();
-    await tx.insert(payoutTransactions).values({
-      id: newId('txn'),
-      caseId: c.id,
-      instalmentId: null,
-      branchId: c.branchId,
+  // Keep the legacy action name as a compatibility wrapper, but route it through the same
+  // allocation path as the visible Register.  The former implementation changed only the case
+  // totals and wrote an unallocated receipt, so the Register, case detail and customer statement
+  // could disagree after a custom withdrawal.  `settleRegisterRow` locks the case, allocates the
+  // receipt to live instalments, and leaves an append-only audit trail.
+  if (input.cashPaise < 0n || input.onlinePaise < 0n) {
+    throw new PayoutError('Paid amounts cannot be negative.', 'NEGATIVE');
+  }
+  if (input.cashPaise + input.onlinePaise <= 0n) {
+    throw new PayoutError('Enter an amount to pay.', 'ZERO');
+  }
+  return settleRegisterRow(
+    actor,
+    {
+      caseId: input.caseId,
       cashPaise: input.cashPaise,
       onlinePaise: input.onlinePaise,
-      totalPaise: total,
-      reference: input.reference?.trim() || null,
-      remarks: input.remarks?.trim() || null,
-      valueDate,
-      recordedById: actor.id,
-    });
-
-    const paidCash = c.paidCashPaise + input.cashPaise;
-    const paidOnline = c.paidOnlinePaise + input.onlinePaise;
-    const newRemaining = c.maturityAmountPaise - paidCash - paidOnline;
-    const todayLeft = c.todayApprovedPaise > total ? c.todayApprovedPaise - total : 0n;
-
-    await tx
-      .update(maturityCases)
-      .set({
-        paidCashPaise: paidCash,
-        paidOnlinePaise: paidOnline,
-        todayApprovedPaise: newRemaining <= 0n ? 0n : todayLeft,
-        status: newRemaining <= 0n ? 'COMPLETED' : 'IN_PROGRESS',
-        completedAt: newRemaining <= 0n ? new Date() : null,
-        updatedAt: new Date(),
-      })
-      .where(eq(maturityCases.id, c.id));
-
-    await tx.insert(caseEvents).values({
-      id: newId('evt'),
-      caseId: c.id,
-      type: 'PAYMENT_RECORDED',
-      actorId: actor.id,
-      note: `Paid ${formatPaise(total)} (${formatPaise(input.cashPaise)} cash / ${formatPaise(input.onlinePaise)} online)`,
-    });
-    await writeAudit(tx, actor, {
-      action: 'payout.recorded',
-      entity: 'MaturityCase',
-      entityId: c.id,
-      branchId: c.branchId,
-      summary: `${c.caseNumber}: paid ${formatPaise(total)}`,
-      ...meta,
-    });
-
-    return { remainingPaise: newRemaining, caseCompleted: newRemaining <= 0n };
-  });
+      reference: input.reference,
+      reason: input.remarks?.trim() || null,
+      valueDate: input.valueDate,
+    },
+    meta,
+  );
 }
 
 /**
@@ -1061,7 +1165,8 @@ export async function settleRegisterRow(
       .limit(1);
     if (!c) throw new PayoutError('Case not found', 'NOT_FOUND');
 
-    const valueDate = input.valueDate ?? todayISO();
+    await ensureAllocatedLedgerInTx(tx, actor, c, meta);
+    const valueDate = resolveValueDate(input.valueDate, canOverrideDates(actor.role));
 
     // The live schedule only. A superseded row is history and must never take money.
     const live = await tx
@@ -1187,12 +1292,15 @@ export async function settleRegisterRow(
       const newCash = b.paidCashPaise + (line?.cashPaise ?? 0n);
       const newOnline = b.paidOnlinePaise + (line?.onlinePaise ?? 0n);
       const paid = newCash + newOnline;
+      const legs = reconcileInstalmentLegs(b.row.amountPaise, b.row.cashLegPaise, newCash, newOnline);
 
       await tx
         .update(payoutInstalments)
         .set({
           paidCashPaise: newCash,
           paidOnlinePaise: newOnline,
+          cashLegPaise: legs.cashPaise,
+          onlineLegPaise: legs.onlinePaise,
           status: paid >= b.row.amountPaise ? 'PAID' : paid > 0n ? 'PARTIAL' : 'PENDING',
           updatedAt: now,
         })
@@ -1358,6 +1466,7 @@ export async function takeRegisterDays(
       .limit(1);
     if (!c) throw new PayoutError('Case not found', 'NOT_FOUND');
 
+    await ensureAllocatedLedgerInTx(tx, actor, c, meta);
     const valueDate = resolveValueDate(input.valueDate, Boolean(input.allowPayAhead));
 
     const live = await tx
@@ -1389,38 +1498,10 @@ export async function takeRegisterDays(
       const leftover = row.amountPaise - row.paidCashPaise - row.paidOnlinePaise;
       const want = cashPaiseIn + onlinePaiseIn;
       if (want > leftover) {
-        const rounding = c.roundingPaise > 0n ? c.roundingPaise : 100_000n;
-        const editable = live.map((inst) => ({
-          id: inst.id,
-          seq: inst.seq,
-          dueOn: inst.dueOn,
-          amountPaise: inst.amountPaise,
-          paidPaise: inst.paidCashPaise + inst.paidOnlinePaise,
-          isFinal: inst.isFinal,
-        }));
-        const balanced = rebalanceAfter(
-          editable,
-          row.id,
-          row.paidCashPaise + row.paidOnlinePaise + want,
-          rounding,
-        );
-        if (!balanced.ok) throw new PayoutError(balanced.message, balanced.error);
-        const nowEdit = new Date();
-        for (const inst of balanced.instalments) {
-          const before = byId.get(inst.id);
-          if (!before || before.amountPaise === inst.amountPaise) continue;
-          await tx
-            .update(payoutInstalments)
-            .set({
-              amountPaise: inst.amountPaise,
-              cashLegPaise: inst.amountPaise,
-              onlineLegPaise: 0n,
-              updatedAt: nowEdit,
-            })
-            .where(eq(payoutInstalments.id, inst.id));
-          before.amountPaise = inst.amountPaise;
-          before.cashLegPaise = inst.amountPaise;
-          before.onlineLegPaise = 0n;
+        const updated = await expandInstalmentForPayment(tx, c, row.id, row.paidCashPaise + row.paidOnlinePaise + want);
+        for (const changed of updated) {
+          const before = byId.get(changed.id);
+          if (before) Object.assign(before, changed);
         }
       }
     }
@@ -1494,7 +1575,7 @@ export async function takeRegisterDays(
       const newCash = row.paidCashPaise + line.cashPaise;
       const newOnline = row.paidOnlinePaise + line.onlinePaise;
       const paid = newCash + newOnline;
-      const legs = legsAfterPayment(row.amountPaise, newCash, newOnline);
+      const legs = reconcileInstalmentLegs(row.amountPaise, row.cashLegPaise, newCash, newOnline);
       await tx
         .update(payoutInstalments)
         .set({

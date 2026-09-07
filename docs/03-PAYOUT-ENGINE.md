@@ -3,6 +3,24 @@
 `src/lib/payout-engine.ts` — the arithmetic heart of MaturityFlow.
 Pure, deterministic, dependency-free, `BigInt`-only. Runs identically on client and server.
 
+## September 2026 payout and override update
+
+The recommended 15-day window reserves three intake days and produces 12 daily payments
+for amounts at or above ₹1,00,000, or six payments below that threshold. Intake days are
+not added again after approval. Automatic payment starts the next open day after approval;
+an explicitly entered payment date is retained. Custom windows may contain one payment.
+
+Alternate payments now use a two-calendar-day gap from the preceding payment, then roll
+forward to an open day. For example, ₹60,000 in six ₹10,000 payments starting Monday
+7 September 2026, with Sundays and second/fourth Saturdays closed and no holidays, falls
+on 7, 9, 11, 14, 16 and 18 September. The Sunday after Friday's payment rolls to Monday.
+₹1,20,000 uses twelve ₹10,000 working-day payments by default. A custom one-part plan
+pays the full ₹1,20,000 on its chosen date. All three schedules sum exactly to maturity.
+
+Custom amounts redistribute unpaid balances; recorded payments are preserved. Calendar
+overrides and paid-total corrections remain permission checked and audited. The engine's
+sum assertion and bigint paise representation remain mandatory.
+
 ---
 
 ## 1. Contract
