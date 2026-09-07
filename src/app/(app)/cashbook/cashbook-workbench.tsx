@@ -514,6 +514,41 @@ export function CashbookWorkbench({
     if (figuresSaveTimerRef.current) clearTimeout(figuresSaveTimerRef.current);
   }, []);
 
+  /*
+    How tall the movements sheet is allowed to be, measured rather than guessed.
+
+    It used to be capped at min(70vh, 42rem), which is a number that suits the monitor it was
+    written on and nothing else: on a tall screen the sheet stopped two-thirds of the way down and
+    left a band of empty page under it, and on a short one it overshot the footer. The branch
+    reads this panel all day, so the rows it can see without scrolling are the whole point.
+
+    The panel takes whatever is left between its own top edge and the bottom of the window, less
+    the footer and a little breathing room. Re-measured on resize and whenever the layout moves,
+    because both change where the top edge sits. Floored so it can never collapse to nothing on a
+    very short window - below the floor it goes back to scrolling inside itself, which is the
+    right answer at that size.
+  */
+  const ledgerRef = useRef<HTMLElement | null>(null);
+  const [ledgerHeight, setLedgerHeight] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = ledgerRef.current;
+    if (!el || typeof window === 'undefined') return;
+    const FOOTER_AND_GUTTER_PX = 96;
+    const FLOOR_PX = 420;
+    const measure = () => {
+      const top = el.getBoundingClientRect().top;
+      setLedgerHeight(Math.max(FLOOR_PX, Math.round(window.innerHeight - top - FOOTER_AND_GUTTER_PX)));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    const observer = new ResizeObserver(measure);
+    observer.observe(document.body);
+    return () => {
+      window.removeEventListener('resize', measure);
+      observer.disconnect();
+    };
+  }, []);
+
   useEffect(() => {
     let restoreTimer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -1248,12 +1283,17 @@ export function CashbookWorkbench({
       <div data-cashbook-grid className="grid min-w-0 grid-flow-row-dense items-stretch gap-3 xl:grid-cols-[repeat(16,minmax(0,1fr))]">
         <section
           data-cashbook-panel="ledger"
-          className={cn('cashbook-panel relative min-w-0 xl:row-span-2 xl:h-[min(70vh,42rem)] xl:max-h-[min(70vh,42rem)]', draggedPanel === 'ledger' && 'opacity-60')}
-          style={{ order: panelOrder.indexOf('ledger'), '--cashbook-span': panelSpans.ledger } as CSSProperties}
+          ref={ledgerRef}
+          className={cn('cashbook-panel relative min-w-0 xl:row-span-2', draggedPanel === 'ledger' && 'opacity-60')}
+          style={{
+            order: panelOrder.indexOf('ledger'),
+            '--cashbook-span': panelSpans.ledger,
+            ...(ledgerHeight ? { height: `${ledgerHeight}px` } : {}),
+          } as CSSProperties}
           onDragOver={(event) => arranging && event.preventDefault()}
           onDrop={() => movePanel('ledger')}
         >
-        <Glass className="flex h-full max-h-[min(70vh,42rem)] min-w-0 flex-col overflow-hidden">
+        <Glass className="flex h-full min-w-0 flex-col overflow-hidden">
           <div className="flex shrink-0 items-center border-b px-4 py-3">
             <div className="flex items-start gap-1.5">
               {panelDragHandle('ledger', 'movements sheet')}

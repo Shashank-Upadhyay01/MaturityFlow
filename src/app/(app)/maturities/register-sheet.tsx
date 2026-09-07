@@ -196,6 +196,13 @@ const th =
   'border border-[var(--hairline)] bg-[var(--surface-solid)] px-1 py-1.5 text-left text-[0.62rem] font-bold uppercase leading-tight tracking-[0.03em] text-[var(--muted-fg)]';
 const td = 'border border-[var(--hairline)] p-0 align-middle';
 const num = 'text-right tabular-nums';
+/*
+  A pinned cell has to bring its own background, or the row scrolling underneath shows straight
+  through it, and its own right edge, because `border-collapse` drops the border of a cell that
+  has been taken out of the normal flow.
+*/
+const PIN_HEAD = 'sticky z-30 bg-[var(--surface-solid)] shadow-[1px_0_0_0_var(--hairline)]';
+const PIN_CELL = 'sticky z-20 shadow-[1px_0_0_0_var(--hairline)]';
 const cell =
   'box-border h-8 w-full min-w-0 rounded-none border-0 bg-transparent px-1 text-[0.7rem] leading-none text-[var(--page-fg)] outline-none focus:bg-[var(--input-bg)] focus:shadow-[inset_0_0_0_2px_var(--ring)] disabled:cursor-default disabled:opacity-60';
 
@@ -751,7 +758,7 @@ function DeskZone({
         className,
       )}
     >
-      <div className="mb-1 flex h-4 items-center justify-between gap-2">
+      <div className="mb-1 flex min-h-4 items-center justify-between gap-2">
         <span
           className={cn(
             'truncate text-[0.6rem] font-semibold uppercase tracking-[0.07em]',
@@ -1034,8 +1041,30 @@ export function RegisterSheet(props: {
     () => columnsThatFit(visCols, gridWidth, reservedRem),
     [visCols, gridWidth, reservedRem],
   );
-  const shownCols = printScope ? visCols : fit.shown;
-  const hasExtras = !printScope && fit.dropped.length > 0;
+  /*
+    Below this width the sheet stops hiding columns and starts scrolling instead.
+
+    Dropping what does not fit is right on a desk monitor, where the few sacrificed columns are
+    genuinely secondary and the alternative is a sideways scroll nobody asked for. On a laptop
+    running at a smaller window, and on a phone, the same rule quietly removed most of the sheet:
+    the branch could see a name and nothing to do with money, and there was no scrollbar to go
+    and find the rest. A column you cannot reach is worse than one you have to scroll to.
+  */
+  const NARROW_PX = 1024;
+  const narrow = !printScope && gridWidth > 0 && gridWidth < NARROW_PX;
+  const shownCols = printScope || narrow ? visCols : fit.shown;
+  const hasExtras = !printScope && !narrow && fit.dropped.length > 0;
+
+  /*
+    Which cells stay put while the rest scrolls under them.
+
+    The reason this sheet avoided horizontal scrolling was a fair one - the customer's name
+    sliding off the left edge exactly when somebody is reading the cash figure. Pinning answers
+    it: the row number, the tick box and the first column of the layout hold their place, so the
+    row is always identified no matter how far right the eye has gone. Only while narrow, because
+    a pinned column costs nothing to look at but a stacking context to maintain.
+  */
+  const pinned = narrow;
 
 
   const closed = props.dayStatus === 'CLOSED';
@@ -3000,21 +3029,35 @@ export function RegisterSheet(props: {
           <DeskZone
             title="Shortfall"
             extra={
-              <span className="flex shrink-0 rounded-[6px] border border-[var(--input-border)] p-px">
+              /*
+                What the shortfall is measured against, and it has to look like a choice.
+
+                It was two words in the faintest grey the palette has, inside a hairline box, at
+                the size the column labels use - so it read as a caption rather than a switch, and
+                the branch did not know the figure beneath it could be asked a different question.
+                The selected side now carries the brand fill it deserves as the thing that decides
+                what a money figure means, and the other side is legible rather than a ghost.
+              */
+              <span
+                className="ml-auto flex shrink-0 items-center rounded-[7px] border border-[var(--input-border)] bg-[var(--glass-bg-subtle)] p-px"
+                role="group"
+                aria-label="Measure the shortfall against"
+              >
                 {(['today', 'all'] as ExtraMode[]).map((m) => (
                   <button
                     key={m}
                     type="button"
+                    aria-pressed={extraMode === m}
                     title={
                       m === 'today'
                         ? "Measure against this view's total for today"
                         : 'Measure against everything still outstanding'
                     }
                     className={cn(
-                      'rounded-[5px] px-1.5 text-[0.6rem] font-medium',
+                      'rounded-[6px] px-2 py-px text-[0.65rem] font-semibold leading-none transition-colors',
                       extraMode === m
-                        ? 'bg-[var(--glass-bg-strong)] text-[var(--page-fg)]'
-                        : 'text-[var(--faint-fg)] hover:text-[var(--page-fg)]',
+                        ? 'bg-[var(--color-brand-600)] text-white shadow-sm'
+                        : 'text-[var(--muted-fg)] hover:bg-[var(--glass-bg-strong)] hover:text-[var(--page-fg)]',
                     )}
                     onClick={() => setExtraMode(m)}
                   >
@@ -3553,18 +3596,20 @@ export function RegisterSheet(props: {
 
       <div className="overflow-hidden border border-[var(--hairline)] bg-[var(--surface-solid)]">
         {/*
-          No `min-w` and no horizontal scroll: `columnsThatFit` has already chosen a set of
-          columns that fits the measured width, and anything it could not fit is one click away
-          in the row expander. A sheet that scrolls sideways loses the customer's name off the
-          left edge exactly when the clerk is reading the cash figure.
+          Wide enough, `columnsThatFit` has already chosen a set that fits and there is nothing to
+          scroll to. Narrow, every column is present and this is what reaches them - with the
+          identifying cells pinned so the row never becomes anonymous mid-scroll.
         */}
         <div
           ref={gridRef}
           data-register-sheet="true"
-          className="min-h-[18rem] max-h-[min(66vh,46rem)] overflow-y-auto overflow-x-hidden overscroll-contain"
+          className="min-h-[18rem] max-h-[min(66vh,46rem)] overflow-y-auto overflow-x-auto overscroll-contain"
         >
           <table
-            className="w-full table-fixed border-collapse text-[0.7rem] select-none"
+            className={cn(
+              'border-collapse text-[0.7rem] select-none',
+              narrow ? 'w-max min-w-full' : 'w-full table-fixed',
+            )}
             onPointerDown={onSheetPointerDown}
             onPointerUp={() => { draggingRef.current = false; }}
             onPaste={(event) => {
@@ -3583,8 +3628,13 @@ export function RegisterSheet(props: {
           >
             <thead className="sticky top-0 z-10 bg-[var(--surface-solid)]">
               <tr>
-                <th className={cn(th, 'w-8 text-center font-mono text-[0.58rem] text-[var(--faint-fg)] print:hidden')} aria-label="Row number">#</th>
-                <th className={cn(th, 'w-7 print:hidden')}>
+                <th
+                  className={cn(th, 'w-8 text-center font-mono text-[0.58rem] text-[var(--faint-fg)] print:hidden', pinned && cn(PIN_HEAD, 'left-0'))}
+                  aria-label="Row number"
+                >
+                  #
+                </th>
+                <th className={cn(th, 'w-7 print:hidden', pinned && cn(PIN_HEAD, 'left-8'))}>
                   <TriCheckbox
                     checked={allVisibleSelected}
                     indeterminate={visibleSelectedCount > 0}
@@ -3607,7 +3657,7 @@ export function RegisterSheet(props: {
                     sortDir={sortDir}
                     onSort={toggleSort}
                     right={c.right}
-                    className={c.w}
+                    className={cn(c.w, pinned && colIndex === 0 && cn(PIN_HEAD, 'left-[3.75rem]'))}
                   />
                 ))}
                 {/*
@@ -3757,12 +3807,12 @@ export function RegisterSheet(props: {
                   >
                     <td
                       data-register-rowhead={rowIndex}
-                      className={cn(td, 'cursor-pointer bg-[color-mix(in_oklab,var(--color-brand-500)_6%,var(--surface-solid))] px-1 text-center font-mono text-[0.62rem] font-semibold text-[var(--faint-fg)] print:hidden')}
+                      className={cn(td, 'cursor-pointer bg-[color-mix(in_oklab,var(--color-brand-500)_6%,var(--surface-solid))] px-1 text-center font-mono text-[0.62rem] font-semibold text-[var(--faint-fg)] print:hidden', pinned && cn(PIN_CELL, 'left-0'))}
                       title="Click to select this whole row"
                     >
                       {rowIndex + 1}
                     </td>
-                    <td className={cn(td, 'print:hidden')}>
+                    <td className={cn(td, 'print:hidden', pinned && cn(PIN_CELL, 'left-8 bg-[var(--surface-solid)]'))}>
                       <input
                         type="checkbox"
                         checked={ticked}
@@ -3782,7 +3832,12 @@ export function RegisterSheet(props: {
                         key={c.id}
                         data-register-index={rowIndex}
                         data-register-col={c.id}
-                        className={cn(td, c.right && num, isSelected(rowIndex, colIndex) && SELECTED_CELL)}
+                        className={cn(
+                          td,
+                          c.right && num,
+                          isSelected(rowIndex, colIndex) && SELECTED_CELL,
+                          pinned && colIndex === 0 && cn(PIN_CELL, 'left-[3.75rem] bg-[var(--surface-solid)]'),
+                        )}
                       >
                         {c.id === 'account' && (
                           <CellInput

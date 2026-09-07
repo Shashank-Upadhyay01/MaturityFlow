@@ -395,42 +395,63 @@ table th {
 
 /* ── Inputs ────────────────────────────────────────────────────────────── */
 
-.mf-input {
-  width: 100%;
-  background: var(--input-bg);
-  border: 1px solid var(--input-border);
-  border-radius: 8px;
-  padding: 0.62rem 0.85rem;
-  color: var(--page-fg);
-  font-size: 0.9375rem;
-  line-height: 1.4;
-  transition:
-    border-color 200ms var(--ease-out-quint),
-    box-shadow 240ms var(--ease-out-quint),
-    background-color 200ms var(--ease-out-quint);
-  backdrop-filter: none;
-}
-.mf-input::placeholder { color: var(--faint-fg); }
-.mf-input:hover:not(:disabled) { border-color: color-mix(in oklab, var(--ring) 45%, transparent); }
-.mf-input:focus {
-  outline: none;
-  border-color: color-mix(in oklab, var(--ring) 85%, transparent);
-  box-shadow: 0 0 0 4px color-mix(in oklab, var(--ring) 22%, transparent);
-  background: var(--glass-bg-strong);
-}
-.mf-input:disabled { opacity: 0.55; cursor: not-allowed; }
-.mf-input[aria-invalid='true'] {
-  border-color: var(--color-danger-500);
-  box-shadow: 0 0 0 4px color-mix(in oklab, var(--color-danger-500) 18%, transparent);
-}
+/*
+  These live in the components layer so that a utility can still win.
 
-/* Money inputs get large tabular figures — the number IS the interface here. */
-.mf-input-money {
-  font-variant-numeric: tabular-nums;
-  font-size: 1.5rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  padding: 0.75rem 0.9rem;
+  Tailwind is imported at the top of this file, which puts its utilities BEFORE anything declared
+  here — and between two plain classes of equal specificity the later one wins. `.mf-input` sets
+  padding and font-size in one shorthand, so `h-8 py-0 text-[0.75rem]` on a select lost the
+  padding half of the argument: the control was 32px tall with 20px of padding and a 17px line
+  box inside it, and the branch name was sliced through the middle. Every select in the app that
+  had been given a height was doing this; the ones that looked right were the ones somebody had
+  already fought with `!important`.
+
+  A cascade layer settles it properly. Anything in `components` loses to `utilities` no matter
+  what order the file is in, so a height or padding utility now does what it says and the
+  `!` prefixes scattered around the codebase become belt-and-braces rather than load-bearing.
+
+  `.glass` is deliberately NOT in here. Code comments elsewhere rely on it beating utilities -
+  see the selection bar in register-sheet.tsx, which sets its background inline precisely because
+  `.glass` is declared outside a layer and would otherwise override a `bg-*` class.
+*/
+@layer components {
+  .mf-input {
+    width: 100%;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 8px;
+    padding: 0.62rem 0.85rem;
+    color: var(--page-fg);
+    font-size: 0.9375rem;
+    line-height: 1.4;
+    transition:
+      border-color 200ms var(--ease-out-quint),
+      box-shadow 240ms var(--ease-out-quint),
+      background-color 200ms var(--ease-out-quint);
+    backdrop-filter: none;
+  }
+  .mf-input::placeholder { color: var(--faint-fg); }
+  .mf-input:hover:not(:disabled) { border-color: color-mix(in oklab, var(--ring) 45%, transparent); }
+  .mf-input:focus {
+    outline: none;
+    border-color: color-mix(in oklab, var(--ring) 85%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--ring) 22%, transparent);
+    background: var(--glass-bg-strong);
+  }
+  .mf-input:disabled { opacity: 0.55; cursor: not-allowed; }
+  .mf-input[aria-invalid='true'] {
+    border-color: var(--color-danger-500);
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--color-danger-500) 18%, transparent);
+  }
+
+  /* Money inputs get large tabular figures — the number IS the interface here. */
+  .mf-input-money {
+    font-variant-numeric: tabular-nums;
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    padding: 0.75rem 0.9rem;
+  }
 }
 
 /* ── Scrollbars ────────────────────────────────────────────────────────── */
