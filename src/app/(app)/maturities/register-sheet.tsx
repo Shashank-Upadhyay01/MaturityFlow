@@ -496,17 +496,17 @@ type BulkMenu = 'today' | 'agent' | 'remove' | null;
 /**
  * One of the empty rows.
  *
- * It holds its own drafts and writes nothing until focus leaves the row, so a clerk filling four
- * cells across creates ONE case rather than four. Rendered by the virtualiser, which means it can
- * be unmounted while off screen — the drafts live with the row, so scrolling a half-typed row out
- * of view and back loses it. That is the same bargain the cashbook makes, and the reason the row
- * commits on the way out rather than on a timer.
+ * It writes nothing until focus leaves the row, so a clerk filling four cells across creates ONE
+ * case rather than four. Its controlled draft is owned by `BlankRows`, above the virtualiser, so
+ * scrolling away cannot discard what was typed and a rejected save remains visible for repair.
  */
 function BlankRow({
   cols,
   extrasCol,
   disabled,
   rowIndex,
+  values,
+  onValueChange,
   isSelected,
   onCommit,
 }: {
@@ -514,16 +514,19 @@ function BlankRow({
   extrasCol: boolean;
   disabled: boolean;
   rowIndex: number;
+  values: Record<string, string>;
+  onValueChange: (column: string, value: string) => void;
   isSelected: (r: number, c: number) => boolean;
-  onCommit: (patch: Record<string, string>) => Promise<void>;
+  onCommit: (patch: Record<string, string>) => Promise<boolean>;
 }) {
-  const [vals, setVals] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const committingRef = useRef(false);
   const rowKey = useId();
 
   const commit = async () => {
+    if (committingRef.current) return;
     const patch: Record<string, string> = {};
-    for (const [id, v] of Object.entries(vals)) {
+    for (const [id, v] of Object.entries(values)) {
       const field = COL_PATCH_FIELD[id as RegisterColId];
       if (field && v.trim()) patch[field] = v.trim();
     }
@@ -534,10 +537,16 @@ function BlankRow({
       toast.message('That row needs a customer name or an account number before it can be saved.');
       return;
     }
+    committingRef.current = true;
     setSaving(true);
-    await onCommit(patch);
-    setVals({});
-    setSaving(false);
+    try {
+      // `BlankRows` clears this controlled draft only after a confirmed server save. In
+      // particular, a validation or network failure must never turn typed data into an empty row.
+      await onCommit(patch);
+    } finally {
+      committingRef.current = false;
+      setSaving(false);
+    }
   };
 
   return (
@@ -573,8 +582,8 @@ function BlankRow({
                 rowKey={rowKey}
                 cellKey={c.id}
                 ariaLabel={`${c.label} for new register row`}
-                value={vals[c.id] ?? ''}
-                onChange={(v) => setVals((p) => ({ ...p, [c.id]: v }))}
+                value={values[c.id] ?? ''}
+                onChange={(v) => onValueChange(c.id, v)}
                 // The row commits on the way out; a per-cell commit would create the case
                 // after the first field and yank the row out from under the caret.
                 onCommit={() => {}}
@@ -624,8 +633,14 @@ function BlankRows({
   scrollRef: React.RefObject<HTMLDivElement | null>;
   registerScrollTo: React.RefObject<((index: number) => void) | null>;
   isSelected: (r: number, c: number) => boolean;
-  onCommit: (patch: Record<string, string>) => Promise<void>;
+  onCommit: (patch: Record<string, string>) => Promise<boolean>;
 }) {
+  /*
+    Drafts belong to the logical sheet rows, not to the twenty DOM rows the virtualiser happens
+    to have mounted. This keeps half-entered data intact when an arrow key scrolls its row out of
+    view, and it also lets a failed server save leave the exact values in place for correction.
+  */
+  const [drafts, setDrafts] = useState<Record<number, Record<string, string>>>({});
   const virtualizer = useVirtualizer({
     count,
     getScrollElement: () => scrollRef.current,
@@ -662,8 +677,25 @@ function BlankRows({
           cols={cols}
           extrasCol={extrasCol}
           disabled={disabled}
+          values={drafts[item.index] ?? {}}
+          onValueChange={(column, value) => {
+            setDrafts((current) => ({
+              ...current,
+              [item.index]: { ...current[item.index], [column]: value },
+            }));
+          }}
           isSelected={isSelected}
-          onCommit={onCommit}
+          onCommit={async (patch) => {
+            const saved = await onCommit(patch);
+            if (saved) {
+              setDrafts((current) => {
+                const next = { ...current };
+                delete next[item.index];
+                return next;
+              });
+            }
+            return saved;
+          }}
         />
       ))}
       {padBottom > 0 && (
@@ -4306,8 +4338,13 @@ export function RegisterSheet(props: {
                   disabled={!props.canEdit || locked || !props.canCreate}
                   onCommit={async (patch) => {
                     const res = await createRegisterRowWithFieldsAction(props.branchId, patch);
-                    if (!res.ok) toast.error(res.error);
-                    else router.refresh();
+                    if (!res.ok) {
+                      toast.error(res.error);
+                      return false;
+                    }
+                    toast.success('Row autosaved');
+                    router.refresh();
+                    return true;
                   }}
                 />
               )}

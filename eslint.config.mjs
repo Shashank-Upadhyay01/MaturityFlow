@@ -12,10 +12,14 @@ export default tseslint.config(
   {
     ignores: [
       '.next/**',
+      '.next.*/**',
       '.next.rollback-*/**',
       '.next.stale-*/**',
+      'tmp/**',
+      'Claude outputs/**',
       'node_modules/**',
       'drizzle/**',
+      'backups/**',
       'screenshots/**',
       'next-env.d.ts',
     ],
