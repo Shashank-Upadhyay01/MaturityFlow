@@ -407,6 +407,7 @@ export async function updateRegisterRow(
                 ? todayISO()
                 : (finalFirstPayout ?? finalPayment),
           branchDailyCashComfortPaise: policy.dailyCashComfortPaise,
+          finishOnDeadline: patch.deadlineOn !== undefined && Boolean(finalDeadline),
         });
       } else {
         await tx

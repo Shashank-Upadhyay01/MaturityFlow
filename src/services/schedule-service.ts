@@ -149,6 +149,7 @@ export async function persistReschedule({
   branchDailyCashComfortPaise,
   payoutCount,
   allowClosedStartDate = false,
+  finishOnDeadline = false,
 }: {
   tx: Queryable;
   caseRow: MaturityCase;
@@ -157,6 +158,8 @@ export async function persistReschedule({
   branchDailyCashComfortPaise?: bigint;
   payoutCount?: number;
   allowClosedStartDate?: boolean;
+  /** An explicitly edited customer promise is the exact final payout date, not only a ceiling. */
+  finishOnDeadline?: boolean;
 }): Promise<{ result: ReturnType<typeof rescheduleRemaining>; carriedOverPaise: bigint } | null> {
   const paid = caseRow.paidCashPaise + caseRow.paidOnlinePaise;
   const remaining = caseRow.maturityAmountPaise - paid;
@@ -237,6 +240,21 @@ export async function persistReschedule({
     payoutCount,
     allowClosedStartDate,
   });
+
+  // The ordinary rollover rule may finish before the deadline when an alternate-day sequence
+  // does not land on that exact date. When an administrator explicitly edits Promised By, that
+  // date is the promise the customer sees, so make it the final unpaid row. Amounts and paid
+  // history are unchanged; only the last new row moves forward.
+  if (
+    finishOnDeadline &&
+    !result.slaBreachUnavoidable &&
+    result.installments.length > 0 &&
+    result.lastPayoutDate < deadline
+  ) {
+    const final = result.installments[result.installments.length - 1];
+    final.dueDate = deadline;
+    result.lastPayoutDate = deadline;
+  }
 
   const version = caseRow.scheduleVersion + 1;
   // New rows must start after the HIGHEST sequence number carried forward, not after the
