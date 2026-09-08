@@ -1,6 +1,7 @@
 'use client';
 
 import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTransition } from 'react';
 
@@ -14,10 +15,15 @@ export function RegisterDayNav({ date, today, status }: { date: string; today: s
   const [pending, startTransition] = useTransition();
 
   function open(day: string) {
+    startTransition(() => router.push(hrefFor(day)));
+  }
+
+  function hrefFor(day: string) {
     const next = new URLSearchParams(searchParams.toString());
     if (day === today) next.delete('date');
     else next.set('date', day);
-    startTransition(() => router.push(`/maturities${next.size ? `?${next.toString()}` : ''}`));
+    const query = next.toString();
+    return `/maturities${query ? `?${query}` : ''}`;
   }
 
   const historical = date < today;
@@ -33,8 +39,10 @@ export function RegisterDayNav({ date, today, status }: { date: string; today: s
           </p>
         </div>
       </div>
-      <Button variant="glass" size="sm" onClick={() => open(addDays(date, -1))} disabled={pending} aria-label="Previous register day">
-        <ChevronLeft className="h-4 w-4" /> Previous
+      <Button asChild variant="glass" size="sm">
+        <Link href={hrefFor(addDays(date, -1))} aria-label="Previous register day">
+          <ChevronLeft className="h-4 w-4" /> Previous
+        </Link>
       </Button>
       <label className="flex items-center gap-2 rounded-[7px] border border-[var(--input-border)] bg-[var(--input-bg)] px-2 py-1">
         <span className="sr-only">Open register date</span>
@@ -46,9 +54,15 @@ export function RegisterDayNav({ date, today, status }: { date: string; today: s
           aria-label="Open register date"
         />
       </label>
-      {date !== today && <Button variant="glass" size="sm" onClick={() => open(today)} disabled={pending}>Today</Button>}
-      <Button variant="glass" size="sm" onClick={() => open(addDays(date, 1))} disabled={pending} aria-label="Next register day">
-        Next <ChevronRight className="h-4 w-4" />
+      {date !== today && (
+        <Button asChild variant="glass" size="sm">
+          <Link href={hrefFor(today)}>Today</Link>
+        </Button>
+      )}
+      <Button asChild variant="glass" size="sm">
+        <Link href={hrefFor(addDays(date, 1))} aria-label="Next register day">
+          Next <ChevronRight className="h-4 w-4" />
+        </Link>
       </Button>
     </Glass>
   );
