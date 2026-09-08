@@ -5,7 +5,7 @@ import { and, count, eq, notInArray } from 'drizzle-orm';
 import { db } from '@/db';
 import { maturityCases, payoutInstalments } from '@/db/schema';
 import { requestMeta, requireActor } from '@/lib/auth/session';
-import { payoutPlanFor, standardPayoutPartsFor } from '@/lib/payout-policy';
+import { payoutPlanFor } from '@/lib/payout-policy';
 import { assertCan } from '@/lib/rbac';
 import { rescheduleCase } from '@/services/case-service';
 import { reconcileCaseLedger } from '@/services/operations-health';
@@ -47,8 +47,7 @@ export async function normalizeSchedulePartsAction(): Promise<ActionResult<{ nor
     const affected = cases.filter((row) => {
       if (row.maturityAmountPaise - row.paidCashPaise - row.paidOnlinePaise <= 0n) return false;
       const actual = byVersion.get(`${row.id}:${row.scheduleVersion}`) ?? 0;
-      const configured = payoutPlanFor(row.maturityAmountPaise, row.windowDays).payoutDays;
-      return actual > Math.min(configured, standardPayoutPartsFor(row.maturityAmountPaise));
+      return actual > payoutPlanFor(row.maturityAmountPaise, row.windowDays).payoutDays;
     });
     let normalized = 0;
     let failed = 0;

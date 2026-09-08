@@ -15,7 +15,6 @@ import {
   MAX_WINDOW_DAYS,
   MIN_WINDOW_DAYS,
   payoutPlanFor,
-  standardPayoutPartsFor,
   type Cadence,
 } from '@/lib/payout-policy';
 import { rebalanceAfter, type EditableInstalment } from '@/lib/schedule-edit';
@@ -84,11 +83,7 @@ export async function persistSchedule({
   // `windowDays` is the TOTAL working-day window, not the payout count. The policy decides how
   // many of those days carry a payout and how far apart they sit: ₹1 lakh and over pays every
   // working day, below that every other one, both finishing inside the same window.
-  const derivedPlan = payoutPlanFor(caseRow.maturityAmountPaise, caseRow.windowDays);
-  const plan = {
-    ...derivedPlan,
-    payoutDays: Math.min(derivedPlan.payoutDays, standardPayoutPartsFor(caseRow.maturityAmountPaise)),
-  };
+  const plan = payoutPlanFor(caseRow.maturityAmountPaise, caseRow.windowDays);
 
   const result = generateSchedule({
     totalPaise: toSchedule,
@@ -188,10 +183,7 @@ export async function persistReschedule({
   // That was how an ordinary 12-part maturity grew to 15, 18, or more visible instalments after
   // its payment date was edited. An explicit payoutCount remains an admin override for the
   // *remaining* balance; otherwise preserve the configured total part count.
-  const configuredParts = Math.min(
-    standardPayoutPartsFor(caseRow.maturityAmountPaise),
-    payoutPlanFor(caseRow.maturityAmountPaise, caseRow.windowDays).payoutDays,
-  );
+  const configuredParts = payoutPlanFor(caseRow.maturityAmountPaise, caseRow.windowDays).payoutDays;
   const remainingPartSlots = Math.max(1, configuredParts - settled.length);
 
   const openIds = live
