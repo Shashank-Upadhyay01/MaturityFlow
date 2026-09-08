@@ -23,7 +23,6 @@ import { formatPaise, percentOf } from '@/lib/money';
 import { canOverrideDates, roleCan } from '@/lib/rbac';
 import { serialize } from '@/lib/serialize';
 import { daysBetween, formatISODate, formatISODateShort, toISODateString, todayISO, weekdayShort } from '@/lib/working-days';
-import { getCalendarSnapshot } from '@/services/calendar-service';
 import { getCaseDetail } from '@/services/queries';
 import { CaseActions } from './case-actions';
 import { AdminDateCell } from '@/components/domain/admin-date-cell';
@@ -32,7 +31,6 @@ import { PaymentRows } from './payment-rows';
 import { PrintCaseButton } from './print-case-button';
 import { CaseTimeline } from './case-timeline';
 import { ScheduleAdjust } from './schedule-adjust';
-import { WindowReplan } from './window-replan';
 import { WorkflowDatesEditor } from './workflow-dates';
 
 export const dynamic = 'force-dynamic';
@@ -62,9 +60,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
   const daysLeft = c.deadlineOn ? daysBetween(today, c.deadlineOn) : null;
 
   const liveInstalments = detail.instalments.filter((i) => i.status !== 'SUPERSEDED');
-  const calendar = await getCalendarSnapshot(c.branchId);
   const canOverride = roleCan(session.role, 'schedule.override');
-  const canReplan = roleCan(session.role, 'schedule.reschedule');
   const canEditDates = canOverrideDates(session.role);
 
   return (
@@ -272,27 +268,6 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           </div>
         </GlassCard>
       </section>
-
-      {isLive && remaining > 0n && (
-        <GlassCard
-          className="mf-rise"
-          title="Daily withdrawal plan"
-          subtitle="Type the number of days. The same engine that writes the ledger shows the daily amount here — then apply or tweak individual days."
-        >
-          <WindowReplan
-            caseId={c.id}
-            remainingPaise={remaining.toString()}
-            currentDays={c.windowDays}
-            roundingPaise={c.roundingPaise.toString()}
-            distribution={c.distribution}
-            cashKind={c.cashPolicy}
-            cashCapPaise={(c.cashCapPerDayPaise ?? 0n).toString()}
-            calendar={calendar}
-            today={today}
-            canApply={canReplan}
-          />
-        </GlassCard>
-      )}
 
       {/* ── Schedule ──────────────────────────────────────────────────── */}
       {liveInstalments.length > 0 ? (
