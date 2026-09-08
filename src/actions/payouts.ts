@@ -8,7 +8,7 @@ import { db } from '@/db';
 import { maturityCases, payoutInstalments, payoutTransactions } from '@/db/schema';
 import { requestMeta, requireActor } from '@/lib/auth/session';
 import { parseRupeesToPaise } from '@/lib/money';
-import { assertCan, roleCan } from '@/lib/rbac';
+import { assertCan, canOverrideDates, roleCan } from '@/lib/rbac';
 import { setPayoutValueDate } from '@/services/admin-dates';
 import { recordPayout, recordRegisterPayout, reversePayout } from '@/services/payout-service';
 import { fail, ok, toActionError, type ActionResult } from './_result';
@@ -121,7 +121,8 @@ export async function recordPayoutAction(
 export async function reversePayoutAction(txnId: string, reason: string): Promise<ActionResult> {
   try {
     const { session, actor } = await requireActor();
-    if (!reason?.trim()) return fail('A reason is required to reverse a payment.', 'VALIDATION');
+    const why = reason?.trim() || (canOverrideDates(actor.role) ? 'Administrative correction' : '');
+    if (!why) return fail('A reason is required to reverse a payment.', 'VALIDATION');
 
     const [txn] = await db
       .select({ branchId: payoutTransactions.branchId, caseId: payoutTransactions.caseId })
@@ -131,7 +132,7 @@ export async function reversePayoutAction(txnId: string, reason: string): Promis
     if (!txn) return fail('Transaction not found', 'NOT_FOUND');
 
     assertCan(actor, 'payout.reverse', { branchId: txn.branchId });
-    await reversePayout(session, txnId, reason.trim(), await requestMeta());
+    await reversePayout(session, txnId, why, await requestMeta());
     revalidateAll(txn.caseId);
     return ok();
   } catch (e) {

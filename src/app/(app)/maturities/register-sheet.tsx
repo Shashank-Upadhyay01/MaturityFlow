@@ -1615,12 +1615,7 @@ export function RegisterSheet(props: {
 
   async function savePaidTotal(row: RegisterRow, paidRupees: string) {
     if (!props.canCorrectPay) return;
-    const reason = window.prompt(
-      `Reason for correcting cumulative Paid for ${row.customerName}:`,
-      'Register paid-total correction',
-    );
-    if (!reason?.trim()) return;
-    const result = await saveRegisterPaidTotalAction(row.id, paidRupees, reason.trim());
+    const result = await saveRegisterPaidTotalAction(row.id, paidRupees, 'Administrative correction');
     if (!result.ok) toast.error(result.error);
     else { rememberGridFocus(); router.refresh(); }
   }
@@ -1691,13 +1686,13 @@ export function RegisterSheet(props: {
     const replacing = BigInt(row.paidTodayActualPaise) > 0n;
     const payingAhead = totalPaise > capacity;
     let reason: string | null = 'Register entry';
-    if (payingAhead) {
+    if (payingAhead && !props.canCorrectPay) {
       reason = window.prompt(
         `Only ₹${inr(capacity)} is due today and earlier on this row. Paying more settles days ` +
           'that have not come round yet. Reason for authorising it:',
       );
       if (!reason?.trim()) return false;
-    } else if (replacing) {
+    } else if (replacing && !props.canCorrectPay) {
       reason = window.prompt('Reason for correcting the recorded payment:', 'Register correction');
       if (!reason?.trim()) return false;
     }
@@ -4181,7 +4176,7 @@ export function RegisterSheet(props: {
                             disabled={!props.canPay}
                             title={
                               props.canCorrectPay
-                                ? 'Correct a recorded amount — you will be asked for a reason'
+                                ? 'Correct a recorded amount directly'
                                 : 'Type what was actually given, then press Taken to confirm'
                             }
                             value={d(r.id, 'paidTodayActual', rupeesStr(paidView.total))}

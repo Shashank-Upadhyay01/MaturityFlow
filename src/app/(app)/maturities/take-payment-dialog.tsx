@@ -183,8 +183,9 @@ export function TakePaymentDialog({
   const taking = visitReplace ? [] : selected.filter((day) => leftover(day) > 0n);
   const visitZeroing =
     visitReplace && visitTotal === 0n && selected.some((day) => BigInt(day.paidPaise) > 0n);
-  const reasonNeeded =
-    payingAhead || corrections.length > 0 || visitReplace || (Boolean(allowCorrectPaid) && valueDate !== today);
+  const reasonNeeded = !allowCorrectPaid && (
+    payingAhead || corrections.length > 0 || visitReplace || valueDate !== today
+  );
   const canSubmit =
     (corrections.length > 0 || (taking.length > 0 && willPay > 0n)) &&
     onlinePaise >= 0n &&

@@ -90,9 +90,9 @@ export function PaymentRows({
     payments.filter((p) => p.instalmentId === instalmentId && !p.reversedAt);
 
   async function reverse(id: string) {
-    if (!reason.trim()) return toast.error('A reason is required — this is a money correction.');
+    if (!reason.trim() && !canCorrect) return toast.error('A reason is required — this is a money correction.');
     setBusy(true);
-    const r = await reversePayoutAction(id, reason);
+    const r = await reversePayoutAction(id, reason.trim() || 'Administrative correction');
     setBusy(false);
     if (r.ok) {
       toast.success('Payment reversed', {
@@ -132,7 +132,7 @@ export function PaymentRows({
 
   async function saveCorrection(t: PaymentRow) {
     if (!t.instalmentId || !draft) return;
-    if (!draft.reason.trim()) {
+    if (!draft.reason.trim() && !canCorrect) {
       return toast.error('A reason is required — this is a money correction.');
     }
     const online = draft.online.trim();
@@ -149,7 +149,7 @@ export function PaymentRows({
     const r = await correctRegisterDayPaidAction(
       t.instalmentId,
       draft.cash.trim() || '0',
-      draft.reason.trim(),
+      draft.reason.trim() || 'Administrative correction',
       draft.reference.trim() || null,
       online || '0',
       draft.valueDate || null,

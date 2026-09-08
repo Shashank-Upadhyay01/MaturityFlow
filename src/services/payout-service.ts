@@ -567,7 +567,8 @@ export async function reversePayout(
   reason: string,
   meta: { ip?: string | null; userAgent?: string | null } = {},
 ) {
-  if (!reason.trim()) throw new PayoutError('Enter a reason for reversing a payment.', 'REASON_REQUIRED');
+  const correctionReason = reason.trim() || (canOverrideDates(actor.role) ? 'Administrative correction' : '');
+  if (!correctionReason) throw new PayoutError('Enter a reason for reversing a payment.', 'REASON_REQUIRED');
   return db.transaction(async (tx) => {
     const [ref] = await tx
       .select({ caseId: payoutTransactions.caseId })
@@ -615,7 +616,7 @@ export async function reversePayout(
       .where(inArray(payoutTransactions.id, allocatedIds)).for('update');
     await tx
       .update(payoutTransactions)
-      .set({ reversedAt: new Date(), reversedById: actor.id, reversalReason: reason })
+      .set({ reversedAt: new Date(), reversedById: actor.id, reversalReason: correctionReason })
       .where(inArray(payoutTransactions.id, allocatedIds));
 
     for (const receipt of toReverse) {
@@ -665,7 +666,7 @@ export async function reversePayout(
       caseId: c.id,
       type: 'PAYMENT_REVERSED',
       actorId: actor.id,
-      note: `${formatPaise(txn.totalPaise)} reversed — ${reason}`,
+      note: `${formatPaise(txn.totalPaise)} reversed — ${correctionReason}`,
     });
 
     await writeAudit(tx, actor, {
@@ -673,7 +674,7 @@ export async function reversePayout(
       entity: 'PayoutTransaction',
       entityId: txnId,
       branchId: c.branchId,
-      summary: `${c.caseNumber}: reversed ${formatPaise(txn.totalPaise)} — ${reason}`,
+      summary: `${c.caseNumber}: reversed ${formatPaise(txn.totalPaise)} — ${correctionReason}`,
       before: { casePaidPaise: c.paidCashPaise + c.paidOnlinePaise },
       after: { casePaidPaise: paid, reversedReceiptIds: allocatedIds },
       ...meta,
