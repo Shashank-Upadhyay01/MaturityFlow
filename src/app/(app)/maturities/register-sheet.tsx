@@ -136,7 +136,7 @@ import {
 } from '@/lib/register-layout';
 import { tickPlanFor } from '@/lib/mark-confirm';
 import { formatPaise, paiseToDecimalString, tryParseRupeesToPaise } from '@/lib/money';
-import { payoutPlanFor, windowDaysForPayoutCount } from '@/lib/payout-policy';
+import { payoutPlanFor, standardPayoutPartsFor, windowDaysForPayoutCount } from '@/lib/payout-policy';
 import { cn } from '@/lib/utils';
 import { formatDMY } from '@/lib/working-days';
 import type { Role } from '@/db/schema';
@@ -4081,7 +4081,7 @@ export function RegisterSheet(props: {
                             )}
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], payoutDaysCount: v } }))}
                             onCommit={(v) => {
-                              const n = Math.max(1, Number(v) || 12);
+                              const n = Math.min(standardPayoutPartsFor(amtP), Math.max(1, Number(v) || 12));
                               let shown = daysN;
                               try {
                                 shown = payoutPlanFor(amtP, daysN).payoutDays;

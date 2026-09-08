@@ -129,6 +129,11 @@ export function isPriorityCase(maturityAmountPaise: bigint): boolean {
   return maturityAmountPaise >= LARGE_CASE_THRESHOLD_PAISE;
 }
 
+/** Normal maximum: twelve daily parts for large cases, six alternate-day parts for small ones. */
+export function standardPayoutPartsFor(maturityAmountPaise: bigint): 12 | 6 {
+  return isPriorityCase(maturityAmountPaise) ? 12 : 6;
+}
+
 export function cadenceFor(maturityAmountPaise: bigint): Cadence {
   return isPriorityCase(maturityAmountPaise) ? 'DAILY' : 'ALTERNATE';
 }
