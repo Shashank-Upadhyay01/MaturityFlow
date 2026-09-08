@@ -5,7 +5,7 @@ import { pickWorkingBranch, workingBranches } from '@/lib/branch-routing';
 import { parseRegisterLayout } from '@/lib/register-layout';
 import { parsePaidByDate, parsePayoutDays } from '@/lib/register-view';
 import { activeRole, canTypeRegister, ROLE_SCOPE, roleCan } from '@/lib/rbac';
-import { toISODateString, todayISO } from '@/lib/working-days';
+import { parseISODate, toISODateString, todayISO } from '@/lib/working-days';
 import {
   getFormOptions,
   getRegisterDesk,
@@ -13,6 +13,7 @@ import {
 } from '@/services/queries';
 import { RegisterSheet } from './register-sheet';
 import { RegisterTabs } from './register-tabs';
+import { RegisterDayNav } from './register-day-nav';
 import { rollOverElapsedSchedules } from '@/services/case-service';
 
 export const metadata = { title: 'Register' };
@@ -26,12 +27,13 @@ const EMPTY_DESK = {
   paidTodayPaise: 0n,
   paidTodayCashPaise: 0n,
   paidTodayOnlinePaise: 0n,
+  autoClosed: false,
 };
 
 export default async function MaturitiesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ branch?: string }>;
+  searchParams: Promise<{ branch?: string; date?: string }>;
 }) {
   const session = await getSession();
   if (!session) redirect('/login');
@@ -40,6 +42,15 @@ export default async function MaturitiesPage({
   const options = await getFormOptions(actor);
   const hq = ROLE_SCOPE[activeRole(session.role)] === 'ALL';
   const sp = await searchParams;
+  let registerDate = today;
+  if (sp.date) {
+    try {
+      parseISODate(sp.date);
+      registerDate = sp.date;
+    } catch {
+      registerDate = today;
+    }
+  }
   const picked = pickWorkingBranch(options.branches, {
     requested: sp.branch,
     sessionBranchId: session.branchId,
@@ -49,12 +60,12 @@ export default async function MaturitiesPage({
   const branch = options.branches.find((b) => b.id === picked.branchId) ?? null;
   // This is an explicit audited write phase before the read: elapsed promises are historical
   // MISSED rows and their unpaid balance is redistributed over the remaining scheduled dates.
-  if (branch && canTypeRegister(session.role) && roleCan(session.role, 'schedule.reschedule')) {
+  if (registerDate === today && branch && canTypeRegister(session.role) && roleCan(session.role, 'schedule.reschedule')) {
     await rollOverElapsedSchedules(session, branch.id, today);
   }
   const [rows, loadedDesk] = await Promise.all([
-    listRegister(actor, today, picked.branchId),
-    branch ? getRegisterDesk(branch.id, today) : Promise.resolve(null),
+    listRegister(actor, registerDate, picked.branchId),
+    branch ? getRegisterDesk(branch.id, registerDate) : Promise.resolve(null),
   ]);
   const desk = loadedDesk ?? EMPTY_DESK;
   const cashLimit = branch?.dailyCashComfortPaise ?? rows[0]?.dailyCashComfortPaise ?? 50_000_000n;
@@ -79,7 +90,9 @@ export default async function MaturitiesPage({
 
   return (
     <div className="space-y-3">
+      <RegisterDayNav date={registerDate} today={today} status={desk.dayStatus} />
       <RegisterTabs
+        showPlan={registerDate === today}
         sheet={
           <RegisterSheet
             key={compiledView ? 'all' : picked.branchId ?? 'none'}
@@ -106,7 +119,9 @@ export default async function MaturitiesPage({
                   }
                 : undefined
             }
-            today={today}
+            today={registerDate}
+            actualToday={today}
+            autoClosed={Boolean(desk.autoClosed)}
             dayStatus={desk.dayStatus}
             cashLimitPaise={cashLimit.toString()}
             cashInHandPaise={desk.cashInHandPaise.toString()}

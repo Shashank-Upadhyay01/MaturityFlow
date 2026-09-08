@@ -24,7 +24,7 @@ interface PlanPayload {
  * The initial Register request no longer runs three queries and serialises every schedule for a
  * panel most clerks do not open.
  */
-export function RegisterTabs({ sheet }: { sheet: ReactNode }) {
+export function RegisterTabs({ sheet, showPlan = true }: { sheet: ReactNode; showPlan?: boolean }) {
   const [view, setView] = useState<View>('sheet');
   const [plan, setPlan] = useState<PlanPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -74,7 +74,7 @@ export function RegisterTabs({ sheet }: { sheet: ReactNode }) {
     <div className="space-y-3">
       <div className="glass flex w-fit items-center gap-1 p-1 print:hidden">
         {tab('sheet', 'Sheet', Table2, 'The register, row by row')}
-        {tab('plan', 'Plan', LayoutGrid, 'Today, and how every maturity is split into days')}
+        {showPlan && tab('plan', 'Plan', LayoutGrid, 'Today, and how every maturity is split into days')}
       </div>
 
       <div className={cn(view !== 'sheet' && 'hidden')}>{sheet}</div>

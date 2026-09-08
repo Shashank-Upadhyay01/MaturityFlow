@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { Fragment, createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { saveRegisterLayoutAction } from '@/actions/admin';
@@ -482,6 +482,11 @@ const SCHEDULED_TODAY_HINT: Record<DayState, string> = {
 
 type Tab = RegisterTab;
 
+/** A day's page includes scheduled work and any off-schedule payment recorded on that date. */
+function isDailyRegisterRow(row: RegisterRow): boolean {
+  return isOnTodaysList(row) || BigInt(row.paidTodayActualPaise || '0') > 0n;
+}
+
 type ExtraMode = 'today' | 'all';
 
 /** Which bulk popover is open, if any. */
@@ -928,7 +933,10 @@ export function RegisterSheet(props: {
     branches: { id: string; code: string; name: string }[];
   };
   today: string;
+  /** Real current date; `today` above is the daily register page being viewed. */
+  actualToday: string;
   dayStatus: string;
+  autoClosed?: boolean;
   cashLimitPaise: string;
   cashInHandPaise: string;
   plannedOnlinePaise: string;
@@ -953,6 +961,7 @@ export function RegisterSheet(props: {
   rows: RegisterRow[];
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const fileRef = useRef<HTMLInputElement>(null);
   /*
     Whoever records payouts opens on the work: who is expected at the counter today. Everybody
@@ -960,7 +969,7 @@ export function RegisterSheet(props: {
   */
   // Do not open on an empty operational view while live scheduled cases exist. Before the first
   // payout date that made a successful import look like it had vanished from the Register.
-  const initialTab: Tab = props.canPay && props.rows.some(isDueToday) ? 'due' : 'all';
+  const initialTab: Tab = props.canPay && props.rows.some(isDailyRegisterRow) ? 'due' : 'all';
   const [tab, setTab] = useState<Tab>(initialTab);
   const [extraMode, setExtraMode] = useState<ExtraMode>('today');
   const [agentId, setAgentId] = useState('');
@@ -1110,6 +1119,8 @@ export function RegisterSheet(props: {
 
   const closed = props.dayStatus === 'CLOSED';
   const closeRequested = props.dayStatus === 'CLOSE_REQUESTED';
+  const viewingToday = props.today === props.actualToday;
+  const viewedDayLabel = viewingToday ? 'today' : formatDMY(props.today);
 
   /** Read a cell's uncommitted draft value, falling back to what the server sent. */
   const d = useCallback(
@@ -1281,7 +1292,7 @@ export function RegisterSheet(props: {
     if (tab === 'today') list = list.filter((r) => BigInt(r.remainingPaise) > 0n);
     // The whole of today's work, including the rows already answered for — see isOnTodaysList.
     // The cash figure in the header still sums only what is left to find.
-    if (tab === 'due') list = list.filter(isOnTodaysList);
+    if (tab === 'due') list = list.filter(isDailyRegisterRow);
     // Everyone who did not withdraw on a day they were due. Note this is a *view* of the same
     // rows, not a second list: the user's rule is that a missed payment is never removed from
     // the twelve-day sheet, only coloured. This tab is the shortcut to them, not their home.
@@ -1332,7 +1343,7 @@ export function RegisterSheet(props: {
   const paidTodayP = BigInt(props.paidTodayPaise);
   // summariseDueToday already excludes paid amounts; subtracting receipts again understates cash needed.
   const stillToGive = dueStats.total;
-  const todaysListCount = props.rows.filter(isOnTodaysList).length;
+  const todaysListCount = props.rows.filter(isDailyRegisterRow).length;
 
   const allRemaining = props.rows.reduce((a, r) => a + BigInt(r.remainingPaise), 0n);
   const cashHandP = tryParseRupeesToPaise(cashHand) ?? 0n;
@@ -2725,7 +2736,9 @@ export function RegisterSheet(props: {
                     onChange={(event) => {
                       const next = event.target.value;
                       const path = props.branchSwitch!.path;
-                      router.push(next === 'all' ? `${path}?branch=all` : `${path}?branch=${next}`);
+                      const params = new URLSearchParams(searchParams.toString());
+                      params.set('branch', next);
+                      router.push(`${path}?${params.toString()}`);
                     }}
                     aria-label="Working branch"
                     title="All branches shows every row. Pick one branch to type into that register."
@@ -3026,7 +3039,7 @@ export function RegisterSheet(props: {
           >
             <span className="mb-1 flex h-4 items-center">
               <span className="text-[0.6rem] font-semibold uppercase tracking-[0.07em] text-[var(--color-brand-700)]">
-                Due today
+                {viewingToday ? 'Due today' : 'Due on this day'}
               </span>
             </span>
             <span className="block truncate text-[1.35rem] font-semibold leading-none tabular-nums text-[var(--page-fg)]">
@@ -3062,20 +3075,20 @@ export function RegisterSheet(props: {
             }
           >
             <DeskRow
-              label="Given today"
+              label={viewingToday ? 'Given today' : 'Given on day'}
               tone="money"
               value={`₹${inr(paidTodayP)}`}
-              title="Paid out so far today"
+              title={`Paid out on ${viewedDayLabel}`}
             />
             <DeskRow
               label="Still to give"
               value={`₹${inr(stillToGive)}`}
-              title="Due today and not yet paid"
+              title={`Due on ${viewedDayLabel} and not yet paid`}
             />
             <DeskRow
               label="Withdrawals"
               value={props.withdrawalsToday}
-              title="Payments recorded today"
+              title={`Payments recorded on ${viewedDayLabel}`}
             />
           </DeskZone>
 
@@ -3301,9 +3314,9 @@ export function RegisterSheet(props: {
       )}
 
       {closed && (
-        <Callout tone="warn" title="This day is closed">
-          Entries are read-only until Admin, CMD or CEO reopens the day.
-          {props.canConfirmClose && (
+        <Callout tone="warn" title={props.autoClosed ? 'This previous day is automatically closed' : 'This day is closed'}>
+          Admin, CMD and CEO can still make audited corrections here. Other roles see the preserved daily record as read-only.
+          {props.canConfirmClose && !props.autoClosed && (
             <Button
               className="mt-2"
               variant="glass"
@@ -4428,7 +4441,7 @@ export function RegisterSheet(props: {
       </p>
 
       <div className="flex flex-wrap items-center gap-2 print:hidden">
-        {props.canRequestClose && !closed && !closeRequested && (
+        {props.canRequestClose && props.today === props.actualToday && !closed && !closeRequested && (
           <Button
             variant="glass"
             onClick={async () => {

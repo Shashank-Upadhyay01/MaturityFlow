@@ -32,6 +32,7 @@ import type { Actor } from '@/lib/rbac';
 import { createCase } from '@/services/case-service';
 import {
   listBreachedCases,
+  listRegister,
   listMissedInstalments,
   listNotTakenToday,
   listPriorityCases,
@@ -269,6 +270,28 @@ describe('the follow-up lists', () => {
     // The list carries what the branch needs to chase it.
     expect(BigInt(missed[0].maturityAmountPaise)).toBe(rupees('120000'));
     expect(BigInt(missed[0].duePaidPaise)).toBe(0n);
+  });
+
+  it('keeps an old missed schedule row visible on its dated register page', async () => {
+    const caseId = await approved('120000');
+    const historicalId = newId('inst');
+    await db.insert(payoutInstalments).values({
+      id: historicalId,
+      caseId,
+      scheduleVersion: 0,
+      seq: 1,
+      dueOn: '2020-01-07',
+      amountPaise: rupees('10000'),
+      cashLegPaise: rupees('10000'),
+      onlineLegPaise: 0n,
+      status: 'MISSED',
+    });
+
+    const register = await listRegister(actor(), '2020-01-07', branchId);
+    const row = register.find((item) => item.id === caseId);
+    expect(row?.todayInstalmentId).toBe(historicalId);
+    expect(row?.todayStatus).toBe('MISSED');
+    expect(BigInt(row?.todayDuePaise ?? '0')).toBe(rupees('10000'));
   });
 
   it("finds today's counter — due now, not yet handed over", async () => {

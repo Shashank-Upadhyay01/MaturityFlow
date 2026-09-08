@@ -591,10 +591,10 @@ export async function listRegister(actor: Actor, date = todayISO(), branchId?: s
   const todayInst = (expr: ReturnType<typeof sql.raw>) => sql`(
     SELECT ${expr} FROM payout_instalments i
     WHERE i.case_id = ${CASE_ID}
-      AND i.schedule_version = ${maturityCases.scheduleVersion}
       AND i.due_on = ${date}
       AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
-    ORDER BY i.schedule_version DESC LIMIT 1
+    ORDER BY (i.schedule_version = ${maturityCases.scheduleVersion}) DESC,
+             i.schedule_version DESC, i.seq DESC LIMIT 1
   )`;
 
   return db
@@ -754,7 +754,8 @@ export async function getRegisterDesk(branchId: string, date: string) {
   return {
     cashInHandPaise: cash?.openingCashPaise ?? 0n,
     plannedOnlinePaise: cash?.plannedOnlinePaise ?? 0n,
-    dayStatus: day?.status ?? 'OPEN',
+    dayStatus: day?.status ?? (date < todayISO() ? 'CLOSED' : 'OPEN'),
+    autoClosed: !day && date < todayISO(),
     withdrawalsToday: paidToday?.n ?? 0,
     paidTodayPaise: big(paidToday?.total),
     paidTodayCashPaise: big(paidToday?.cash),
