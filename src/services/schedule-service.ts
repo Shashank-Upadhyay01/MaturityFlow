@@ -228,7 +228,7 @@ export async function persistReschedule({
   const hardTwelveDayDeadline = deriveDeadline(caseRow.firstPayoutOn ?? caseRow.approvedOn ?? today, 12, calendar);
   const deadline = storedDeadline < hardTwelveDayDeadline ? storedDeadline : hardTwelveDayDeadline;
 
-  const result = rescheduleRemaining({
+  const rescheduleInput = {
     remainingPaise: remaining,
     fromDate: today,
     deadlineDate: deadline,
@@ -242,7 +242,22 @@ export async function persistReschedule({
     cadence: caseRow.cadence as Cadence,
     payoutCount,
     allowClosedStartDate,
-  });
+  };
+  let result = rescheduleRemaining(rescheduleInput);
+  if (payoutCount === undefined) {
+    // The visible plan is the whole plan, including paid rows carried from earlier versions.
+    // Fill only the slots left in the configured 12/6-part total. The first pass tells us how
+    // many cadence-valid dates actually remain before the hard deadline; the second pass is only
+    // needed when that availability would make paid + future rows exceed the total.
+    const configuredTotal = Math.min(
+      standardPayoutPartsFor(caseRow.maturityAmountPaise),
+      payoutPlanFor(caseRow.maturityAmountPaise, caseRow.windowDays).payoutDays,
+    );
+    const slotsLeft = Math.max(1, configuredTotal - settled.length);
+    if (result.installments.length > slotsLeft) {
+      result = rescheduleRemaining({ ...rescheduleInput, payoutCount: slotsLeft });
+    }
+  }
 
   const version = caseRow.scheduleVersion + 1;
   // New rows must start after the HIGHEST sequence number carried forward, not after the
