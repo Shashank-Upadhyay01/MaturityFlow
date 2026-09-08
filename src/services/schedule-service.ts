@@ -188,6 +188,11 @@ export async function persistReschedule({
   // That was how an ordinary 12-part maturity grew to 15, 18, or more visible instalments after
   // its payment date was edited. An explicit payoutCount remains an admin override for the
   // *remaining* balance; otherwise preserve the configured total part count.
+  const configuredParts = Math.min(
+    standardPayoutPartsFor(caseRow.maturityAmountPaise),
+    payoutPlanFor(caseRow.maturityAmountPaise, caseRow.windowDays).payoutDays,
+  );
+  const remainingPartSlots = Math.max(1, configuredParts - settled.length);
 
   const openIds = live
     .filter((i) => i.paidCashPaise + i.paidOnlinePaise === 0n)
@@ -219,14 +224,9 @@ export async function persistReschedule({
   // whose `windowDays` really did include the processing days. The old formula is the right one
   // for exactly those rows; do not "modernise" it, or legacy cases get a deadline three working
   // days early.
-  const storedDeadline =
+  const deadline =
     caseRow.deadlineOn ??
     deriveDeadline(caseRow.approvedOn ?? today, caseRow.windowDays, calendar, caseRow.startOnNextWorkingDay);
-  // Payment day is day one of the withdrawal period. Whatever legacy Window Days value a row
-  // carries, the customer must finish inside twelve working days from that first payment day.
-  // If the stored promise is earlier, retain it; never extend a customer's deadline.
-  const hardTwelveDayDeadline = deriveDeadline(caseRow.firstPayoutOn ?? caseRow.approvedOn ?? today, 12, calendar);
-  const deadline = storedDeadline < hardTwelveDayDeadline ? storedDeadline : hardTwelveDayDeadline;
 
   const result = rescheduleRemaining({
     remainingPaise: remaining,
@@ -240,7 +240,7 @@ export async function persistReschedule({
     // Carried from the case, not re-derived: a sub-₹1-lakh maturity must not become a daily
     // one the first time its remainder is re-planned.
     cadence: caseRow.cadence as Cadence,
-    payoutCount,
+    payoutCount: payoutCount ?? remainingPartSlots,
     allowClosedStartDate,
   });
 
@@ -284,7 +284,6 @@ export async function persistReschedule({
     .update(maturityCases)
     .set({ scheduleVersion: version, scheduleGeneratedAt: new Date(),
       firstPayoutOn: settled.length > 0 ? caseRow.firstPayoutOn : result.firstPayoutDate,
-      deadlineOn: result.lastPayoutDate,
       updatedAt: new Date() })
     .where(eq(maturityCases.id, caseRow.id));
 
