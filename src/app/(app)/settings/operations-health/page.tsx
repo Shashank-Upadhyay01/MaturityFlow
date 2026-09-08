@@ -11,7 +11,7 @@ import { getSession, toActor } from '@/lib/auth/session';
 import { formatPaise } from '@/lib/money';
 import { roleCan } from '@/lib/rbac';
 import { getOperationsHealth } from '@/services/operations-health';
-import { NormalizeSchedulePartsButton, ReconcileCaseForm, RefreshHealthButton } from './repair-controls';
+import { ReconcileCaseForm, RefreshHealthButton } from './repair-controls';
 
 export const metadata = { title: 'Operations health' };
 export const dynamic = 'force-dynamic';
@@ -49,7 +49,7 @@ export default async function OperationsHealthPage({ searchParams }: { searchPar
         eyebrow="Administration"
         title="Operations health"
         description="Check case totals and instalments against recorded receipts, investigate discrepancies, and reconcile eligible paid totals."
-        actions={<><NormalizeSchedulePartsButton /><RefreshHealthButton /></>}
+        actions={<RefreshHealthButton />}
       />
 
       <Callout tone="info" title="Every reconciliation has a reason and an audit record" icon={<ShieldCheck className="h-5 w-5" aria-hidden />}>

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useState, useTransition, type FormEvent } from 'react';
 import { toast } from 'sonner';
 
-import { normalizeSchedulePartsAction, reconcileCaseLedgerAction } from '@/actions/operations-health';
+import { reconcileCaseLedgerAction } from '@/actions/operations-health';
 import { Button } from '@/components/ui/button';
 import { Field, Textarea } from '@/components/ui/field';
 
@@ -17,23 +17,6 @@ export function RefreshHealthButton() {
     <Button type="button" variant="outline" loading={pending} onClick={() => startTransition(() => router.refresh())}>
       {!pending && <RefreshCw className="h-4 w-4" aria-hidden />}
       Check again
-    </Button>
-  );
-}
-
-export function NormalizeSchedulePartsButton() {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
-  return (
-    <Button type="button" variant="outline" loading={pending} onClick={() => startTransition(async () => {
-      const result = await normalizeSchedulePartsAction();
-      if (!result.ok) return void toast.error(result.error);
-      toast.success(`${result.data.normalized} schedule(s) normalized`, {
-        description: result.data.failed ? `${result.data.failed} need individual review.` : 'Receipts and paid amounts were retained.',
-      });
-      router.refresh();
-    })}>
-      Normalize payout parts
     </Button>
   );
 }
