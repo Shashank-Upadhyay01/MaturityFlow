@@ -694,6 +694,48 @@ export async function rollOverElapsedSchedules(actor: SessionUser, branchId: str
   return { changed, failed };
 }
 
+/**
+ * Repair active rows whose stated payment start is today but whose current schedule has no
+ * payment for today. This is the server-side answer to the Register's "Unset" warning: use the
+ * ordinary locked, receipt-aware and audited reschedule path, once, then every screen reads the
+ * repaired current schedule version.
+ */
+export async function autoRepairUnsetSchedules(actor: SessionUser, branchId: string, asOf = todayISO()) {
+  if (!roleCan(actor.role, 'schedule.reschedule')) return { changed: 0, failed: 0 };
+  const candidates = await db.select({
+    id: maturityCases.id,
+    branchId: maturityCases.branchId,
+    agentId: maturityCases.agentId,
+  }).from(maturityCases).where(and(
+    eq(maturityCases.branchId, branchId),
+    eq(maturityCases.paymentOn, asOf),
+    eq(maturityCases.todayApprovedPaise, 0n),
+    inArray(maturityCases.status, ['APPROVED', 'IN_PROGRESS']),
+    sql`${maturityCases.paidCashPaise} + ${maturityCases.paidOnlinePaise} < ${maturityCases.maturityAmountPaise}`,
+    sql`NOT EXISTS (
+      SELECT 1 FROM ${payoutInstalments} i
+      WHERE i.case_id = ${maturityCases.id}
+        AND i.schedule_version = ${maturityCases.scheduleVersion}
+        AND i.due_on = ${asOf}
+        AND i.status NOT IN ('SUPERSEDED','CANCELLED')
+    )`,
+  ));
+
+  let changed = 0;
+  let failed = 0;
+  for (const candidate of candidates) {
+    if (!inScope(actor, candidate, 'schedule.reschedule')) continue;
+    try {
+      assertCan(actor, 'schedule.reschedule', candidate);
+      await rescheduleCase(actor, candidate.id, 'Automatic repair: payment date had no scheduled amount.');
+      changed++;
+    } catch {
+      failed++;
+    }
+  }
+  return { changed, failed };
+}
+
 /** Type a new day-count; remaining money is rebuilt from today over that many working days. */
 export async function replanWithWindow(
   actor: SessionUser,

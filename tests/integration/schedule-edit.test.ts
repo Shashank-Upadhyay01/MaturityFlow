@@ -29,7 +29,7 @@ import { newId } from '@/lib/id';
 import { rupees } from '@/lib/money';
 import { permissionsOf } from '@/lib/rbac';
 import type { Actor } from '@/lib/rbac';
-import { createCase } from '@/services/case-service';
+import { autoRepairUnsetSchedules, createCase } from '@/services/case-service';
 import {
   listBreachedCases,
   listRegister,
@@ -165,6 +165,24 @@ describe('the cadence policy shapes what is persisted', () => {
     expect(c.cadence).toBe('ALTERNATE');
     expect(rows.reduce((a, r) => a + r.amountPaise, 0n)).toBe(c.maturityAmountPaise);
     expect(rows[rows.length - 1].dueOn <= (c.deadlineOn ?? '9999-12-31')).toBe(true);
+  });
+
+  it('automatically repairs an unset payment date through the audited reschedule path', async () => {
+    const caseId = await approved('120000');
+    await db.update(maturityCases)
+      .set({ paymentOn: todayISO(), todayApprovedPaise: 0n })
+      .where(eq(maturityCases.id, caseId));
+    await db.update(payoutInstalments)
+      .set({ dueOn: '2026-12-01' })
+      .where(eq(payoutInstalments.caseId, caseId));
+
+    const repaired = await autoRepairUnsetSchedules(ops, branchId, todayISO());
+    expect(repaired.changed).toBeGreaterThanOrEqual(1);
+    const [c] = await db.select().from(maturityCases).where(eq(maturityCases.id, caseId));
+    const live = (await rowsOf(caseId)).filter((row) => row.scheduleVersion === c.scheduleVersion);
+    expect(live.some((row) => row.dueOn === todayISO())).toBe(true);
+    expect(live).toHaveLength(12);
+    expect(live.reduce((sum, row) => sum + row.amountPaise, 0n)).toBe(c.maturityAmountPaise);
   });
 });
 
