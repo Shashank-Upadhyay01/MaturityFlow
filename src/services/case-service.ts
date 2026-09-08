@@ -24,6 +24,7 @@ import { getBranchPolicy } from './calendar-service';
 import { persistSchedule, persistReschedule, persistReplanWindow } from './schedule-service';
 import { ensureAllocatedLedgerInTx } from './payout-ledger';
 import { assertCan, inScope, roleCan } from '@/lib/rbac';
+import { reconcileInstalmentLegs } from '@/lib/payment-rules';
 
 export class WorkflowError extends Error {
   constructor(
@@ -634,7 +635,57 @@ export async function rollOverElapsedSchedules(actor: SessionUser, branchId: str
     if (!inScope(actor, c, 'schedule.reschedule')) continue;
     try {
       assertCan(actor, 'schedule.reschedule', c);
-      await rescheduleCase(actor, c.id, 'Automatic missed-day redistribution');
+      await db.transaction(async (tx) => {
+        const [locked] = await tx.select().from(maturityCases)
+          .where(eq(maturityCases.id, c.id)).for('update').limit(1);
+        if (!locked) throw new WorkflowError('Case not found', 'NOT_FOUND');
+        await ensureAllocatedLedgerInTx(tx, actor, locked);
+        const rows = await tx.select().from(payoutInstalments).where(and(
+          eq(payoutInstalments.caseId, locked.id),
+          eq(payoutInstalments.scheduleVersion, locked.scheduleVersion),
+          sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`,
+        )).for('update').orderBy(payoutInstalments.dueOn, payoutInstalments.seq);
+        const elapsed = rows.filter((r) => r.dueOn < asOf && ['PENDING', 'PARTIAL'].includes(r.status));
+        const future = rows.filter((r) => r.dueOn >= asOf && ['PENDING', 'PARTIAL'].includes(r.status));
+        if (!elapsed.length || !future.length) return;
+        const version = locked.scheduleVersion + 1;
+        const remaining = locked.maturityAmountPaise - locked.paidCashPaise - locked.paidOnlinePaise;
+        const q = remaining / BigInt(future.length);
+        let residue = remaining % BigInt(future.length);
+        if (q <= 0n) throw new WorkflowError('No positive payment can be placed on the remaining dates.', 'NOT_SCHEDULABLE');
+        await tx.update(payoutInstalments).set({ status: 'MISSED', isFinal: false, updatedAt: new Date() })
+          .where(inArray(payoutInstalments.id, elapsed.map((r) => r.id)));
+        const paidRows = rows.filter((r) => r.status === 'PAID');
+        if (paidRows.length) await tx.update(payoutInstalments).set({ scheduleVersion: version, isFinal: false, updatedAt: new Date() })
+          .where(inArray(payoutInstalments.id, paidRows.map((r) => r.id)));
+        for (let i = 0; i < future.length; i++) {
+          const row = future[i];
+          const amount = q + (residue > 0n ? 1n : 0n);
+          if (residue > 0n) residue--;
+          const plannedCash = locked.cashPolicy === 'ONLINE_ONLY' ? 0n
+            : locked.cashPolicy === 'CASH_CAP' ? (amount < (locked.cashCapPerDayPaise ?? 0n) ? amount : locked.cashCapPerDayPaise ?? 0n)
+              : amount;
+          const legs = reconcileInstalmentLegs(amount, plannedCash, row.paidCashPaise, row.paidOnlinePaise);
+          await tx.update(payoutInstalments).set({
+            scheduleVersion: version, amountPaise: amount,
+            cashLegPaise: legs.cashPaise, onlineLegPaise: legs.onlinePaise,
+            isFinal: i === future.length - 1,
+            status: row.paidCashPaise + row.paidOnlinePaise > 0n ? 'PARTIAL' : 'PENDING',
+            updatedAt: new Date(),
+          }).where(eq(payoutInstalments.id, row.id));
+        }
+        await tx.update(maturityCases).set({ scheduleVersion: version, scheduleGeneratedAt: new Date(), updatedAt: new Date() })
+          .where(eq(maturityCases.id, locked.id));
+        await tx.insert(caseEvents).values({
+          id: newId('evt'), caseId: locked.id, type: 'RESCHEDULED', actorId: actor.id,
+          note: `${elapsed.length} missed day(s) redistributed over ${future.length} remaining scheduled date(s).`,
+        });
+        await writeAudit(tx, actor, {
+          action: 'schedule.rescheduled', entity: 'MaturityCase', entityId: locked.id, branchId: locked.branchId,
+          summary: `${locked.caseNumber}: ${elapsed.length} missed day(s) automatically redistributed over ${future.length} existing dates`,
+          before: { scheduleVersion: locked.scheduleVersion }, after: { scheduleVersion: version, remainingPaise: remaining },
+        });
+      });
       changed++;
     } catch {
       failed++;

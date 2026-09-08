@@ -60,7 +60,7 @@ export function inspectCaseLedger(c: CaseLedger, instalments: readonly Instalmen
     const inactive = i.scheduleVersion !== c.scheduleVersion || i.status === 'SUPERSEDED' || i.status === 'CANCELLED';
     if (!inactive) {
       activeCount++;
-      scheduledPaise += i.amountPaise;
+      scheduledPaise += i.amountPaise - paid;
       if (i.scheduleVersion !== c.scheduleVersion) issue('OLD_ACTIVE_SCHEDULE', 'An older schedule still has active instalments. Review the schedule versions.');
     } else if (paid > 0n && i.status !== 'MISSED') {
       issue('INACTIVE_RECEIPT', 'A recorded payment is attached to a cancelled or superseded instalment.');
@@ -77,6 +77,9 @@ export function inspectCaseLedger(c: CaseLedger, instalments: readonly Instalmen
   }
   if (instalmentRepairs.length) issue('INSTALMENT_TOTAL', `${instalmentRepairs.length} instalment paid totals or payment statuses differ from their receipts.`, false);
   const expectsSchedule = ['APPROVED', 'IN_PROGRESS', 'COMPLETED', 'ON_HOLD'].includes(c.status);
+  // Current obligation = receipts already paid + outstanding on the current plan. Historical
+  // MISSED promises are intentionally outside the current plan after their balance rolls forward.
+  scheduledPaise += paidPaise;
   if ((expectsSchedule || activeCount > 0) && c.status !== 'CANCELLED' && scheduledPaise !== c.maturityAmountPaise) {
     issue('SCHEDULE_TOTAL', 'The active schedule does not add up to the maturity amount. Review the remaining schedule.');
   }
