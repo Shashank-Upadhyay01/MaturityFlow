@@ -96,6 +96,11 @@ describe('isTodayButUnset', () => {
     expect(isTodayButUnset(row({ paymentOn: '2026-08-23', remainingPaise: '1' }), TODAY)).toBe(false);
     expect(isTodayButUnset(row({ remainingPaise: '0' }), TODAY)).toBe(false);
   });
+  it('does not call an unsubmitted draft a payout failure', () => {
+    expect(isTodayButUnset(row({ status: 'DRAFT', remainingPaise: '20000000' }), TODAY)).toBe(false);
+    expect(isTodayButUnset(row({ status: 'SUBMITTED', remainingPaise: '20000000' }), TODAY)).toBe(false);
+    expect(isTodayButUnset(row({ status: 'APPROVED', remainingPaise: '20000000' }), TODAY)).toBe(true);
+  });
 });
 
 describe('summariseDueToday', () => {

@@ -323,6 +323,7 @@ export function isDueToday(r: TodayFigureRow): boolean {
  * and then never said how much, so the counter would never see them.
  */
 export function isTodayButUnset(r: TodayFigureRow, today: string): boolean {
+  if (r.status && !['APPROVED', 'IN_PROGRESS'].includes(r.status)) return false;
   return r.paymentOn === today && todayPlannedPaise(r) === 0n && BigInt(r.remainingPaise) > 0n;
 }
 
@@ -430,6 +431,8 @@ export function markTargetOf(
  * anybody knows about such a row.
  */
 export interface TodayFigureRow extends RegisterViewRow {
+  /** Case workflow state. When supplied, only payable active cases can be called unset. */
+  status?: string;
   todayInstalmentId?: string | null;
   /** What the schedule plans for today, in paise. */
   todayDuePaise?: string;
