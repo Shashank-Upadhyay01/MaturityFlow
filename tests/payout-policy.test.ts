@@ -73,8 +73,8 @@ describe('payoutPlanFor', () => {
     });
   });
 
-  it('generalises to a longer window rather than hard-coding 12', () => {
-    expect(payoutPlanFor(LAKH, 20).payoutDays).toBe(17);
+  it('caps every customer at twelve payout days', () => {
+    expect(payoutPlanFor(LAKH, 20).payoutDays).toBe(12);
     expect(payoutPlanFor(LAKH - 1n, 20).payoutDays).toBe(9); // ceil(17 / 2)
   });
 
@@ -101,7 +101,7 @@ describe('payoutPlanFor', () => {
 
   it('exposes the processing constant it used', () => {
     expect(PROCESSING_WORKING_DAYS).toBe(3);
-    expect(payoutPlanFor(LAKH, 15, 0).payoutDays).toBe(15);
+    expect(payoutPlanFor(LAKH, 15, 0).payoutDays).toBe(12);
   });
 });
 
@@ -314,7 +314,7 @@ describe('applying a part count from the planning board', () => {
   */
   it('is idempotent: applying N parts leaves the case reading N parts', () => {
     for (const amount of [LAKH, LAKH - 1n, LAKH * 40n, 1_000n]) {
-      for (let parts = 1; parts <= 20; parts += 1) {
+      for (let parts = 1; parts <= 12; parts += 1) {
         const windowDays = windowDaysForPayoutCount(amount, parts);
         if (windowDays > 60) continue;
         expect(payoutPlanFor(amount, windowDays).payoutDays).toBe(parts);
@@ -322,12 +322,10 @@ describe('applying a part count from the planning board', () => {
     }
   });
 
-  it('keeps an alternate-day case inside the 60-day ceiling up to 29 parts', () => {
+  it('rejects part counts above the twelve-day customer limit', () => {
     const small = LAKH - 1n;
-    expect(windowDaysForPayoutCount(small, 29)).toBe(60);
-    expect(windowDaysForPayoutCount(small, 30)).toBeGreaterThan(60);
-    // A daily case fits far more parts in the same ceiling.
-    expect(windowDaysForPayoutCount(LAKH, 57)).toBe(60);
+    expect(() => windowDaysForPayoutCount(small, 29)).toThrow(PayoutPolicyError);
+    expect(() => windowDaysForPayoutCount(LAKH, 57)).toThrow(PayoutPolicyError);
   });
 
   it('never returns a window shorter than the processing gap allows', () => {

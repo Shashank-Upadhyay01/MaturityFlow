@@ -30,6 +30,9 @@ export const MAX_WINDOW_DAYS = 366;
  */
 export const MIN_WINDOW_DAYS = 1;
 
+/** A customer must never be asked to attend for more than twelve payout days. */
+export const MAX_PAYOUT_PARTS = 12;
+
 export type Cadence = 'DAILY' | 'ALTERNATE';
 
 /**
@@ -214,7 +217,10 @@ export function payoutPlanFor(
 
   const cadence = cadenceFor(maturityAmountPaise);
   const stride = strideFor(cadence);
-  const payoutDays = cadence === 'DAILY' ? usableDays : Math.ceil(usableDays / 2);
+  const payoutDays = Math.min(
+    MAX_PAYOUT_PARTS,
+    cadence === 'DAILY' ? usableDays : Math.ceil(usableDays / 2),
+  );
 
   // The window has to be able to hold what we just planned. This cannot fail with the arithmetic
   // above; it is here so that it cannot start failing silently if the arithmetic changes.
@@ -242,8 +248,8 @@ export function payoutPlanFor(
  * gap. ₹1 lakh+ at 12 → window 15 daily; below ₹1 lakh at 6 → alternate days inside that window.
  */
 export function windowDaysForPayoutCount(maturityAmountPaise: bigint, payoutDays: number): number {
-  if (!Number.isInteger(payoutDays) || payoutDays < 1) {
-    throw new PayoutPolicyError('Payout count must be a whole number of at least 1.');
+  if (!Number.isInteger(payoutDays) || payoutDays < 1 || payoutDays > MAX_PAYOUT_PARTS) {
+    throw new PayoutPolicyError(`Payout count must be a whole number from 1 to ${MAX_PAYOUT_PARTS}.`);
   }
   const n = payoutDays;
   const stride = strideFor(cadenceFor(maturityAmountPaise));

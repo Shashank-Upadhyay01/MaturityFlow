@@ -520,13 +520,13 @@ export function rescheduleRemaining(input: RescheduleInput): RescheduleResult {
     payoutSlots = Math.max(1, payoutSlots);
   }
 
-  const exactSlots = Math.max(1, payoutCount ?? payoutSlots);
+    const exactSlots = Math.max(1, Math.min(12, payoutCount ?? payoutSlots));
   const exactStep = remainingPaise % BigInt(exactSlots) === 0n
     ? remainingPaise / BigInt(exactSlots)
     : 1n;
   const result = generateSchedule({
     totalPaise: remainingPaise,
-    days: payoutCount ?? payoutSlots,
+      days: exactSlots,
     roundingPaise: equalize ? exactStep : roundingPaise,
     startDate: start,
     calendar,

@@ -60,6 +60,11 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
   const daysLeft = c.deadlineOn ? daysBetween(today, c.deadlineOn) : null;
 
   const liveInstalments = detail.instalments.filter((i) => i.status !== 'SUPERSEDED');
+  const currentWithdrawalDays = new Set(
+    liveInstalments
+      .filter((i) => i.scheduleVersion === c.scheduleVersion && i.status !== 'CANCELLED')
+      .map((i) => i.dueOn),
+  ).size;
   const canOverride = roleCan(session.role, 'schedule.override');
   const canEditDates = canOverrideDates(session.role);
 
@@ -240,7 +245,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           )}
 
           <div className="mt-5 grid gap-4 border-t pt-5 sm:grid-cols-4">
-            <KeyValue label="Window">{c.windowDays} working days</KeyValue>
+            <KeyValue label="Withdrawal days">{Math.min(12, currentWithdrawalDays)} of 12 maximum</KeyValue>
             <KeyValue label="Rounding">
               {formatPaise(c.roundingPaise, { decimals: false })}
             </KeyValue>
@@ -390,6 +395,15 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           bodyClassName="p-0 sm:p-0"
         >
           <PaymentRows
+            canAdd={canEditDates && roleCan(session.role, 'payout.record') && isLive && remaining > 0n}
+            payableDays={liveInstalments
+              .filter((i) =>
+                i.scheduleVersion === c.scheduleVersion &&
+                i.status !== 'CANCELLED' &&
+                i.status !== 'SUPERSEDED' &&
+                i.paidCashPaise + i.paidOnlinePaise < i.amountPaise,
+              )
+              .map((i) => ({ id: i.id, seq: i.seq, dueOn: i.dueOn }))}
             canEditDates={canEditDates}
             canReverse={roleCan(session.role, 'payout.reverse')}
             /*

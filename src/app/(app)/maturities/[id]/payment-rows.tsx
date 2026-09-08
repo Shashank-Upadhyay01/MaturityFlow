@@ -1,11 +1,11 @@
 'use client';
 
-import { Pencil, Undo2 } from 'lucide-react';
+import { Pencil, Plus, Undo2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
-import { reversePayoutAction } from '@/actions/payouts';
+import { recordPayoutAction, reversePayoutAction } from '@/actions/payouts';
 import { correctRegisterDayPaidAction } from '@/actions/register';
 import { AdminDateCell } from '@/components/domain/admin-date-cell';
 import { Badge } from '@/components/ui/badge';
@@ -58,11 +58,15 @@ interface CorrectionDraft {
 
 export function PaymentRows({
   payments,
+  payableDays = [],
+  canAdd = false,
   canReverse,
   canCorrect = false,
   canEditDates = false,
 }: {
   payments: PaymentRow[];
+  payableDays?: Array<{ id: string; seq: number; dueOn: string }>;
+  canAdd?: boolean;
   canReverse: boolean;
   /**
    * Whether this actor may change a recorded payment rather than only undo it. Same answer the
@@ -78,6 +82,33 @@ export function PaymentRows({
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<CorrectionDraft | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [addDraft, setAddDraft] = useState({
+    instalmentId: payableDays[0]?.id ?? '', cash: '', online: '', reference: '', valueDate: '', remarks: '',
+  });
+
+  async function addPayment() {
+    const cash = tryParseRupeesToPaise(addDraft.cash || '0');
+    const online = tryParseRupeesToPaise(addDraft.online || '0');
+    if (cash == null || online == null || cash + online <= 0n) return toast.error('Enter the amount that was paid.');
+    if (!addDraft.instalmentId || !addDraft.valueDate) return toast.error('Choose the payout day and actual payment date.');
+    if (online > 0n && !addDraft.reference.trim()) return toast.error('An online payment needs its transfer reference.');
+    const data = new FormData();
+    data.set('instalmentId', addDraft.instalmentId);
+    data.set('cash', addDraft.cash || '0');
+    data.set('online', addDraft.online || '0');
+    data.set('reference', addDraft.reference);
+    data.set('remarks', addDraft.remarks || 'Recorded later by administrator');
+    data.set('valueDate', addDraft.valueDate);
+    setBusy(true);
+    const result = await recordPayoutAction(null, data);
+    setBusy(false);
+    if (!result.ok) return toast.error(result.error);
+    toast.success('Recorded payment added');
+    setAdding(false);
+    setAddDraft({ instalmentId: payableDays[0]?.id ?? '', cash: '', online: '', reference: '', valueDate: '', remarks: '' });
+    router.refresh();
+  }
 
   /**
    * The other entries still standing against the same scheduled day.
@@ -167,19 +198,40 @@ export function PaymentRows({
     }
   }
 
-  if (payments.length === 0) {
-    return (
-      <p className="px-6 py-8 text-center text-[0.875rem] text-[var(--muted-fg)]">
-        Nothing has been paid out yet.
-      </p>
-    );
-  }
-
   const editRow = editing ? payments.find((p) => p.id === editing) ?? null : null;
   const showActions = canReverse || canCorrect;
 
   return (
     <>
+      {canAdd && payableDays.length > 0 && (
+        <div className="px-5 pt-5 sm:px-6">
+          <Button size="sm" variant="primary" onClick={() => setAdding((v) => !v)}>
+            <Plus className="h-3.5 w-3.5" /> Add recorded payment
+          </Button>
+          {adding && (
+            <Glass className="mt-3 p-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Apply against payout day">
+                  <select className="mf-input h-9 w-full" value={addDraft.instalmentId} onChange={(e) => setAddDraft({ ...addDraft, instalmentId: e.target.value })}>
+                    {payableDays.map((d) => <option key={d.id} value={d.id}>Day {d.seq} · {formatISODateShort(d.dueOn)}</option>)}
+                  </select>
+                </Field>
+                <Field label="Date money was actually paid">
+                  <Input type="date" value={addDraft.valueDate} onChange={(e) => setAddDraft({ ...addDraft, valueDate: e.target.value })} />
+                </Field>
+                <Field label="Cash (₹)"><Input inputMode="decimal" value={addDraft.cash} onChange={(e) => setAddDraft({ ...addDraft, cash: e.target.value.replace(/[^0-9.]/g, '') })} /></Field>
+                <Field label="Online (₹)"><Input inputMode="decimal" value={addDraft.online} onChange={(e) => setAddDraft({ ...addDraft, online: e.target.value.replace(/[^0-9.]/g, '') })} /></Field>
+                <Field label="UTR / reference"><Input value={addDraft.reference} onChange={(e) => setAddDraft({ ...addDraft, reference: e.target.value })} /></Field>
+                <Field label="Note"><Input value={addDraft.remarks} onChange={(e) => setAddDraft({ ...addDraft, remarks: e.target.value })} placeholder="Optional" /></Field>
+              </div>
+              <div className="mt-3 flex justify-end gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>Cancel</Button>
+                <Button size="sm" variant="success" loading={busy} onClick={() => void addPayment()}>Save payment</Button>
+              </div>
+            </Glass>
+          )}
+        </div>
+      )}
       <Table>
         <THead>
           <TH>Date</TH>
@@ -190,6 +242,9 @@ export function PaymentRows({
           {showActions && <TH />}
         </THead>
         <TBody>
+          {payments.length === 0 && (
+            <TR><TD colSpan={6} className="py-8 text-center text-[var(--muted-fg)]">Nothing has been paid out yet.</TD></TR>
+          )}
           {payments.map((t) => (
             <TR key={t.id} className={t.reversedAt ? 'opacity-55' : ''}>
               <TD>
