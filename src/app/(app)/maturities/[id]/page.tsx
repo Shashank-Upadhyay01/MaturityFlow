@@ -300,13 +300,14 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
               <TH>Status</TH>
             </THead>
             <TBody>
-              {liveInstalments.map((i) => {
+              {liveInstalments.map((i, chronologicalIndex) => {
                 const instPaid = i.paidCashPaise + i.paidOnlinePaise;
                 const isToday = i.dueOn === today;
+                const dayNumber = chronologicalIndex + 1;
                 return (
                   <TR key={i.id} highlight={isToday}>
                     <TD className="text-[var(--muted-fg)]">
-                      {i.seq}
+                      {dayNumber}
                       {i.isFinal && (
                         <span className="ml-2 text-[0.625rem] font-semibold text-[var(--color-brand-500)]">
                           FINAL
@@ -320,7 +321,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                             kind="instalment"
                             id={i.id}
                             value={toISODateString(i.dueOn) ?? i.dueOn}
-                            ariaLabel={`Due date for day ${i.seq}`}
+                            ariaLabel={`Due date for day ${dayNumber}`}
                           />
                           {isToday && (
                             <Badge tone="brand">today</Badge>
@@ -368,9 +369,9 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
             <ScheduleAdjust
               caseId={c.id}
               roundingPaise={c.roundingPaise.toString()}
-              rows={liveInstalments.map((i) => ({
+              rows={liveInstalments.map((i, chronologicalIndex) => ({
                 id: i.id,
-                seq: i.seq,
+                seq: chronologicalIndex + 1,
                 dueOn: i.dueOn,
                 amountPaise: i.amountPaise.toString(),
                 paidPaise: (i.paidCashPaise + i.paidOnlinePaise).toString(),
@@ -404,13 +405,11 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           <PaymentRows
             canAdd={canEditDates && roleCan(session.role, 'payout.record') && isLive && remaining > 0n}
             payableDays={liveInstalments
-              .filter((i) =>
-                i.scheduleVersion === c.scheduleVersion &&
-                i.status !== 'CANCELLED' &&
-                i.status !== 'SUPERSEDED' &&
+              .map((i, chronologicalIndex) => ({ i, dayNumber: chronologicalIndex + 1 }))
+              .filter(({ i }) =>
                 i.paidCashPaise + i.paidOnlinePaise < i.amountPaise,
               )
-              .map((i) => ({ id: i.id, seq: i.seq, dueOn: i.dueOn }))}
+              .map(({ i, dayNumber }) => ({ id: i.id, seq: dayNumber, dueOn: i.dueOn }))}
             canEditDates={canEditDates}
             canReverse={roleCan(session.role, 'payout.reverse')}
             /*
