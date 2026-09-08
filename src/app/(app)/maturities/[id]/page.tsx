@@ -59,11 +59,18 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
   const reviewLag = c.opsReviewedOn ? daysBetween(c.formSubmittedOn, c.opsReviewedOn) : null;
   const daysLeft = c.deadlineOn ? daysBetween(today, c.deadlineOn) : null;
 
-  const liveInstalments = detail.instalments.filter((i) => i.status !== 'SUPERSEDED');
+  // A reschedule deliberately retains missed rows on their old version for the Missed Payments
+  // report. They are history, not part of the customer's current plan. Mixing them into this
+  // table produced repeated day numbers and apparently random dates after every re-plan.
+  const liveInstalments = detail.instalments
+    .filter((i) =>
+      i.scheduleVersion === c.scheduleVersion &&
+      i.status !== 'SUPERSEDED' &&
+      i.status !== 'CANCELLED',
+    )
+    .sort((a, b) => a.dueOn.localeCompare(b.dueOn) || a.seq - b.seq);
   const currentWithdrawalDays = new Set(
-    liveInstalments
-      .filter((i) => i.scheduleVersion === c.scheduleVersion && i.status !== 'CANCELLED')
-      .map((i) => i.dueOn),
+    liveInstalments.map((i) => i.dueOn),
   ).size;
   const canOverride = roleCan(session.role, 'schedule.override');
   const canEditDates = canOverrideDates(session.role);
