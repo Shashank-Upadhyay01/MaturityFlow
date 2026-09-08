@@ -178,6 +178,14 @@ export async function persistReschedule({
   const settled = live.filter((i) => i.paidCashPaise + i.paidOnlinePaise > 0n);
   const carriedOverPaise = remaining;
 
+  // A re-plan is still the same customer plan. Paid rows consume their original slots; they
+  // must not be carried forward and then followed by a brand-new full set of 12 (or 6) rows.
+  // That was how an ordinary 12-part maturity grew to 15, 18, or more visible instalments after
+  // its payment date was edited. An explicit payoutCount remains an admin override for the
+  // *remaining* balance; otherwise preserve the configured total part count.
+  const configuredParts = payoutPlanFor(caseRow.maturityAmountPaise, caseRow.windowDays).payoutDays;
+  const remainingPartSlots = Math.max(1, configuredParts - settled.length);
+
   const openIds = live
     .filter((i) => i.paidCashPaise + i.paidOnlinePaise === 0n)
     .map((i) => i.id);
@@ -224,7 +232,7 @@ export async function persistReschedule({
     // Carried from the case, not re-derived: a sub-₹1-lakh maturity must not become a daily
     // one the first time its remainder is re-planned.
     cadence: caseRow.cadence as Cadence,
-    payoutCount,
+    payoutCount: payoutCount ?? remainingPartSlots,
     allowClosedStartDate,
   });
 
