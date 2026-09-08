@@ -92,6 +92,16 @@ describe('isTodayButUnset', () => {
   it('stays quiet once an amount exists', () => {
     expect(isTodayButUnset(row({ todayPaise: '1', remainingPaise: '20000000' }), TODAY)).toBe(false);
   });
+  it('stays quiet on an alternate schedule off day', () => {
+    expect(isTodayButUnset(row({
+      status: 'IN_PROGRESS',
+      remainingPaise: '20000000',
+      payoutDays: [{
+        id: 'inst_1', dueOn: '2026-08-24', amountPaise: '20000000', cashPaise: '20000000',
+        onlinePaise: '0', paidPaise: '0', status: 'PENDING',
+      }],
+    }), TODAY)).toBe(false);
+  });
   it('stays quiet for another day, and for a settled case', () => {
     expect(isTodayButUnset(row({ paymentOn: '2026-08-23', remainingPaise: '1' }), TODAY)).toBe(false);
     expect(isTodayButUnset(row({ remainingPaise: '0' }), TODAY)).toBe(false);

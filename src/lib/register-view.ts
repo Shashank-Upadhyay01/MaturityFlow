@@ -317,13 +317,14 @@ export function isDueToday(r: TodayFigureRow): boolean {
 }
 
 /**
- * The payment date says today, but nobody has set today's amount.
+ * The payment date says today, but the case has no usable payout schedule.
  *
- * Not an error — it is the shape an omission takes. Someone scheduled the customer for today
- * and then never said how much, so the counter would never see them.
+ * A valid alternate-day plan naturally has zero due on its off days, so the existence of any
+ * live payout row is enough to keep it out of this warning.
  */
 export function isTodayButUnset(r: TodayFigureRow, today: string): boolean {
   if (r.status && !['APPROVED', 'IN_PROGRESS'].includes(r.status)) return false;
+  if ((r.payoutDays?.length ?? 0) > 0) return false;
   return r.paymentOn === today && todayPlannedPaise(r) === 0n && BigInt(r.remainingPaise) > 0n;
 }
 

@@ -695,10 +695,9 @@ export async function rollOverElapsedSchedules(actor: SessionUser, branchId: str
 }
 
 /**
- * Repair active rows whose stated payment start is today but whose current schedule has no
- * payment for today. This is the server-side answer to the Register's "Unset" warning: use the
- * ordinary locked, receipt-aware and audited reschedule path, once, then every screen reads the
- * repaired current schedule version.
+ * Repair active rows whose stated payment start is today but whose current schedule is missing.
+ * A valid alternate-day schedule may have no payment today, so the candidate query deliberately
+ * asks whether any live row exists instead of asking whether one is due on this date.
  */
 export async function autoRepairUnsetSchedules(actor: SessionUser, branchId: string, asOf = todayISO()) {
   if (!roleCan(actor.role, 'schedule.reschedule')) return { changed: 0, failed: 0 };
@@ -706,17 +705,19 @@ export async function autoRepairUnsetSchedules(actor: SessionUser, branchId: str
     id: maturityCases.id,
     branchId: maturityCases.branchId,
     agentId: maturityCases.agentId,
+    windowDays: maturityCases.windowDays,
   }).from(maturityCases).where(and(
     eq(maturityCases.branchId, branchId),
     eq(maturityCases.paymentOn, asOf),
     eq(maturityCases.todayApprovedPaise, 0n),
     inArray(maturityCases.status, ['APPROVED', 'IN_PROGRESS']),
+    eq(maturityCases.paidCashPaise, 0n),
+    eq(maturityCases.paidOnlinePaise, 0n),
     sql`${maturityCases.paidCashPaise} + ${maturityCases.paidOnlinePaise} < ${maturityCases.maturityAmountPaise}`,
     sql`NOT EXISTS (
       SELECT 1 FROM ${payoutInstalments} i
       WHERE i.case_id = ${maturityCases.id}
         AND i.schedule_version = ${maturityCases.scheduleVersion}
-        AND i.due_on = ${asOf}
         AND i.status NOT IN ('SUPERSEDED','CANCELLED')
     )`,
   ));
@@ -727,8 +728,43 @@ export async function autoRepairUnsetSchedules(actor: SessionUser, branchId: str
     if (!inScope(actor, candidate, 'schedule.reschedule')) continue;
     try {
       assertCan(actor, 'schedule.reschedule', candidate);
-      await rescheduleCase(actor, candidate.id, 'Automatic repair: payment date had no scheduled amount.');
-      changed++;
+      const repaired = await db.transaction(async (tx) => {
+        const c = await lockCase(tx, candidate.id);
+        if (
+          !['APPROVED', 'IN_PROGRESS'].includes(c.status) ||
+          c.paymentOn !== asOf ||
+          c.paidCashPaise !== 0n ||
+          c.paidOnlinePaise !== 0n
+        ) return false;
+        const existing = await tx.select({ id: payoutInstalments.id }).from(payoutInstalments)
+          .where(and(
+            eq(payoutInstalments.caseId, c.id),
+            eq(payoutInstalments.scheduleVersion, c.scheduleVersion),
+            sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`,
+          )).limit(1).for('update');
+        if (existing.length > 0) return false;
+        const policy = await getBranchPolicy(c.branchId, tx);
+        const out = await persistReplanWindow({
+          tx,
+          caseRow: c,
+          calendar: policy.calendar,
+          windowDays: candidate.windowDays,
+          fromDate: asOf,
+          branchDailyCashComfortPaise: policy.dailyCashComfortPaise,
+        });
+        if (!out) throw new WorkflowError('Nothing left to repair.', 'NOTHING_DUE');
+        await logEvent(tx, c.id, 'RESCHEDULED', actor.id, {
+          note: `Missing payout schedule automatically rebuilt over ${out.result.installments.length} payment days.`,
+        });
+        await writeAudit(tx, actor, {
+          action: 'schedule.rescheduled', entity: 'MaturityCase', entityId: c.id, branchId: c.branchId,
+          summary: `${c.caseNumber}: missing payout schedule automatically rebuilt`,
+          before: { scheduleVersion: c.scheduleVersion, liveInstalments: 0 },
+          after: { scheduleVersion: c.scheduleVersion + 1, instalments: out.result.installments.length },
+        });
+        return true;
+      });
+      if (repaired) changed++;
     } catch {
       failed++;
     }

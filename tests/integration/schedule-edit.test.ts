@@ -172,17 +172,30 @@ describe('the cadence policy shapes what is persisted', () => {
     await db.update(maturityCases)
       .set({ paymentOn: todayISO(), todayApprovedPaise: 0n })
       .where(eq(maturityCases.id, caseId));
-    await db.update(payoutInstalments)
-      .set({ dueOn: '2026-12-01' })
-      .where(eq(payoutInstalments.caseId, caseId));
+    // Simulate the damaged production shape this repair is for: an active case whose generated
+    // schedule rows are entirely absent.
+    await db.delete(payoutInstalments).where(eq(payoutInstalments.caseId, caseId));
 
     const repaired = await autoRepairUnsetSchedules(ops, branchId, todayISO());
-    expect(repaired.changed).toBeGreaterThanOrEqual(1);
+    expect(repaired).toEqual({ changed: 1, failed: 0 });
     const [c] = await db.select().from(maturityCases).where(eq(maturityCases.id, caseId));
     const live = (await rowsOf(caseId)).filter((row) => row.scheduleVersion === c.scheduleVersion);
     expect(live.some((row) => row.dueOn === todayISO())).toBe(true);
     expect(live).toHaveLength(12);
     expect(live.reduce((sum, row) => sum + row.amountPaise, 0n)).toBe(c.maturityAmountPaise);
+  });
+
+  it('does not replan a valid schedule merely because today is an off day', async () => {
+    const caseId = await approved('99999');
+    const [before] = await db.select().from(maturityCases).where(eq(maturityCases.id, caseId));
+    await db.update(maturityCases)
+      .set({ paymentOn: todayISO(), todayApprovedPaise: 0n })
+      .where(eq(maturityCases.id, caseId));
+
+    await autoRepairUnsetSchedules(ops, branchId, todayISO());
+
+    const [after] = await db.select().from(maturityCases).where(eq(maturityCases.id, caseId));
+    expect(after.scheduleVersion).toBe(before.scheduleVersion);
   });
 });
 
