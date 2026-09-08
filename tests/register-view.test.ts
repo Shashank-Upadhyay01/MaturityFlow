@@ -954,8 +954,8 @@ describe('rolling arrears', () => {
     expect(todayPlannedPaise(row)).toBe(PER_DAY);
   });
 
-  it('totals arrears plus today to ₹45,000', () => {
-    expect(totalDuePaise(row, DAY(6))).toBe(4_500_000n);
+  it('keeps Total on today and leaves arrears in the missed-history figure', () => {
+    expect(totalDuePaise(row, DAY(6))).toBe(1_125_000n);
   });
 
   it('prefers the server figure when the row carries one', () => {

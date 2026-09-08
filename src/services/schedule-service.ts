@@ -171,6 +171,7 @@ export async function persistReschedule({
     .where(
       and(
         eq(payoutInstalments.caseId, caseRow.id),
+        eq(payoutInstalments.scheduleVersion, caseRow.scheduleVersion),
         sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`,
       ),
     ).for('update');
@@ -178,15 +179,23 @@ export async function persistReschedule({
   const settled = live.filter((i) => i.paidCashPaise + i.paidOnlinePaise > 0n);
   const carriedOverPaise = remaining;
 
-  const openIds = live
-    .filter((i) => i.paidCashPaise + i.paidOnlinePaise === 0n)
-    .map((i) => i.id);
+  const open = live.filter((i) => i.paidCashPaise + i.paidOnlinePaise === 0n);
+  const missedIds = open.filter((i) => i.dueOn < today).map((i) => i.id);
+  const futureIds = open.filter((i) => i.dueOn >= today).map((i) => i.id);
 
-  if (openIds.length > 0) {
+  // Past rows remain MISSED history. They deliberately stay on their old schedule version;
+  // every operational read uses the case's current version, while the Missed Payments report
+  // can still show the promised date and amount. Future rows are ordinary superseded plan rows.
+  if (missedIds.length > 0) {
+    await tx.update(payoutInstalments)
+      .set({ status: 'MISSED', isFinal: false, updatedAt: new Date() })
+      .where(inArray(payoutInstalments.id, missedIds));
+  }
+  if (futureIds.length > 0) {
     await tx
       .update(payoutInstalments)
       .set({ status: 'SUPERSEDED', supersededAt: new Date(), updatedAt: new Date() })
-      .where(inArray(payoutInstalments.id, openIds));
+      .where(inArray(payoutInstalments.id, futureIds));
   }
   // Part-paid rows from the old version are frozen at what was actually paid.
   const partial = settled.filter((i) => i.paidCashPaise + i.paidOnlinePaise < i.amountPaise);
@@ -224,6 +233,7 @@ export async function persistReschedule({
     // Carried from the case, not re-derived: a sub-₹1-lakh maturity must not become a daily
     // one the first time its remainder is re-planned.
     cadence: caseRow.cadence as Cadence,
+    equalize: true,
     payoutCount,
     allowClosedStartDate,
   });

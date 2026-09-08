@@ -13,6 +13,7 @@ import {
 } from '@/services/queries';
 import { RegisterSheet } from './register-sheet';
 import { RegisterTabs } from './register-tabs';
+import { rollOverElapsedSchedules } from '@/services/case-service';
 
 export const metadata = { title: 'Register' };
 export const dynamic = 'force-dynamic';
@@ -46,6 +47,11 @@ export default async function MaturitiesPage({
   });
   const compiledView = picked.compiled;
   const branch = options.branches.find((b) => b.id === picked.branchId) ?? null;
+  // This is an explicit audited write phase before the read: elapsed promises are historical
+  // MISSED rows and their unpaid balance is redistributed over the remaining scheduled dates.
+  if (branch && canTypeRegister(session.role) && roleCan(session.role, 'schedule.reschedule')) {
+    await rollOverElapsedSchedules(session, branch.id, today);
+  }
   const [rows, loadedDesk] = await Promise.all([
     listRegister(actor, today, picked.branchId),
     branch ? getRegisterDesk(branch.id, today) : Promise.resolve(null),

@@ -77,6 +77,24 @@ describe('customer-agreed payment plans', () => {
 });
 
 describe('actual tender and the unpaid plan', () => {
+  it('redistributes two missed ₹10,000 days over the eight working days still promised', () => {
+    const result = rescheduleRemaining({
+      // ₹1,20,000 maturity less the two ₹10,000 receipts already handed over.
+      remainingPaise: 10_000_000n,
+      fromDate: '2026-09-05',
+      deadlineDate: '2026-09-15',
+      roundingPaise: 100_000n,
+      calendar,
+      cadence: 'DAILY',
+      equalize: true,
+    });
+    expect(result.installments.map((row) => row.dueDate)).toEqual([
+      '2026-09-05', '2026-09-07', '2026-09-08', '2026-09-09',
+      '2026-09-10', '2026-09-11', '2026-09-14', '2026-09-15',
+    ]);
+    expect(result.installments.every((row) => row.amountPaise === 1_250_000n)).toBe(true);
+    expect(result.installments.reduce((sum, row) => sum + row.amountPaise, 0n)).toBe(10_000_000n);
+  });
   it('preserves the unpaid online recommendation after a partial cash visit', () => {
     expect(reconcileInstalmentLegs(880_000n, 250_000n, 120_000n, 0n))
       .toEqual({ cashPaise: 250_000n, onlinePaise: 630_000n });

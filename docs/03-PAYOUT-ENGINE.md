@@ -21,6 +21,12 @@ Custom amounts redistribute unpaid balances; recorded payments are preserved. Ca
 overrides and paid-total corrections remain permission checked and audited. The engine's
 sum assertion and bigint paise representation remain mandatory.
 
+When a scheduled date passes unpaid, that row becomes immutable MISSED history and the unpaid
+balance is re-spread across the payout dates still available before the same deadline. Current
+operational totals read only the newest schedule version, so missed history never inflates Due
+today. For example, after two ₹10,000 receipts on a ₹1,20,000 twelve-day plan, two missed ₹10,000
+days leave ₹1,00,000 to be split into eight payments of ₹12,500.
+
 ---
 
 ## 1. Contract

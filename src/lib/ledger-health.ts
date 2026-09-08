@@ -55,12 +55,14 @@ export function inspectCaseLedger(c: CaseLedger, instalments: readonly Instalmen
     if (i.caseId !== c.id) issue('INSTALMENT_SCOPE', `Instalment ${i.id} belongs to another case.`);
     const total = totals.get(i.id)!;
     const paid = total.cashPaise + total.onlinePaise;
-    const inactive = i.status === 'SUPERSEDED' || i.status === 'CANCELLED';
+    // MISSED rows from an older version are retained as promise history; only the case's current
+    // version is the live financial plan.
+    const inactive = i.scheduleVersion !== c.scheduleVersion || i.status === 'SUPERSEDED' || i.status === 'CANCELLED';
     if (!inactive) {
       activeCount++;
       scheduledPaise += i.amountPaise;
       if (i.scheduleVersion !== c.scheduleVersion) issue('OLD_ACTIVE_SCHEDULE', 'An older schedule still has active instalments. Review the schedule versions.');
-    } else if (paid > 0n) {
+    } else if (paid > 0n && i.status !== 'MISSED') {
       issue('INACTIVE_RECEIPT', 'A recorded payment is attached to a cancelled or superseded instalment.');
     }
     if (i.amountPaise <= 0n || i.cashLegPaise < 0n || i.onlineLegPaise < 0n || i.cashLegPaise + i.onlineLegPaise !== i.amountPaise) {

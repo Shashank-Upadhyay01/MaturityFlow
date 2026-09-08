@@ -146,7 +146,8 @@ async function loadDashboardStats(actor: Actor, date: string): Promise<Dashboard
     .where(
       and_(
         eq(payoutInstalments.dueOn, date),
-        inArray(payoutInstalments.status, ['PENDING', 'PARTIAL', 'MISSED']),
+        eq(payoutInstalments.scheduleVersion, maturityCases.scheduleVersion),
+        inArray(payoutInstalments.status, ['PENDING', 'PARTIAL']),
         inArray(maturityCases.status, LIVE),
         scope,
       ),
@@ -178,7 +179,10 @@ async function loadDashboardStats(actor: Actor, date: string): Promise<Dashboard
     .where(
       and_(
         sql`${payoutInstalments.dueOn} < ${date}`,
-        inArray(payoutInstalments.status, ['PENDING', 'PARTIAL', 'MISSED']),
+        or(
+          eq(payoutInstalments.status, 'MISSED'),
+          and(eq(payoutInstalments.scheduleVersion, maturityCases.scheduleVersion), inArray(payoutInstalments.status, ['PENDING', 'PARTIAL'])),
+        ),
         inArray(maturityCases.status, LIVE),
         scope,
       ),
@@ -308,8 +312,9 @@ export async function getRegisterSummary(
         SELECT SUM(GREATEST(i.amount_paise - i.paid_cash_paise - i.paid_online_paise, 0))
         FROM payout_instalments i
         WHERE i.case_id = ${CASE_ID}
+          AND i.schedule_version = ${maturityCases.scheduleVersion}
           AND i.due_on = ${date}
-          AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
+          AND i.status IN ('PENDING', 'PARTIAL')
       ), ${maturityCases.todayApprovedPaise})), 0)`,
       todayCash: sql<string>`COALESCE(SUM(COALESCE((
         SELECT SUM(LEAST(
@@ -318,8 +323,9 @@ export async function getRegisterSummary(
         ))
         FROM payout_instalments i
         WHERE i.case_id = ${CASE_ID}
+          AND i.schedule_version = ${maturityCases.scheduleVersion}
           AND i.due_on = ${date}
-          AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
+          AND i.status IN ('PENDING', 'PARTIAL')
       ), ${maturityCases.todayCashPaise})), 0)`,
       todayOnline: sql<string>`COALESCE(SUM(COALESCE((
         SELECT SUM(GREATEST(
@@ -332,8 +338,9 @@ export async function getRegisterSummary(
         ))
         FROM payout_instalments i
         WHERE i.case_id = ${CASE_ID}
+          AND i.schedule_version = ${maturityCases.scheduleVersion}
           AND i.due_on = ${date}
-          AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
+          AND i.status IN ('PENDING', 'PARTIAL')
       ), ${maturityCases.todayOnlinePaise})), 0)`,
       overdueCount: sql<number>`COUNT(*) FILTER (
         WHERE ${remainingSql} > 0
@@ -395,8 +402,8 @@ export async function getNavBadges(
 
   const [due] = await db
     .select({
-      dueToday: sql<number>`COUNT(*) FILTER (WHERE ${payoutInstalments.dueOn} = ${date} AND ${payoutInstalments.status} IN ('PENDING','PARTIAL','MISSED'))::int`,
-      overdue: sql<number>`COUNT(*) FILTER (WHERE ${payoutInstalments.dueOn} < ${date} AND ${payoutInstalments.status} IN ('PENDING','PARTIAL','MISSED'))::int`,
+      dueToday: sql<number>`COUNT(*) FILTER (WHERE ${payoutInstalments.scheduleVersion} = ${maturityCases.scheduleVersion} AND ${payoutInstalments.dueOn} = ${date} AND ${payoutInstalments.status} IN ('PENDING','PARTIAL'))::int`,
+      overdue: sql<number>`COUNT(*) FILTER (WHERE ${payoutInstalments.dueOn} < ${date} AND (${payoutInstalments.status} = 'MISSED' OR (${payoutInstalments.scheduleVersion} = ${maturityCases.scheduleVersion} AND ${payoutInstalments.status} IN ('PENDING','PARTIAL'))))::int`,
     })
     .from(payoutInstalments)
     .innerJoin(maturityCases, eq(maturityCases.id, payoutInstalments.caseId))
@@ -425,7 +432,8 @@ export async function getUpcomingLoad(actor: Actor, days = 14, from = todayISO()
       and(
         gte(payoutInstalments.dueOn, from),
         lte(payoutInstalments.dueOn, to),
-        inArray(payoutInstalments.status, ['PENDING', 'PARTIAL', 'MISSED']),
+        eq(payoutInstalments.scheduleVersion, maturityCases.scheduleVersion),
+        inArray(payoutInstalments.status, ['PENDING', 'PARTIAL']),
         inArray(maturityCases.status, LIVE),
         ...(scope ? [scope] : []),
       ),
@@ -583,6 +591,7 @@ export async function listRegister(actor: Actor, date = todayISO(), branchId?: s
   const todayInst = (expr: ReturnType<typeof sql.raw>) => sql`(
     SELECT ${expr} FROM payout_instalments i
     WHERE i.case_id = ${CASE_ID}
+      AND i.schedule_version = ${maturityCases.scheduleVersion}
       AND i.due_on = ${date}
       AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
     ORDER BY i.schedule_version DESC LIMIT 1
@@ -638,7 +647,8 @@ export async function listRegister(actor: Actor, date = todayISO(), branchId?: s
           ) ORDER BY i.due_on, i.seq
         )
         FROM payout_instalments i
-        WHERE i.case_id = ${CASE_ID} AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
+        WHERE i.case_id = ${CASE_ID} AND i.schedule_version = ${maturityCases.scheduleVersion}
+          AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
       ), '[]'::jsonb)`,
       /**
        * Whether this case has a live schedule at all.
@@ -649,19 +659,20 @@ export async function listRegister(actor: Actor, date = todayISO(), branchId?: s
        */
       liveInstalmentCount: sql<number>`(
         SELECT COUNT(*)::int FROM payout_instalments i
-        WHERE i.case_id = ${CASE_ID} AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
+        WHERE i.case_id = ${CASE_ID} AND i.schedule_version = ${maturityCases.scheduleVersion}
+          AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
       )`,
       /** Earlier days that were never paid — the red half of the sheet. */
       overdueCount: sql<number>`(
         SELECT COUNT(*)::int FROM payout_instalments i
         WHERE i.case_id = ${CASE_ID} AND i.due_on < ${date}
-          AND i.status IN ('PENDING', 'PARTIAL', 'MISSED')
+          AND i.status = 'MISSED'
       )`,
       overduePaise: sql<string>`(
         SELECT COALESCE(SUM(i.amount_paise - i.paid_cash_paise - i.paid_online_paise), 0)::text
         FROM payout_instalments i
         WHERE i.case_id = ${CASE_ID} AND i.due_on < ${date}
-          AND i.status IN ('PENDING', 'PARTIAL', 'MISSED')
+          AND i.status = 'MISSED'
       )`,
       id: maturityCases.id,
       accountNumber: customers.accountNumber,
@@ -2071,7 +2082,8 @@ export async function listNotTakenToday(actor: Actor, asOf: string) {
     .where(
       and(
         sql`${payoutInstalments.dueOn} = ${asOf}`,
-        inArray(payoutInstalments.status, ['PENDING', 'PARTIAL', 'MISSED']),
+        eq(payoutInstalments.scheduleVersion, maturityCases.scheduleVersion),
+        inArray(payoutInstalments.status, ['PENDING', 'PARTIAL']),
         ...(scope ? [scope] : []),
       ),
     )
@@ -2093,8 +2105,9 @@ export async function listPriorityCases(actor: Actor, asOf: string) {
         SELECT SUM(pi.amount_paise - pi.paid_cash_paise - pi.paid_online_paise)
         FROM payout_instalments pi
         WHERE pi.case_id = ${maturityCases.id}
+          AND pi.schedule_version = ${maturityCases.scheduleVersion}
           AND pi.due_on = ${asOf}
-          AND pi.status IN ('PENDING','PARTIAL','MISSED')
+          AND pi.status IN ('PENDING','PARTIAL')
       ), 0)`,
     })
     .from(maturityCases)

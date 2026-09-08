@@ -35,7 +35,7 @@ const PAYABLE_STATUSES = new Set<MaturityCase['status']>(['APPROVED', 'IN_PROGRE
 async function expandInstalmentForPayment(tx: Tx, c: MaturityCase, instalmentId: string, amountPaise: bigint) {
   await persistInstalmentEdit({ tx, caseRow: c, instalmentId, newAmountPaise: amountPaise });
   return tx.select().from(payoutInstalments)
-    .where(and(eq(payoutInstalments.caseId, c.id), sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`))
+    .where(and(eq(payoutInstalments.caseId, c.id), eq(payoutInstalments.scheduleVersion, c.scheduleVersion), sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`))
     .for('update').orderBy(payoutInstalments.dueOn, payoutInstalments.seq);
 }
 
@@ -88,7 +88,7 @@ export async function setCasePaidTotalInTx(
   const originalCash = c.paidCashPaise;
   const originalOnline = c.paidOnlinePaise;
   const live = await tx.select().from(payoutInstalments)
-    .where(and(eq(payoutInstalments.caseId, c.id), sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`))
+    .where(and(eq(payoutInstalments.caseId, c.id), eq(payoutInstalments.scheduleVersion, c.scheduleVersion), sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`))
     .for('update').orderBy(payoutInstalments.dueOn, payoutInstalments.seq);
   const receipts = await tx.select().from(payoutTransactions)
     .where(and(eq(payoutTransactions.caseId, c.id), isNull(payoutTransactions.reversedAt)))
@@ -768,18 +768,33 @@ export async function replaceInstalmentPayout(
       throw new PayoutError('The payout ledger is inconsistent; correction was not applied.', 'LEDGER_MISMATCH');
     }
     const desiredAmount = instCashWithoutToday + instOnlineWithoutToday + newTotal;
+    let editedRowRemoved = false;
     if (caseCashWithoutToday + caseOnlineWithoutToday + newTotal > c.maturityAmountPaise) {
       throw new PayoutError('The entered payment exceeds the case balance.', 'EXCEEDS_REMAINING');
     }
     if (input.onlinePaise > 0n && !input.reference?.trim()) {
       throw new PayoutError('Online payment needs a UTR / reference.', 'REF_REQUIRED');
     }
-    if (oldTotal > 0n && !input.reason?.trim()) {
+    if (oldTotal > 0n && !input.reason?.trim() && !canOverrideDates(actor.role)) {
       throw new PayoutError('Enter a reason for changing a recorded payment.', 'REASON_REQUIRED');
     }
-    if (desiredAmount > inst.amountPaise) {
+    if (desiredAmount !== inst.amountPaise) {
+      // Rebalance against the state after the replaced receipt is removed. The receipt reversal
+      // and this temporary cached-total adjustment are in the same transaction, so no other
+      // cashier can observe an intermediate ledger state.
+      if (oldTotal > 0n) {
+        const baselinePaid = instCashWithoutToday + instOnlineWithoutToday;
+        await tx.update(payoutInstalments).set({
+          paidCashPaise: instCashWithoutToday,
+          paidOnlinePaise: instOnlineWithoutToday,
+          status: baselinePaid > 0n ? 'PARTIAL' : 'PENDING',
+          updatedAt: new Date(),
+        }).where(eq(payoutInstalments.id, inst.id));
+      }
       const updated = await expandInstalmentForPayment(tx, c, inst.id, desiredAmount);
-      Object.assign(inst, updated.find((row) => row.id === inst.id)!);
+      const edited = updated.find((row) => row.id === inst.id);
+      if (edited) Object.assign(inst, edited);
+      else editedRowRemoved = desiredAmount === 0n;
     }
 
     const now = new Date();
@@ -815,18 +830,20 @@ export async function replaceInstalmentPayout(
     const newInstCash = instCashWithoutToday + input.cashPaise;
     const newInstOnline = instOnlineWithoutToday + input.onlinePaise;
     const newInstPaid = newInstCash + newInstOnline;
-    const legs = reconcileInstalmentLegs(inst.amountPaise, inst.cashLegPaise, newInstCash, newInstOnline);
-    await tx
-      .update(payoutInstalments)
-      .set({
-        paidCashPaise: newInstCash,
-        paidOnlinePaise: newInstOnline,
-        cashLegPaise: legs.cashPaise,
-        onlineLegPaise: legs.onlinePaise,
-        status: newInstPaid <= 0n ? 'PENDING' : newInstPaid >= inst.amountPaise ? 'PAID' : 'PARTIAL',
-        updatedAt: now,
-      })
-      .where(eq(payoutInstalments.id, inst.id));
+    if (!editedRowRemoved) {
+      const legs = reconcileInstalmentLegs(inst.amountPaise, inst.cashLegPaise, newInstCash, newInstOnline);
+      await tx
+        .update(payoutInstalments)
+        .set({
+          paidCashPaise: newInstCash,
+          paidOnlinePaise: newInstOnline,
+          cashLegPaise: legs.cashPaise,
+          onlineLegPaise: legs.onlinePaise,
+          status: newInstPaid <= 0n ? 'PENDING' : newInstPaid >= inst.amountPaise ? 'PAID' : 'PARTIAL',
+          updatedAt: now,
+        })
+        .where(eq(payoutInstalments.id, inst.id));
+    }
 
     const newCaseCash = caseCashWithoutToday + input.cashPaise;
     const newCaseOnline = caseOnlineWithoutToday + input.onlinePaise;
@@ -929,6 +946,7 @@ export async function correctInstalmentPaid(
       .where(
         and(
           eq(payoutInstalments.caseId, c.id),
+          eq(payoutInstalments.scheduleVersion, c.scheduleVersion),
           sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`,
         ),
       )
@@ -1175,6 +1193,7 @@ export async function settleRegisterRow(
       .where(
         and(
           eq(payoutInstalments.caseId, c.id),
+          eq(payoutInstalments.scheduleVersion, c.scheduleVersion),
           sql`${payoutInstalments.status} NOT IN ('SUPERSEDED','CANCELLED')`,
         ),
       )
@@ -1202,7 +1221,7 @@ export async function settleRegisterRow(
       )
       .for('update');
 
-    if (todayTxns.length > 0 && !input.reason?.trim()) {
+    if (todayTxns.length > 0 && !input.reason?.trim() && !canOverrideDates(actor.role)) {
       throw new PayoutError('Enter a reason for changing a recorded payment.', 'REASON_REQUIRED');
     }
 

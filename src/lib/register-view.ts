@@ -1001,7 +1001,7 @@ export function missedAmountPaise(r: ArrearsRow, today?: string): bigint {
  * exactly the figure a single payment of this size would clear.
  */
 export function totalDuePaise(r: ArrearsRow, today?: string): bigint {
-  return missedAmountPaise(r, today) + todayPlannedPaise(r);
+  return todayPlannedPaise(r);
 }
 
 /**

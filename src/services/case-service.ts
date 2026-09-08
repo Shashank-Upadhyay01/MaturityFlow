@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db, type Tx } from '@/db';
 import {
   agents,
@@ -9,6 +9,7 @@ import {
   caseEvents,
   customers,
   maturityCases,
+  payoutInstalments,
   type CaseEventType,
   type CaseStatus,
   type MaturityCase,
@@ -22,6 +23,7 @@ import { caseScheduleAnchorFor, MAX_WINDOW_DAYS, MIN_WINDOW_DAYS } from '@/lib/p
 import { getBranchPolicy } from './calendar-service';
 import { persistSchedule, persistReschedule, persistReplanWindow } from './schedule-service';
 import { ensureAllocatedLedgerInTx } from './payout-ledger';
+import { assertCan, inScope, roleCan } from '@/lib/rbac';
 
 export class WorkflowError extends Error {
   constructor(
@@ -600,6 +602,45 @@ export async function rescheduleCase(actor: SessionUser, caseId: string, reason:
       instalments: out.result.installments.length,
     };
   });
+}
+
+/**
+ * Roll elapsed unpaid promises into the days still left in the existing deadline.
+ * Called before an editable Register is rendered. Each case uses the ordinary locked,
+ * receipt-aware, audited reschedule path; failures are isolated so one damaged case cannot stop
+ * the branch desk opening.
+ */
+export async function rollOverElapsedSchedules(actor: SessionUser, branchId: string, asOf = todayISO()) {
+  if (!roleCan(actor.role, 'schedule.reschedule')) return { changed: 0, failed: 0 };
+  const candidates = await db.select({
+    id: maturityCases.id,
+    branchId: maturityCases.branchId,
+    agentId: maturityCases.agentId,
+  }).from(maturityCases).where(and(
+    eq(maturityCases.branchId, branchId),
+    inArray(maturityCases.status, ['APPROVED', 'IN_PROGRESS']),
+    sql`EXISTS (
+      SELECT 1 FROM ${payoutInstalments} i
+      WHERE i.case_id = ${maturityCases.id}
+        AND i.schedule_version = ${maturityCases.scheduleVersion}
+        AND i.due_on < ${asOf}
+        AND i.status IN ('PENDING','PARTIAL')
+    )`,
+    sql`${maturityCases.deadlineOn} IS NULL OR ${maturityCases.deadlineOn} >= ${asOf}`,
+  ));
+  let changed = 0;
+  let failed = 0;
+  for (const c of candidates) {
+    if (!inScope(actor, c, 'schedule.reschedule')) continue;
+    try {
+      assertCan(actor, 'schedule.reschedule', c);
+      await rescheduleCase(actor, c.id, 'Automatic missed-day redistribution');
+      changed++;
+    } catch {
+      failed++;
+    }
+  }
+  return { changed, failed };
 }
 
 /** Type a new day-count; remaining money is rebuilt from today over that many working days. */
