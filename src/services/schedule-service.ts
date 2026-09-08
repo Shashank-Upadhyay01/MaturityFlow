@@ -13,6 +13,7 @@ import {
 } from '@/lib/payout-engine';
 import {
   MAX_WINDOW_DAYS,
+  MAX_PAYOUT_PARTS,
   MIN_WINDOW_DAYS,
   payoutPlanFor,
   type Cadence,
@@ -238,6 +239,7 @@ export async function persistReschedule({
     cadence: caseRow.cadence as Cadence,
     equalize: true,
     payoutCount,
+    maxPayoutCount: Math.max(1, MAX_PAYOUT_PARTS - settled.length),
     allowClosedStartDate,
   });
 

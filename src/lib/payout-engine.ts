@@ -458,6 +458,8 @@ export interface RescheduleInput {
   allowClosedStartDate?: boolean;
   /** Explicit custom count; otherwise use the eligible dates through the deadline. */
   payoutCount?: number;
+  /** Optional caller policy ceiling. The arithmetic engine itself does not choose this number. */
+  maxPayoutCount?: number;
   /** Re-spread the live balance as evenly as exact paise allow after a missed/custom day. */
   equalize?: boolean;
 }
@@ -486,6 +488,7 @@ export function rescheduleRemaining(input: RescheduleInput): RescheduleResult {
     cadence = 'DAILY',
     allowClosedStartDate = false,
     payoutCount,
+    maxPayoutCount,
     equalize = false,
   } = input;
 
@@ -520,13 +523,14 @@ export function rescheduleRemaining(input: RescheduleInput): RescheduleResult {
     payoutSlots = Math.max(1, payoutSlots);
   }
 
-    const exactSlots = Math.max(1, Math.min(12, payoutCount ?? payoutSlots));
+  const requestedSlots = payoutCount ?? payoutSlots;
+  const exactSlots = Math.max(1, Math.min(maxPayoutCount ?? requestedSlots, requestedSlots));
   const exactStep = remainingPaise % BigInt(exactSlots) === 0n
     ? remainingPaise / BigInt(exactSlots)
     : 1n;
   const result = generateSchedule({
     totalPaise: remainingPaise,
-      days: exactSlots,
+    days: exactSlots,
     roundingPaise: equalize ? exactStep : roundingPaise,
     startDate: start,
     calendar,

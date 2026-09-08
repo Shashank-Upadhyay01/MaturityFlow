@@ -252,7 +252,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
           )}
 
           <div className="mt-5 grid gap-4 border-t pt-5 sm:grid-cols-4">
-            <KeyValue label="Withdrawal days">{Math.min(12, currentWithdrawalDays)} of 12 maximum</KeyValue>
+            <KeyValue label="Withdrawal days">{currentWithdrawalDays} of 12 maximum</KeyValue>
             <KeyValue label="Rounding">
               {formatPaise(c.roundingPaise, { decimals: false })}
             </KeyValue>

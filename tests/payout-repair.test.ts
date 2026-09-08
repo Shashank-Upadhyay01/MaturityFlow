@@ -74,6 +74,14 @@ describe('customer-agreed payment plans', () => {
     });
     expect(result.slaBreachUnavoidable).toBe(true);
   });
+  it('honours a caller-supplied payout ceiling without embedding policy in the engine', () => {
+    const result = rescheduleRemaining({
+      remainingPaise: 12_000_000n, fromDate: '2026-09-10', deadlineDate: '2026-09-30',
+      roundingPaise: 100_000n, calendar, payoutCount: 12, maxPayoutCount: 8,
+    });
+    expect(result.installments).toHaveLength(8);
+    expect(result.installments.reduce((sum, row) => sum + row.amountPaise, 0n)).toBe(12_000_000n);
+  });
 });
 
 describe('actual tender and the unpaid plan', () => {

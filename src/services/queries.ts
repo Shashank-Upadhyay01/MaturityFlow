@@ -1625,7 +1625,9 @@ export async function getDailyLedger(actor: Actor, from: string, to: string) {
       and(
         gte(payoutInstalments.dueOn, from),
         lte(payoutInstalments.dueOn, to),
+        eq(payoutInstalments.scheduleVersion, maturityCases.scheduleVersion),
         ne(payoutInstalments.status, 'SUPERSEDED'),
+        ne(payoutInstalments.status, 'CANCELLED'),
         ...(scope ? [scope] : []),
       ),
     )
