@@ -21,7 +21,7 @@ import { MAX_WINDOW_DAYS, MIN_WINDOW_DAYS, paymentFollowingApproval } from '@/li
 import { firstPayoutOn } from '@/lib/payout-policy';
 import { bulkTodayAmount, type BulkTodayMode } from '@/lib/register-view';
 import { parseRegisterDate } from '@/lib/excel-register';
-import { addDays, makeCalendar, nextWorkingDay, todayISO } from '@/lib/working-days';
+import { addDays, countWorkingDaysBetween, makeCalendar, nextWorkingDay, todayISO } from '@/lib/working-days';
 import { sql } from 'drizzle-orm';
 import { caseCounters } from '@/db/schema';
 import { getBranchPolicy } from '@/services/calendar-service';
@@ -232,7 +232,6 @@ export async function updateRegisterRow(
     }
     if (patch.firstPayoutOn !== undefined) {
       setCase.firstPayoutOn = parseDate(patch.firstPayoutOn);
-      setCase.paymentOn = setCase.firstPayoutOn;
     }
     if (patch.deadlineOn !== undefined) setCase.deadlineOn = parseDate(patch.deadlineOn);
     if (patch.windowDays != null) {
@@ -271,6 +270,9 @@ export async function updateRegisterRow(
     let finalPayment = setCase.paymentOn !== undefined
       ? (setCase.paymentOn as string | null)
       : (row.paymentOn ?? row.firstPayoutOn);
+    const finalFirstPayout = setCase.firstPayoutOn !== undefined
+      ? (setCase.firstPayoutOn as string | null)
+      : (row.firstPayoutOn ?? finalPayment);
     if (affectsSchedule && finalMaturity && policy) {
       const earliest =
         patch.paymentOn !== undefined
@@ -306,6 +308,27 @@ export async function updateRegisterRow(
       const recommendedPayment = policy ? nextWorkingDay(followsApproval, policy.calendar) : followsApproval;
       setCase.paymentOn = recommendedPayment;
       finalPayment = recommendedPayment;
+    }
+
+    // A manually entered promise date is authoritative. Keep the stored/displayed window in
+    // sync with the actual open days from Payment Begins through Promised By; otherwise the case
+    // can show an old value such as "14 working days" after the deadline itself was changed.
+    // The remaining schedule below is generated directly inside this date range, so this value
+    // describes the customer's real payout window rather than re-applying the intake-day offset.
+    const finalDeadline = setCase.deadlineOn !== undefined
+      ? (setCase.deadlineOn as string | null)
+      : row.deadlineOn;
+    if (patch.deadlineOn !== undefined && finalDeadline) {
+      const payoutWindowStart = finalFirstPayout ?? finalPayment;
+      if (!payoutWindowStart) throw new Error('Set the first payout date before setting Promised By.');
+      if (finalDeadline < payoutWindowStart) {
+        throw new Error('Promised By cannot be earlier than the first payout date.');
+      }
+      const payoutWindowDays = countWorkingDaysBetween(payoutWindowStart, finalDeadline, policy!.calendar);
+      if (payoutWindowDays < 1) {
+        throw new Error('Promised By must leave at least one open payment day.');
+      }
+      setCase.windowDays = payoutWindowDays;
     }
     if (patch.paidRupees != null) {
       throw new Error('Use the recorded-payment correction to change Paid; every amount must have a receipt.');
@@ -367,12 +390,22 @@ export async function updateRegisterRow(
               finalPayment.slice(0, 7),
             ])
           : policy.calendar;
-      if (alreadyPaid > 0n) {
+      const paymentStartChanged =
+        (patch.paymentOn !== undefined && finalPayment !== (row.paymentOn ?? row.firstPayoutOn)) ||
+        (patch.firstPayoutOn !== undefined && finalFirstPayout !== row.firstPayoutOn);
+      if (alreadyPaid > 0n || (patch.deadlineOn !== undefined && finalDeadline)) {
         await persistReschedule({
           tx,
           caseRow: nextRow,
           calendar: scheduleCalendar,
-          fromDate: finalPayment,
+          // Moving the payment start deliberately rebuilds from that date. A deadline-only edit
+          // preserves paid history and redistributes only the unpaid balance from today onward.
+          fromDate:
+            paymentStartChanged
+              ? (finalFirstPayout ?? finalPayment)
+              : alreadyPaid > 0n
+                ? todayISO()
+                : (finalFirstPayout ?? finalPayment),
           branchDailyCashComfortPaise: policy.dailyCashComfortPaise,
         });
       } else {
@@ -399,14 +432,18 @@ export async function updateRegisterRow(
         caseId,
         type: 'RESCHEDULED',
         actorId: actor.id,
-        note: `Payment schedule moved to ${finalPayment} after a Register timeline edit.`,
+        note: patch.deadlineOn !== undefined && finalDeadline
+          ? `Remaining payment schedule recalculated through ${finalDeadline}.`
+          : `Payment schedule moved to ${finalPayment} after a Register timeline edit.`,
       });
       await writeAudit(tx, actor, {
         action: 'schedule.rescheduled',
         entity: 'MaturityCase',
         entityId: caseId,
         branchId: row.branchId,
-        summary: `${row.caseNumber}: payout plan rebuilt from ${finalPayment} after timeline edit`,
+        summary: patch.deadlineOn !== undefined && finalDeadline
+          ? `${row.caseNumber}: remaining payout plan rebuilt through ${finalDeadline}`
+          : `${row.caseNumber}: payout plan rebuilt from ${finalPayment} after timeline edit`,
         before: { paymentOn: row.firstPayoutOn ?? row.paymentOn, windowDays: row.windowDays },
         after: {
           paymentOn: finalPayment,
