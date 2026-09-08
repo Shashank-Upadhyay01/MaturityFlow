@@ -1,11 +1,10 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { and, count, eq, notInArray } from 'drizzle-orm';
+import { notInArray } from 'drizzle-orm';
 import { db } from '@/db';
-import { maturityCases, payoutInstalments } from '@/db/schema';
+import { maturityCases } from '@/db/schema';
 import { requestMeta, requireActor } from '@/lib/auth/session';
-import { payoutPlanFor, standardPayoutPartsFor } from '@/lib/payout-policy';
 import { assertCan } from '@/lib/rbac';
 import { rescheduleCase } from '@/services/case-service';
 import { reconcileCaseLedger } from '@/services/operations-health';
@@ -37,19 +36,11 @@ export async function normalizeSchedulePartsAction(): Promise<ActionResult<{ nor
       scheduleVersion: maturityCases.scheduleVersion,
       status: maturityCases.status,
     }).from(maturityCases).where(notInArray(maturityCases.status, ['CANCELLED', 'REJECTED', 'COMPLETED']));
-    const counts = await db.select({
-      caseId: payoutInstalments.caseId,
-      scheduleVersion: payoutInstalments.scheduleVersion,
-      parts: count(),
-    }).from(payoutInstalments).where(notInArray(payoutInstalments.status, ['SUPERSEDED', 'CANCELLED']))
-      .groupBy(payoutInstalments.caseId, payoutInstalments.scheduleVersion);
-    const byVersion = new Map(counts.map((row) => [`${row.caseId}:${row.scheduleVersion}`, row.parts]));
-    const affected = cases.filter((row) => {
-      if (row.maturityAmountPaise - row.paidCashPaise - row.paidOnlinePaise <= 0n) return false;
-      const actual = byVersion.get(`${row.id}:${row.scheduleVersion}`) ?? 0;
-      const configured = payoutPlanFor(row.maturityAmountPaise, row.windowDays).payoutDays;
-      return actual > Math.min(configured, standardPayoutPartsFor(row.maturityAmountPaise));
-    });
+    // Re-check every active balance. Part count alone cannot reveal a schedule whose holidays or
+    // previous replans pushed its final date beyond the twelve-working-day promise.
+    const affected = cases.filter((row) =>
+      row.maturityAmountPaise - row.paidCashPaise - row.paidOnlinePaise > 0n,
+    );
     let normalized = 0;
     let failed = 0;
     const meta = await requestMeta();
