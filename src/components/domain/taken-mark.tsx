@@ -63,6 +63,7 @@ export function TakenMark({
   dueOn,
   amountPaise,
   needsReference = false,
+  takenOpensPaymentDialog = false,
   onTaken,
   onNotTaken,
   className,
@@ -83,6 +84,8 @@ export function TakenMark({
    * reference, so the confirmation collects one rather than letting the server bounce the click.
    */
   needsReference?: boolean;
+  /** Admin missed-day Taken opens the full custom-payment editor, which supplies its own confirmation. */
+  takenOpensPaymentDialog?: boolean;
   /** Runs only once the clerk has confirmed. Carries the UTR when one was asked for. */
   onTaken: (reference: string | null) => void;
   /** `clear` is true when the cross is already set, which makes the click an undo. */
@@ -118,10 +121,16 @@ export function TakenMark({
         aria-label="Mark taken"
         aria-pressed={paid}
         aria-haspopup="dialog"
-        title={blockedTitle ?? 'Taken — records this day’s scheduled amount in full'}
+        title={
+          blockedTitle ??
+          (takenOpensPaymentDialog
+            ? 'Taken — open custom payment for this missed day'
+            : 'Taken — records this day’s scheduled amount in full')
+        }
         onClick={(event) => {
           if (isSelectionGesture(event)) return;
-          ask('taken');
+          if (takenOpensPaymentDialog) onTaken(null);
+          else ask('taken');
         }}
         className={cn(
           MARK,

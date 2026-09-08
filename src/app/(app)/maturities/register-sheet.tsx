@@ -1728,7 +1728,13 @@ export function RegisterSheet(props: {
    */
   const [marking, setMarking] = useState<Record<string, boolean>>({});
   const [payRow, setPayRow] = useState<RegisterRow | null>(null);
+  const [payInstalmentId, setPayInstalmentId] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
+
+  function openPaymentDialog(row: RegisterRow, instalmentId: string | null = null) {
+    setPayInstalmentId(instalmentId);
+    setPayRow(row);
+  }
 
   async function confirmPay(input: {
     instalmentIds: string[];
@@ -1783,6 +1789,7 @@ export function RegisterSheet(props: {
     setPaying(false);
     toast.success(input.replaceVisit || input.corrections.length ? 'Payment updated' : 'Payment recorded');
     setPayRow(null);
+    setPayInstalmentId(null);
     router.refresh();
   }
 
@@ -4238,11 +4245,19 @@ export function RegisterSheet(props: {
                           customerName={r.customerName}
                           dueOn={markTarget.day?.dueOn ?? props.today}
                           amountPaise={markTarget.day ? tickPlanFor(markTarget.day, typedPaidRupees).totalPaise : 0n}
+                          takenOpensPaymentDialog={Boolean(
+                            props.canCorrectPay && markTarget.day && markTarget.day.dueOn < props.today && typedPaidRupees == null,
+                          )}
                           needsReference={
                             markTarget.day ? tickPlanFor(markTarget.day, typedPaidRupees).needsReference : false
                           }
                           onTaken={(reference) => {
-                            if (markTarget.day) void onTaken(r, markTarget.day, typedPaidRupees, reference);
+                            if (!markTarget.day) return;
+                            if (props.canCorrectPay && markTarget.day.dueOn < props.today && typedPaidRupees == null) {
+                              openPaymentDialog(r, markTarget.day.id);
+                            } else {
+                              void onTaken(r, markTarget.day, typedPaidRupees, reference);
+                            }
                           }}
                           onNotTaken={(clear) => {
                             if (markTarget.day) void onNotTaken(markTarget.day.id, clear);
@@ -4258,7 +4273,7 @@ export function RegisterSheet(props: {
                           <button
                             type="button"
                             disabled={paying}
-                            onClick={() => setPayRow(r)}
+                            onClick={() => openPaymentDialog(r)}
                             aria-label={`More payment options for ${r.customerName}`}
                             title="More — pay several days, correct an amount"
                             className="inline-flex h-7 w-6 shrink-0 items-center justify-center rounded-[6px] text-[var(--muted-fg)] transition-colors hover:bg-[var(--glass-bg-strong)] hover:text-[var(--page-fg)] disabled:cursor-not-allowed disabled:opacity-50"
@@ -4325,8 +4340,12 @@ export function RegisterSheet(props: {
                                 customerName={r.customerName}
                                 dueOn={day.dueOn}
                                 amountPaise={day.outstandingPaise}
+                                takenOpensPaymentDialog={Boolean(props.canCorrectPay)}
                                 needsReference={tickPlanFor(day, null).needsReference}
-                                onTaken={(reference) => void onTaken(r, day, null, reference)}
+                                onTaken={(reference) => {
+                                  if (props.canCorrectPay) openPaymentDialog(r, day.id);
+                                  else void onTaken(r, day, null, reference);
+                                }}
                                 onNotTaken={(clear) => void onNotTaken(day.id, clear)}
                               />
                             </span>
@@ -4450,12 +4469,16 @@ export function RegisterSheet(props: {
         <TakePaymentDialog
           row={payRow}
           today={props.today}
+          initialInstalmentId={payInstalmentId}
           draftPaidRupees={d(payRow.id, 'paidTodayActual', rupeesStr(BigInt(payRow.paidTodayActualPaise)))}
           allowPayAhead={Boolean(props.canCorrectPay)}
           allowCorrectPaid={Boolean(props.canCorrectPay)}
           busy={paying}
           onClose={() => {
-            if (!paying) setPayRow(null);
+            if (!paying) {
+              setPayRow(null);
+              setPayInstalmentId(null);
+            }
           }}
           onConfirm={confirmPay}
         />

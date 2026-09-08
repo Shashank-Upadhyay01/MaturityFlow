@@ -31,6 +31,7 @@ function leftover(day: PayoutDayView): bigint {
 export function TakePaymentDialog({
   row,
   today,
+  initialInstalmentId,
   draftPaidRupees,
   allowPayAhead,
   allowCorrectPaid,
@@ -40,6 +41,8 @@ export function TakePaymentDialog({
 }: {
   row: PayDialogRow;
   today: string;
+  /** Missed-day Taken opens the dialog with that exact day selected. */
+  initialInstalmentId?: string | null;
   draftPaidRupees: string;
   allowPayAhead: boolean;
   allowCorrectPaid?: boolean;
@@ -72,6 +75,13 @@ export function TakePaymentDialog({
 
   const [ticked, setTicked] = useState<Record<string, boolean>>(() => {
     const next: Record<string, boolean> = {};
+    const requestedDay = initialInstalmentId
+      ? days.find((day) => day.id === initialInstalmentId)
+      : null;
+    if (requestedDay && (leftover(requestedDay) > 0n || (allowCorrectPaid && BigInt(requestedDay.paidPaise) > 0n))) {
+      next[requestedDay.id] = true;
+      return next;
+    }
     const todayDay = days.find((day) => day.dueOn === today);
     if (todayDay && (leftover(todayDay) > 0n || (allowCorrectPaid && BigInt(todayDay.paidPaise) > 0n))) {
       next[todayDay.id] = true;
