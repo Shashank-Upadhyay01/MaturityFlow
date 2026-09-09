@@ -28,6 +28,7 @@ export type AuditAction =
   | 'case.resumed'
   | 'case.cancelled'
   | 'case.completed'
+  | 'case.small_balance_settled'
   | 'schedule.generated'
   | 'schedule.overridden'
   | 'schedule.rescheduled'
@@ -140,6 +141,7 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'case.resumed': 'Resumed',
   'case.cancelled': 'Cancelled',
   'case.completed': 'Completed',
+  'case.small_balance_settled': 'Small balance settled',
   'schedule.generated': 'Schedule generated',
   'schedule.overridden': 'Schedule overridden',
   'schedule.rescheduled': 'Rescheduled',

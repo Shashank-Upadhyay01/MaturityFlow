@@ -16,6 +16,7 @@ import { formatPaise } from '@/lib/money';
 import { planSettlement, reconcileInstalmentLegs, validatePayout } from '@/lib/payment-rules';
 import { parseISODate, todayISO } from '@/lib/working-days';
 import { canOverrideDates } from '@/lib/rbac';
+import { settlementState } from '@/lib/settlement';
 import { ensureAllocatedLedgerInTx } from './payout-ledger';
 import { persistInstalmentEdit } from './schedule-service';
 
@@ -30,6 +31,17 @@ export class PayoutError extends Error {
 }
 
 const PAYABLE_STATUSES = new Set<MaturityCase['status']>(['APPROVED', 'IN_PROGRESS']);
+function settlementFor(c: MaturityCase, paidPaise: bigint, actorId: string, now: Date) {
+  const state = settlementState(c.maturityAmountPaise, paidPaise);
+  return {
+    ...state,
+    fields: {
+      settlementAdjustmentPaise: state.adjustmentPaise,
+      settlementAdjustedAt: state.adjustmentPaise > 0n ? now : null,
+      settlementAdjustedById: state.adjustmentPaise > 0n ? actorId : null,
+    },
+  };
+}
 
 /** The case is already locked by every caller. Rebalance a custom receipt without changing debt. */
 async function expandInstalmentForPayment(tx: Tx, c: MaturityCase, instalmentId: string, amountPaise: bigint) {
@@ -165,10 +177,12 @@ export async function setCasePaidTotalInTx(
     }).where(eq(payoutInstalments.id, row.id));
   }
   const paid = input.cashPaise + input.onlinePaise;
-  const complete = paid === c.maturityAmountPaise;
+  const settlement = settlementFor(c, paid, actor.id, now);
+  const complete = settlement.complete;
   const status = c.status === 'ON_HOLD' ? c.status : complete ? 'COMPLETED' : paid > 0n ? 'IN_PROGRESS' : 'APPROVED';
   await tx.update(maturityCases).set({
     paidCashPaise: input.cashPaise, paidOnlinePaise: input.onlinePaise,
+    ...settlement.fields,
     status, completedAt: complete ? c.completedAt ?? now : null, updatedAt: now,
   }).where(eq(maturityCases.id, c.id));
   await tx.insert(caseEvents).values({
@@ -179,10 +193,10 @@ export async function setCasePaidTotalInTx(
     action: 'payout.corrected', entity: 'MaturityCase', entityId: c.id, branchId: c.branchId,
     summary: `${c.caseNumber}: paid total corrected to ${formatPaise(paid)} — ${input.reason.trim()}`,
     before: { paidCashPaise: originalCash, paidOnlinePaise: originalOnline },
-    after: { paidCashPaise: input.cashPaise, paidOnlinePaise: input.onlinePaise, reversedReceiptIds: reversedIds, replacementReceiptIds: replacementIds },
+    after: { paidCashPaise: input.cashPaise, paidOnlinePaise: input.onlinePaise, settlementAdjustmentPaise: settlement.adjustmentPaise, reversedReceiptIds: reversedIds, replacementReceiptIds: replacementIds },
     ...meta,
   });
-  return { remainingPaise: c.maturityAmountPaise - paid, caseCompleted: complete };
+  return { remainingPaise: settlement.remainingPaise, caseCompleted: complete };
 }
 
 export async function setCasePaidTotal(actor: SessionUser, caseId: string, input: SetCasePaidTotalInput, meta = {}) {
@@ -308,13 +322,15 @@ export async function recordPayout(
     const newCaseCash = c.paidCashPaise + input.cashPaise;
     const newCaseOnline = c.paidOnlinePaise + input.onlinePaise;
     const casePaid = newCaseCash + newCaseOnline;
-    const complete = casePaid >= c.maturityAmountPaise;
+    const settlement = settlementFor(c, casePaid, actor.id, new Date());
+    const complete = settlement.complete;
 
     await tx
       .update(maturityCases)
       .set({
         paidCashPaise: newCaseCash,
         paidOnlinePaise: newCaseOnline,
+        ...settlement.fields,
         status: complete ? 'COMPLETED' : c.status === 'APPROVED' ? 'IN_PROGRESS' : c.status,
         completedAt: complete ? new Date() : c.completedAt,
         updatedAt: new Date(),
@@ -342,7 +358,9 @@ export async function recordPayout(
         type: 'COMPLETED',
         actorId: actor.id,
         toStatus: 'COMPLETED',
-        note: `Fully paid — ${formatPaise(c.maturityAmountPaise)}`,
+        note: settlement.adjustmentPaise > 0n
+          ? `Completed with ${formatPaise(settlement.adjustmentPaise)} small-balance settlement adjustment.`
+          : `Fully paid — ${formatPaise(c.maturityAmountPaise)}`,
       });
     }
 
@@ -358,7 +376,8 @@ export async function recordPayout(
       before: { casePaidPaise: c.paidCashPaise + c.paidOnlinePaise },
       after: {
         casePaidPaise: casePaid,
-        caseRemainingPaise: c.maturityAmountPaise - casePaid,
+        caseRemainingPaise: settlement.remainingPaise,
+        settlementAdjustmentPaise: settlement.adjustmentPaise,
         complete,
       },
       ...meta,
@@ -367,7 +386,7 @@ export async function recordPayout(
     return {
       ok: true as const,
       totalPaise: check.totalPaise,
-      remainingPaise: c.maturityAmountPaise - casePaid,
+      remainingPaise: settlement.remainingPaise,
       instalmentSettled: check.settlesInstalment,
       caseCompleted: complete,
     };
@@ -649,15 +668,18 @@ export async function reversePayout(
     const newOnline = c.paidOnlinePaise - requested.onlinePaise;
     const paid = newCash + newOnline;
     if (newCash < 0n || newOnline < 0n) throw new PayoutError('The payout ledger is inconsistent; reversal was not applied.', 'LEDGER_MISMATCH');
+    const now = new Date();
+    const settlement = settlementFor(c, paid, actor.id, now);
 
     await tx
       .update(maturityCases)
       .set({
         paidCashPaise: newCash,
         paidOnlinePaise: newOnline,
-        status: c.status === 'ON_HOLD' ? 'ON_HOLD' : paid <= 0n ? 'APPROVED' : 'IN_PROGRESS',
-        completedAt: null,
-        updatedAt: new Date(),
+        ...settlement.fields,
+        status: c.status === 'ON_HOLD' ? 'ON_HOLD' : settlement.complete ? 'COMPLETED' : paid <= 0n ? 'APPROVED' : 'IN_PROGRESS',
+        completedAt: settlement.complete ? now : null,
+        updatedAt: now,
       })
       .where(eq(maturityCases.id, c.id));
 
@@ -676,11 +698,11 @@ export async function reversePayout(
       branchId: c.branchId,
       summary: `${c.caseNumber}: reversed ${formatPaise(txn.totalPaise)} — ${correctionReason}`,
       before: { casePaidPaise: c.paidCashPaise + c.paidOnlinePaise },
-      after: { casePaidPaise: paid, reversedReceiptIds: allocatedIds },
+      after: { casePaidPaise: paid, settlementAdjustmentPaise: settlement.adjustmentPaise, reversedReceiptIds: allocatedIds },
       ...meta,
     });
 
-    return { ok: true as const, remainingPaise: c.maturityAmountPaise - paid };
+    return { ok: true as const, remainingPaise: settlement.remainingPaise };
   });
 }
 
@@ -849,12 +871,14 @@ export async function replaceInstalmentPayout(
     const newCaseCash = caseCashWithoutToday + input.cashPaise;
     const newCaseOnline = caseOnlineWithoutToday + input.onlinePaise;
     const newCasePaid = newCaseCash + newCaseOnline;
-    const complete = newCasePaid >= c.maturityAmountPaise;
+    const settlement = settlementFor(c, newCasePaid, actor.id, now);
+    const complete = settlement.complete;
     await tx
       .update(maturityCases)
       .set({
         paidCashPaise: newCaseCash,
         paidOnlinePaise: newCaseOnline,
+        ...settlement.fields,
         status: complete ? 'COMPLETED' : newCasePaid > 0n ? 'IN_PROGRESS' : 'APPROVED',
         completedAt: complete ? now : null,
         updatedAt: now,
@@ -1028,12 +1052,14 @@ export async function correctInstalmentPaid(
       .where(eq(payoutInstalments.id, inst.id));
 
     const newCasePaid = caseCashWithout + caseOnlineWithout + newTotal;
-    const complete = newCasePaid >= c.maturityAmountPaise;
+    const settlement = settlementFor(c, newCasePaid, actor.id, now);
+    const complete = settlement.complete;
     await tx
       .update(maturityCases)
       .set({
         paidCashPaise: caseCashWithout + input.cashPaise,
         paidOnlinePaise: caseOnlineWithout + input.onlinePaise,
+        ...settlement.fields,
         status: complete ? 'COMPLETED' : newCasePaid > 0n ? 'IN_PROGRESS' : 'APPROVED',
         completedAt: complete ? now : null,
         updatedAt: now,
@@ -1350,13 +1376,15 @@ export async function settleRegisterRow(
     const newCaseCash = baseCaseCash + input.cashPaise;
     const newCaseOnline = baseCaseOnline + input.onlinePaise;
     const casePaid = newCaseCash + newCaseOnline;
-    const complete = casePaid >= c.maturityAmountPaise;
+    const settlement = settlementFor(c, casePaid, actor.id, now);
+    const complete = settlement.complete;
 
     await tx
       .update(maturityCases)
       .set({
         paidCashPaise: newCaseCash,
         paidOnlinePaise: newCaseOnline,
+        ...settlement.fields,
         status: complete ? 'COMPLETED' : c.status === 'APPROVED' ? 'IN_PROGRESS' : c.status,
         completedAt: complete ? (c.completedAt ?? now) : null,
         updatedAt: now,
@@ -1389,7 +1417,9 @@ export async function settleRegisterRow(
         type: 'COMPLETED',
         actorId: actor.id,
         toStatus: 'COMPLETED',
-        note: `Fully paid — ${formatPaise(c.maturityAmountPaise)}`,
+        note: settlement.adjustmentPaise > 0n
+          ? `Completed with ${formatPaise(settlement.adjustmentPaise)} small-balance settlement adjustment.`
+          : `Fully paid — ${formatPaise(c.maturityAmountPaise)}`,
       });
     }
 
@@ -1409,7 +1439,8 @@ export async function settleRegisterRow(
       },
       after: {
         casePaidPaise: casePaid,
-        caseRemainingPaise: c.maturityAmountPaise - casePaid,
+        caseRemainingPaise: settlement.remainingPaise,
+        settlementAdjustmentPaise: settlement.adjustmentPaise,
         arrearsClearedPaise: plan.arrearsClearedPaise,
         paidAheadPaise: plan.paidAheadPaise,
         transactionIds: txnIds,
@@ -1424,7 +1455,7 @@ export async function settleRegisterRow(
       daysSettled: plan.lines.length,
       arrearsClearedPaise: plan.arrearsClearedPaise,
       paidAheadPaise: plan.paidAheadPaise,
-      remainingPaise: c.maturityAmountPaise - casePaid,
+      remainingPaise: settlement.remainingPaise,
       caseCompleted: complete,
     };
   });
@@ -1631,13 +1662,15 @@ export async function takeRegisterDays(
     const newCaseCash = c.paidCashPaise + cashPaise;
     const newCaseOnline = c.paidOnlinePaise + onlinePaise;
     const casePaid = newCaseCash + newCaseOnline;
-    const complete = casePaid >= c.maturityAmountPaise;
+    const settlement = settlementFor(c, casePaid, actor.id, now);
+    const complete = settlement.complete;
 
     await tx
       .update(maturityCases)
       .set({
         paidCashPaise: newCaseCash,
         paidOnlinePaise: newCaseOnline,
+        ...settlement.fields,
         status: complete ? 'COMPLETED' : c.status === 'APPROVED' ? 'IN_PROGRESS' : c.status,
         completedAt: complete ? (c.completedAt ?? now) : null,
         updatedAt: now,
@@ -1663,7 +1696,9 @@ export async function takeRegisterDays(
         type: 'COMPLETED',
         actorId: actor.id,
         toStatus: 'COMPLETED',
-        note: `Fully paid — ${formatPaise(c.maturityAmountPaise)}`,
+        note: settlement.adjustmentPaise > 0n
+          ? `Completed with ${formatPaise(settlement.adjustmentPaise)} small-balance settlement adjustment.`
+          : `Fully paid — ${formatPaise(c.maturityAmountPaise)}`,
       });
     }
 
@@ -1676,7 +1711,8 @@ export async function takeRegisterDays(
       before: { casePaidPaise: c.paidCashPaise + c.paidOnlinePaise },
       after: {
         casePaidPaise: casePaid,
-        caseRemainingPaise: c.maturityAmountPaise - casePaid,
+        caseRemainingPaise: settlement.remainingPaise,
+        settlementAdjustmentPaise: settlement.adjustmentPaise,
         transactionIds: txnIds,
         complete,
       },
@@ -1687,7 +1723,7 @@ export async function takeRegisterDays(
       ok: true as const,
       totalPaise: plan.totalPaise,
       daysSettled: plan.lines.length,
-      remainingPaise: c.maturityAmountPaise - casePaid,
+      remainingPaise: settlement.remainingPaise,
       caseCompleted: complete,
     };
   });

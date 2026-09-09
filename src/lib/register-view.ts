@@ -35,7 +35,7 @@ export type SortKey =
   | 'paidOnlineToday'
   | 'given';
 
-export type RegisterTab = 'due' | 'today' | 'missed' | 'all' | 'pending';
+export type RegisterTab = 'due' | 'today' | 'missed' | 'settled' | 'all' | 'pending';
 export type DateField = 'payout' | 'payment' | 'form' | 'maturity';
 
 export const DATE_FIELD_LABEL: Record<DateField, string> = {
@@ -49,6 +49,7 @@ export const TAB_LABEL: Record<RegisterTab, string> = {
   due: 'Due today',
   today: 'Live',
   missed: 'Missed Payments',
+  settled: 'Small Balance Settled',
   pending: 'Pending',
   all: 'All',
 };
@@ -58,6 +59,7 @@ export const TAB_HINT: Record<RegisterTab, string> = {
   due: 'Customers the schedule expects at the counter today',
   today: 'Every case that still owes money',
   missed: 'Customers carrying a missed amount — days that came due and were not collected',
+  settled: 'Completed cases where ₹100 or less was waived as an audited rounding settlement',
   pending: 'Rows typed into the sheet that have not been submitted, so nothing is scheduled yet',
   all: 'Every row in the register, settled or not',
 };
@@ -607,6 +609,7 @@ export function autoSortFor(
   }
   if (tab === 'due') return { key: 'today', dir: 'desc' };
   if (tab === 'pending') return { key: 'formDate', dir: 'asc' };
+  if (tab === 'settled') return { key: 'formDate', dir: 'desc' };
   if (tab === 'all') return { key: 'formDate', dir: 'desc' };
   return { key: 'remaining', dir: 'desc' };
 }

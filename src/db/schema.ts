@@ -416,6 +416,15 @@ export const maturityCases = pgTable(
     paidCashPaise: bigint('paid_cash_paise', { mode: 'bigint' }).notNull().default(sql`0`),
     paidOnlinePaise: bigint('paid_online_paise', { mode: 'bigint' }).notNull().default(sql`0`),
 
+    /**
+     * A final balance of at most ₹100 that the bank explicitly waives. This is not a payout:
+     * actual cash/online totals remain receipt-derived, while settlement still reconciles as
+     * paid + adjustment = maturity.
+     */
+    settlementAdjustmentPaise: bigint('settlement_adjustment_paise', { mode: 'bigint' }).notNull().default(sql`0`),
+    settlementAdjustedAt: timestamp('settlement_adjusted_at', { withTimezone: true }),
+    settlementAdjustedById: text('settlement_adjusted_by_id').references(() => users.id, { onDelete: 'set null' }),
+
     /** Today's approved withdrawable — the Excel column the counter actually pays. */
     todayApprovedPaise: bigint('today_approved_paise', { mode: 'bigint' }).notNull().default(sql`0`),
     todayCashPaise: bigint('today_cash_paise', { mode: 'bigint' }).notNull().default(sql`0`),
@@ -446,12 +455,17 @@ export const maturityCases = pgTable(
     check('cases_window_positive', sql`${t.windowDays} > 0 AND ${t.windowDays} <= 366`),
     check('cases_rounding_positive', sql`${t.roundingPaise} > 0`),
     check('cases_paid_non_negative', sql`${t.paidCashPaise} >= 0 AND ${t.paidOnlinePaise} >= 0`),
+    check('cases_settlement_adjustment_range', sql`${t.settlementAdjustmentPaise} >= 0 AND ${t.settlementAdjustmentPaise} <= 10000`),
     check('cases_today_approved_non_negative', sql`${t.todayApprovedPaise} >= 0`),
     check('cases_today_split_non_negative', sql`${t.todayCashPaise} >= 0 AND ${t.todayOnlinePaise} >= 0`),
     // INV-4 — the ledger can never exceed the maturity amount, even via raw SQL.
     check(
       'cases_no_overpayment',
       sql`${t.paidCashPaise} + ${t.paidOnlinePaise} <= ${t.maturityAmountPaise}`,
+    ),
+    check(
+      'cases_settlement_reconciles',
+      sql`${t.paidCashPaise} + ${t.paidOnlinePaise} + ${t.settlementAdjustmentPaise} <= ${t.maturityAmountPaise}`,
     ),
     // INV-5 — a case cannot be approved before it was submitted.
     check(

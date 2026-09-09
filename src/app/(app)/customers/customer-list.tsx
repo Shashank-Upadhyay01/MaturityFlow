@@ -35,7 +35,7 @@ export interface CalendarSnapshot {
 const inr = (v: bigint) => formatPaise(v, { decimals: false });
 const paidOf = (c: CustomerCase) => BigInt(c.paidCashPaise) + BigInt(c.paidOnlinePaise);
 const leftOf = (c: CustomerCase) => {
-  const l = BigInt(c.maturityAmountPaise) - paidOf(c);
+  const l = BigInt(c.maturityAmountPaise) - paidOf(c) - BigInt(c.settlementAdjustmentPaise ?? '0');
   return l > 0n ? l : 0n;
 };
 

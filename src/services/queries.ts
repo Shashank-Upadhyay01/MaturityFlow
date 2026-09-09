@@ -285,7 +285,7 @@ export async function getRegisterSummary(
 ): Promise<RegisterSummary> {
   const scope = caseScope(actor);
   const and_ = (...xs: (SQL | undefined)[]) => and(...(xs.filter(Boolean) as SQL[]));
-  const remainingSql = sql`${maturityCases.maturityAmountPaise} - ${maturityCases.paidCashPaise} - ${maturityCases.paidOnlinePaise}`;
+  const remainingSql = sql`${maturityCases.maturityAmountPaise} - ${maturityCases.paidCashPaise} - ${maturityCases.paidOnlinePaise} - ${maturityCases.settlementAdjustmentPaise}`;
 
   const [book] = await db
     .select({
@@ -312,6 +312,7 @@ export async function getRegisterSummary(
         SELECT SUM(GREATEST(i.amount_paise - i.paid_cash_paise - i.paid_online_paise, 0))
         FROM payout_instalments i
         WHERE i.case_id = ${CASE_ID}
+          AND ${maturityCases.settlementAdjustmentPaise} = 0
           AND i.schedule_version = ${maturityCases.scheduleVersion}
           AND i.due_on = ${date}
           AND i.status IN ('PENDING', 'PARTIAL')
@@ -323,6 +324,7 @@ export async function getRegisterSummary(
         ))
         FROM payout_instalments i
         WHERE i.case_id = ${CASE_ID}
+          AND ${maturityCases.settlementAdjustmentPaise} = 0
           AND i.schedule_version = ${maturityCases.scheduleVersion}
           AND i.due_on = ${date}
           AND i.status IN ('PENDING', 'PARTIAL')
@@ -338,6 +340,7 @@ export async function getRegisterSummary(
         ))
         FROM payout_instalments i
         WHERE i.case_id = ${CASE_ID}
+          AND ${maturityCases.settlementAdjustmentPaise} = 0
           AND i.schedule_version = ${maturityCases.scheduleVersion}
           AND i.due_on = ${date}
           AND i.status IN ('PENDING', 'PARTIAL')
@@ -499,6 +502,7 @@ export async function listCases(actor: Actor, f: CaseFilters = {}) {
       maturityAmountPaise: maturityCases.maturityAmountPaise,
       paidCashPaise: maturityCases.paidCashPaise,
       paidOnlinePaise: maturityCases.paidOnlinePaise,
+      settlementAdjustmentPaise: maturityCases.settlementAdjustmentPaise,
       formSubmittedOn: maturityCases.formSubmittedOn,
       approvedOn: maturityCases.approvedOn,
       deadlineOn: maturityCases.deadlineOn,
@@ -591,6 +595,7 @@ export async function listRegister(actor: Actor, date = todayISO(), branchId?: s
   const todayInst = (expr: ReturnType<typeof sql.raw>) => sql`(
     SELECT ${expr} FROM payout_instalments i
     WHERE i.case_id = ${CASE_ID}
+      AND ${maturityCases.settlementAdjustmentPaise} = 0
       AND i.due_on = ${date}
       AND i.status NOT IN ('SUPERSEDED', 'CANCELLED')
     ORDER BY (i.schedule_version = ${maturityCases.scheduleVersion}) DESC,
@@ -687,6 +692,7 @@ export async function listRegister(actor: Actor, date = todayISO(), branchId?: s
       maturityAmountPaise: maturityCases.maturityAmountPaise,
       paidCashPaise: maturityCases.paidCashPaise,
       paidOnlinePaise: maturityCases.paidOnlinePaise,
+      settlementAdjustmentPaise: maturityCases.settlementAdjustmentPaise,
       todayApprovedPaise: maturityCases.todayApprovedPaise,
       todayCashPaise: maturityCases.todayCashPaise,
       todayOnlinePaise: maturityCases.todayOnlinePaise,
@@ -2046,6 +2052,7 @@ const followUpRow = {
   maturityAmountPaise: maturityCases.maturityAmountPaise,
   paidCashPaise: maturityCases.paidCashPaise,
   paidOnlinePaise: maturityCases.paidOnlinePaise,
+  settlementAdjustmentPaise: maturityCases.settlementAdjustmentPaise,
   approvedOn: maturityCases.approvedOn,
   deadlineOn: maturityCases.deadlineOn,
   cadence: maturityCases.cadence,
@@ -2177,6 +2184,7 @@ export async function getAgentCustomers(actor: Actor, agentId: string) {
       maturityAmountPaise: maturityCases.maturityAmountPaise,
       paidCashPaise: maturityCases.paidCashPaise,
       paidOnlinePaise: maturityCases.paidOnlinePaise,
+      settlementAdjustmentPaise: maturityCases.settlementAdjustmentPaise,
       instrumentMaturityOn: maturityCases.instrumentMaturityOn,
       formSubmittedOn: maturityCases.formSubmittedOn,
       approvedOn: maturityCases.approvedOn,
@@ -2252,6 +2260,7 @@ export async function getAllAgentCustomers(actor: Actor) {
       maturityAmountPaise: maturityCases.maturityAmountPaise,
       paidCashPaise: maturityCases.paidCashPaise,
       paidOnlinePaise: maturityCases.paidOnlinePaise,
+      settlementAdjustmentPaise: maturityCases.settlementAdjustmentPaise,
       instrumentMaturityOn: maturityCases.instrumentMaturityOn,
       formSubmittedOn: maturityCases.formSubmittedOn,
       approvedOn: maturityCases.approvedOn,
@@ -2293,6 +2302,7 @@ export async function getPlanBoardCases(actor: Actor) {
       maturityAmountPaise: maturityCases.maturityAmountPaise,
       paidCashPaise: maturityCases.paidCashPaise,
       paidOnlinePaise: maturityCases.paidOnlinePaise,
+      settlementAdjustmentPaise: maturityCases.settlementAdjustmentPaise,
       todayApprovedPaise: maturityCases.todayApprovedPaise,
       // Everything generateSchedule needs, so the client can project an unapproved case.
       windowDays: maturityCases.windowDays,
@@ -2378,6 +2388,7 @@ export async function getCustomerBook(actor: Actor) {
       maturityAmountPaise: maturityCases.maturityAmountPaise,
       paidCashPaise: maturityCases.paidCashPaise,
       paidOnlinePaise: maturityCases.paidOnlinePaise,
+      settlementAdjustmentPaise: maturityCases.settlementAdjustmentPaise,
       instrumentMaturityOn: maturityCases.instrumentMaturityOn,
       formSubmittedOn: maturityCases.formSubmittedOn,
       approvedOn: maturityCases.approvedOn,

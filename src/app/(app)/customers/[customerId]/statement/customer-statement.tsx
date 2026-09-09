@@ -67,10 +67,11 @@ export function CustomerStatement({
     (a, c) => {
       const paid = BigInt(c.paidCashPaise) + BigInt(c.paidOnlinePaise);
       const mat = BigInt(c.maturityAmountPaise);
+      const adjustment = BigInt(c.settlementAdjustmentPaise ?? '0');
       return {
         maturity: a.maturity + mat,
         paid: a.paid + paid,
-        left: a.left + (mat > paid ? mat - paid : 0n),
+        left: a.left + (mat > paid + adjustment ? mat - paid - adjustment : 0n),
       };
     },
     { maturity: 0n, paid: 0n, left: 0n },
@@ -179,6 +180,8 @@ export function CustomerStatement({
               const plan = buildPlanRow(c, instalments, cal, today);
               const paid = BigInt(c.paidCashPaise) + BigInt(c.paidOnlinePaise);
               const mat = BigInt(c.maturityAmountPaise);
+              const adjustment = BigInt(c.settlementAdjustmentPaise ?? '0');
+              const left = mat > paid + adjustment ? mat - paid - adjustment : 0n;
               return (
                 <table className="payment-table case-table" key={c.caseId}>
                   <colgroup>
@@ -199,7 +202,7 @@ export function CustomerStatement({
                           {' '}· maturity <span className="amt-maturity">{money(mat)}</span>
                           {' '}· {SETTLEMENT_LABEL[settlementOf(c)]}
                           {' '}· received <span className={paid > 0n ? 'amt-paid' : undefined}>{money(paid)}</span>
-                          {' '}· left <span className={mat > paid ? 'amt-left' : undefined}>{money(mat > paid ? mat - paid : 0n)}</span>
+                          {' '}· left <span className={left > 0n ? 'amt-left' : undefined}>{money(left)}</span>
                         </td>
                       </tr>
                       <tr>

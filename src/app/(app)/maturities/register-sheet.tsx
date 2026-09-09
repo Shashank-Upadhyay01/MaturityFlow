@@ -153,6 +153,7 @@ export interface RegisterRow {
   maturityPaise: string;
   paidPaise: string;
   remainingPaise: string;
+  settlementAdjustmentPaise: string;
   todayPaise: string;
   todayCashPaise: string;
   todayOnlinePaise: string;
@@ -1300,7 +1301,8 @@ export function RegisterSheet(props: {
     // Everyone who did not withdraw on a day they were due. Note this is a *view* of the same
     // rows, not a second list: the user's rule is that a missed payment is never removed from
     // the twelve-day sheet, only coloured. This tab is the shortcut to them, not their home.
-    if (tab === 'missed') list = list.filter((r) => hasMissedAmount(r, props.today));
+    if (tab === 'missed') list = list.filter((r) => BigInt(r.settlementAdjustmentPaise) === 0n && hasMissedAmount(r, props.today));
+    if (tab === 'settled') list = list.filter((r) => BigInt(r.settlementAdjustmentPaise) > 0n);
     if (agentId) list = list.filter((r) => r.agentId === agentId);
     if (isRangeActive(range)) list = list.filter((r) => rowInDateRange(r, dateField, range));
     if (q.trim()) {
@@ -2609,7 +2611,7 @@ export function RegisterSheet(props: {
           <div className="flex flex-col gap-2 xl:flex-row xl:items-start">
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-2">
               <div className="flex max-w-full overflow-x-auto rounded-[10px] border border-[var(--input-border)] p-0.5">
-                {(['due', 'missed', 'today', 'pending', 'all'] as Tab[]).map((t) => {
+                {(['due', 'missed', 'today', 'settled', 'pending', 'all'] as Tab[]).map((t) => {
                   const badge = t === 'due' ? todaysListCount : t === 'missed' ? missedCount : 0;
                   return (
                     <button

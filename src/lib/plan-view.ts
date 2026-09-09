@@ -42,6 +42,7 @@ export interface PlanCase {
   maturityAmountPaise: string;
   paidCashPaise: string;
   paidOnlinePaise: string;
+  settlementAdjustmentPaise?: string;
   windowDays: number;
   roundingPaise: string;
   distribution: string;
@@ -191,7 +192,9 @@ export function buildPlanRow(
 ): PlanRow {
   const maturityPaise = big(c.maturityAmountPaise);
   const givenPaise = big(c.paidCashPaise) + big(c.paidOnlinePaise);
-  const remainingPaise = maturityPaise > givenPaise ? maturityPaise - givenPaise : 0n;
+  const settledAdjustmentPaise = big(c.settlementAdjustmentPaise);
+  const settledPaise = givenPaise + settledAdjustmentPaise;
+  const remainingPaise = maturityPaise > settledPaise ? maturityPaise - settledPaise : 0n;
   const band = bandOf(maturityPaise);
   const cadence: Cadence = c.approvedOn && (c.cadence === 'DAILY' || c.cadence === 'ALTERNATE')
     ? c.cadence : band === 'SMALL' ? 'ALTERNATE' : 'DAILY';

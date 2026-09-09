@@ -14,7 +14,7 @@ import {
 import { RegisterSheet } from './register-sheet';
 import { RegisterTabs } from './register-tabs';
 import { RegisterDayNav } from './register-day-nav';
-import { autoRepairUnsetSchedules, rollOverElapsedSchedules } from '@/services/case-service';
+import { autoRepairUnsetSchedules, rollOverElapsedSchedules, settleSmallBalances } from '@/services/case-service';
 
 export const metadata = { title: 'Register' };
 export const dynamic = 'force-dynamic';
@@ -61,6 +61,7 @@ export default async function MaturitiesPage({
   // This is an explicit audited write phase before the read: elapsed promises are historical
   // MISSED rows and their unpaid balance is redistributed over the remaining scheduled dates.
   if (registerDate === today && branch && canTypeRegister(session.role) && roleCan(session.role, 'schedule.reschedule')) {
+    await settleSmallBalances(session, branch.id);
     await Promise.all([
       autoRepairUnsetSchedules(session, branch.id, today),
       rollOverElapsedSchedules(session, branch.id, today),
@@ -158,7 +159,8 @@ export default async function MaturitiesPage({
                 paidPaise: paid.toString(),
                 paidCashPaise: r.paidCashPaise.toString(),
                 paidOnlinePaise: r.paidOnlinePaise.toString(),
-                remainingPaise: (r.maturityAmountPaise - paid).toString(),
+                settlementAdjustmentPaise: r.settlementAdjustmentPaise.toString(),
+                remainingPaise: (r.maturityAmountPaise - paid - r.settlementAdjustmentPaise).toString(),
                 todayPaise: r.todayApprovedPaise.toString(),
                 todayCashPaise: r.todayCashPaise.toString(),
                 todayOnlinePaise: r.todayOnlinePaise.toString(),

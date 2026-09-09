@@ -21,6 +21,7 @@ export interface BookCase {
   maturityAmountPaise: string;
   paidCashPaise: string;
   paidOnlinePaise: string;
+  settlementAdjustmentPaise?: string;
   instrumentMaturityOn: string | null;
   formSubmittedOn: string | null;
   approvedOn: string | null;
@@ -36,7 +37,7 @@ export const paidOf = (c: BookCase): bigint =>
   BigInt(c.paidCashPaise) + BigInt(c.paidOnlinePaise);
 
 export const remainingOf = (c: BookCase): bigint => {
-  const left = BigInt(c.maturityAmountPaise) - paidOf(c);
+  const left = BigInt(c.maturityAmountPaise) - paidOf(c) - BigInt(c.settlementAdjustmentPaise ?? '0');
   return left > 0n ? left : 0n;
 };
 
@@ -50,7 +51,7 @@ export const remainingOf = (c: BookCase): bigint => {
 export function settlementOf(c: BookCase): SettlementState {
   const paid = paidOf(c);
   const total = BigInt(c.maturityAmountPaise);
-  if (total > 0n && paid >= total) return 'SETTLED';
+  if (total > 0n && paid + BigInt(c.settlementAdjustmentPaise ?? '0') >= total) return 'SETTLED';
   if (paid > 0n) return 'PARTLY_PAID';
   return BEFORE_APPROVAL.has(c.status) ? 'NOT_STARTED' : 'NOTHING_YET';
 }

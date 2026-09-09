@@ -26,6 +26,7 @@ import { ensureAllocatedLedgerInTx } from './payout-ledger';
 import { assertCan, inScope, roleCan } from '@/lib/rbac';
 import { reconcileInstalmentLegs } from '@/lib/payment-rules';
 import { generateSchedule } from '@/lib/payout-engine';
+import { SMALL_BALANCE_SETTLEMENT_PAISE, settlementState } from '@/lib/settlement';
 
 export class WorkflowError extends Error {
   constructor(
@@ -651,7 +652,22 @@ export async function rollOverElapsedSchedules(actor: SessionUser, branchId: str
         )).for('update').orderBy(payoutInstalments.dueOn, payoutInstalments.seq);
         const elapsed = rows.filter((r) => r.dueOn < asOf && ['PENDING', 'PARTIAL'].includes(r.status));
         const future = rows.filter((r) => r.dueOn >= asOf && ['PENDING', 'PARTIAL'].includes(r.status));
-        if (!elapsed.length || !future.length) return;
+        if (!elapsed.length) return;
+        if (!future.length) {
+          await tx.update(payoutInstalments).set({ status: 'MISSED', isFinal: false, updatedAt: new Date() })
+            .where(inArray(payoutInstalments.id, elapsed.map((r) => r.id)));
+          await tx.insert(caseEvents).values({
+            id: newId('evt'), caseId: locked.id, type: 'RESCHEDULED', actorId: actor.id,
+            note: `${elapsed.length} elapsed payment day(s) moved to missed history; no original payment dates remain.`,
+          });
+          await writeAudit(tx, actor, {
+            action: 'schedule.rescheduled', entity: 'MaturityCase', entityId: locked.id, branchId: locked.branchId,
+            summary: `${locked.caseNumber}: elapsed payments isolated as missed; administrator must resolve the expired plan`,
+            before: { scheduleVersion: locked.scheduleVersion },
+            after: { scheduleVersion: locked.scheduleVersion, missedDays: elapsed.length, requiresAdminResolution: true },
+          });
+          return;
+        }
         const version = locked.scheduleVersion + 1;
         const remaining = locked.maturityAmountPaise - locked.paidCashPaise - locked.paidOnlinePaise;
         if (remaining <= 0n) throw new WorkflowError('No positive payment can be placed on the remaining dates.', 'NOT_SCHEDULABLE');
@@ -703,6 +719,64 @@ export async function rollOverElapsedSchedules(actor: SessionUser, branchId: str
         });
       });
       changed++;
+    } catch {
+      failed++;
+    }
+  }
+  return { changed, failed };
+}
+
+/**
+ * Close legacy/live cases whose only outstanding amount is the approved ≤₹100 rounding residue.
+ * This is idempotent and audited; actual receipt totals are never changed.
+ */
+export async function settleSmallBalances(actor: SessionUser, branchId: string) {
+  if (!roleCan(actor.role, 'schedule.reschedule')) return { changed: 0, failed: 0 };
+  const candidates = await db.select({
+    id: maturityCases.id, branchId: maturityCases.branchId, agentId: maturityCases.agentId,
+  }).from(maturityCases).where(and(
+    eq(maturityCases.branchId, branchId),
+    inArray(maturityCases.status, ['APPROVED', 'IN_PROGRESS']),
+    eq(maturityCases.settlementAdjustmentPaise, 0n),
+    sql`${maturityCases.maturityAmountPaise} - ${maturityCases.paidCashPaise} - ${maturityCases.paidOnlinePaise} BETWEEN 1 AND ${SMALL_BALANCE_SETTLEMENT_PAISE}`,
+  ));
+  let changed = 0;
+  let failed = 0;
+  for (const candidate of candidates) {
+    if (!inScope(actor, candidate, 'schedule.reschedule')) continue;
+    try {
+      assertCan(actor, 'schedule.reschedule', candidate);
+      const didChange = await db.transaction(async (tx) => {
+        const [c] = await tx.select().from(maturityCases)
+          .where(eq(maturityCases.id, candidate.id)).for('update').limit(1);
+        if (!c || !['APPROVED', 'IN_PROGRESS'].includes(c.status)) return false;
+        const paid = c.paidCashPaise + c.paidOnlinePaise;
+        const settlement = settlementState(c.maturityAmountPaise, paid);
+        if (settlement.adjustmentPaise <= 0n || c.settlementAdjustmentPaise > 0n) return false;
+        const now = new Date();
+        await tx.update(maturityCases).set({
+          settlementAdjustmentPaise: settlement.adjustmentPaise,
+          settlementAdjustedAt: now,
+          settlementAdjustedById: actor.id,
+          status: 'COMPLETED',
+          completedAt: c.completedAt ?? now,
+          updatedAt: now,
+        }).where(eq(maturityCases.id, c.id));
+        await tx.insert(caseEvents).values({
+          id: newId('evt'), caseId: c.id, type: 'COMPLETED', actorId: actor.id,
+          toStatus: 'COMPLETED',
+          note: `Completed with ${formatPaise(settlement.adjustmentPaise)} small-balance settlement adjustment.`,
+        });
+        await writeAudit(tx, actor, {
+          action: 'case.small_balance_settled', entity: 'MaturityCase', entityId: c.id,
+          branchId: c.branchId,
+          summary: `${c.caseNumber}: completed with ${formatPaise(settlement.adjustmentPaise)} rounding settlement`,
+          before: { paidPaise: paid, remainingPaise: c.maturityAmountPaise - paid, status: c.status },
+          after: { paidPaise: paid, settlementAdjustmentPaise: settlement.adjustmentPaise, remainingPaise: 0n, status: 'COMPLETED' },
+        });
+        return true;
+      });
+      if (didChange) changed++;
     } catch {
       failed++;
     }

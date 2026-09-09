@@ -257,7 +257,7 @@ export async function persistReschedule({
     equalize,
     payoutCount,
     maxPayoutCount: remainingPayoutParts(
-      caseRow.cadence === 'ALTERNATE' ? 6 : 12,
+      payoutPlanFor(caseRow.maturityAmountPaise, caseRow.windowDays).payoutDays,
       settled.length,
       historicalMissed.length + missedIds.length,
     ),

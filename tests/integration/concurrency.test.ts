@@ -162,6 +162,27 @@ async function caseRow(caseId: string) {
 }
 
 describe('two cashiers, one instalment', () => {
+  it('completes a case with an audited small-balance adjustment without inventing a receipt', async () => {
+    const caseId = await makeApprovedCase('1000', 4);
+    const inst = await firstInstalment(caseId);
+    const result = await recordPayout(cashierA, {
+      instalmentId: inst.id,
+      cashPaise: rupees('950'),
+      onlinePaise: 0n,
+    });
+    const c = await caseRow(caseId);
+    const [receiptTotal] = await db.select({ total: sql<string>`COALESCE(SUM(${payoutTransactions.totalPaise}), 0)` })
+      .from(payoutTransactions)
+      .where(and(eq(payoutTransactions.caseId, caseId), sql`${payoutTransactions.reversedAt} IS NULL`));
+
+    expect(result.caseCompleted).toBe(true);
+    expect(result.remainingPaise).toBe(0n);
+    expect(c.status).toBe('COMPLETED');
+    expect(c.paidCashPaise).toBe(rupees('950'));
+    expect(c.settlementAdjustmentPaise).toBe(rupees('50'));
+    expect(BigInt(receiptTotal.total)).toBe(rupees('950'));
+  });
+
   it('cannot both pay the same instalment in full', async () => {
     const caseId = await makeApprovedCase('100000');
     const inst = await firstInstalment(caseId);

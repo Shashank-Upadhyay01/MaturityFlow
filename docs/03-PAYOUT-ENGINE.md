@@ -23,6 +23,12 @@ Custom amounts redistribute unpaid balances; recorded payments are preserved. Ca
 overrides and paid-total corrections remain permission checked and audited. The engine's
 sum assertion and bigint paise representation remain mandatory.
 
+
+A positive final balance of ₹100 or less is closed as a separately stored settlement adjustment.
+It is never inserted into the cash or online receipt ledger. The case reconciles as maturity =
+actual receipts + settlement adjustment, appears under Small Balance Settled, and retains the
+exact adjustment, actor and timestamp in the audit trail.
+
 When a scheduled date passes unpaid, that row becomes immutable MISSED history and the unpaid
 balance is re-spread across the payout dates still available before the same deadline. Current
 operational totals read only the newest schedule version, so missed history never inflates Due

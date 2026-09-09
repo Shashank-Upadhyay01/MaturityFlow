@@ -71,6 +71,13 @@
       "when": 1788389475508,
       "tag": "0009_omniscient_timeslip",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788982836012,
+      "tag": "0010_bizarre_vengeance",
+      "breakpoints": true
     }
   ]
 }

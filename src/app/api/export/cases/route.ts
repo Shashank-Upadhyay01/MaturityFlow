@@ -45,7 +45,7 @@ export async function GET(request: Request) {
         c.paymentOn ? formatDMY(c.paymentOn) : '',
         formatPaise(c.maturityAmountPaise, { decimals: false, symbol: false }),
         formatPaise(paid, { decimals: false, symbol: false }),
-        formatPaise(c.maturityAmountPaise - paid, { decimals: false, symbol: false }),
+        formatPaise(c.maturityAmountPaise - paid - c.settlementAdjustmentPaise, { decimals: false, symbol: false }),
         c.agentName,
         formatPaise(c.todayApprovedPaise, { decimals: false, symbol: false }),
         c.windowDays,

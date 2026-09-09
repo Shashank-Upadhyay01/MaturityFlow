@@ -1,6 +1,6 @@
 import type { MaturityCase, PayoutInstalment, PayoutTransaction } from '@/db/schema';
 
-type CaseLedger = Pick<MaturityCase, 'id' | 'branchId' | 'maturityAmountPaise' | 'paidCashPaise' | 'paidOnlinePaise' | 'status' | 'scheduleVersion'>;
+type CaseLedger = Pick<MaturityCase, 'id' | 'branchId' | 'maturityAmountPaise' | 'paidCashPaise' | 'paidOnlinePaise' | 'status' | 'scheduleVersion'> & { settlementAdjustmentPaise?: bigint };
 type InstalmentLedger = Pick<PayoutInstalment, 'id' | 'caseId' | 'scheduleVersion' | 'amountPaise' | 'cashLegPaise' | 'onlineLegPaise' | 'paidCashPaise' | 'paidOnlinePaise' | 'status'>;
 type ReceiptLedger = Pick<PayoutTransaction, 'id' | 'caseId' | 'branchId' | 'instalmentId' | 'cashPaise' | 'onlinePaise' | 'totalPaise' | 'reversedAt'>;
 
@@ -13,6 +13,7 @@ export interface LedgerIssue {
 
 /** Compare cached totals against recorded, unreversed receipts without modifying the ledger. */
 export function inspectCaseLedger(c: CaseLedger, instalments: readonly InstalmentLedger[], receipts: readonly ReceiptLedger[]) {
+  const settlementAdjustmentPaise = c.settlementAdjustmentPaise ?? 0n;
   const issues: LedgerIssue[] = [];
   const issue = (code: string, message: string, blocking = true) => issues.push({ code, message, blocking });
   const totals = new Map(instalments.map((i) => [i.id, { cashPaise: 0n, onlinePaise: 0n }]));
@@ -86,10 +87,10 @@ export function inspectCaseLedger(c: CaseLedger, instalments: readonly Instalmen
 
   let expectedStatus = c.status;
   if (c.status === 'APPROVED' || c.status === 'IN_PROGRESS') {
-    expectedStatus = paidPaise === c.maturityAmountPaise ? 'COMPLETED' : paidPaise > 0n ? 'IN_PROGRESS' : c.status;
+    expectedStatus = paidPaise + settlementAdjustmentPaise === c.maturityAmountPaise ? 'COMPLETED' : paidPaise > 0n ? 'IN_PROGRESS' : c.status;
   }
   if (expectedStatus !== c.status) issue('CASE_PROGRESS', 'Case progress has not caught up with its recorded receipts.', false);
-  if (c.status === 'COMPLETED' && paidPaise !== c.maturityAmountPaise) issue('COMPLETED_BALANCE', 'This completed case still has an outstanding balance. Review its receipts and status.');
+  if (c.status === 'COMPLETED' && paidPaise + settlementAdjustmentPaise !== c.maturityAmountPaise) issue('COMPLETED_BALANCE', 'This completed case does not reconcile through receipts and its settlement adjustment.');
   if (['DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'RETURNED', 'REJECTED', 'CANCELLED'].includes(c.status) && paidPaise > 0n) {
     issue('PAYMENT_STATUS', 'Recorded payments exist on a case that is not open for payment.');
   }
@@ -97,7 +98,7 @@ export function inspectCaseLedger(c: CaseLedger, instalments: readonly Instalmen
   const uniqueIssues = issues.filter((item, index) => issues.findIndex((other) => other.code === item.code) === index);
   return {
     cashPaise, onlinePaise, paidPaise, scheduledPaise, unallocatedPaise,
-    remainingPaise: c.maturityAmountPaise - paidPaise,
+    remainingPaise: c.maturityAmountPaise - paidPaise - settlementAdjustmentPaise,
     caseTotalsDiffer, instalmentRepairs, expectedStatus,
     issues: uniqueIssues,
     repairable: uniqueIssues.length > 0 && !uniqueIssues.some((i) => i.blocking),

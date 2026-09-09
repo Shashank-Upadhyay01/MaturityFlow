@@ -53,7 +53,7 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
   const c = detail.c;
   const today = todayISO();
   const paid = c.paidCashPaise + c.paidOnlinePaise;
-  const remaining = c.maturityAmountPaise - paid;
+  const remaining = c.maturityAmountPaise - paid - c.settlementAdjustmentPaise;
   const isLive = c.status === 'APPROVED' || c.status === 'IN_PROGRESS';
   const overdue = isLive && c.deadlineOn != null && c.deadlineOn < today && remaining > 0n;
   const reviewLag = c.opsReviewedOn ? daysBetween(c.formSubmittedOn, c.opsReviewedOn) : null;
