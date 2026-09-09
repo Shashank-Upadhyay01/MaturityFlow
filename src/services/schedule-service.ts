@@ -151,6 +151,7 @@ export async function persistReschedule({
   payoutCount,
   allowClosedStartDate = false,
   finishOnDeadline = false,
+  equalize = true,
 }: {
   tx: Queryable;
   caseRow: MaturityCase;
@@ -161,6 +162,8 @@ export async function persistReschedule({
   allowClosedStartDate?: boolean;
   /** An explicitly edited customer promise is the exact final payout date, not only a ceiling. */
   finishOnDeadline?: boolean;
+  /** Missed-payment rollover is equal; an explicit manual re-plan honours the case rounding step. */
+  equalize?: boolean;
 }): Promise<{ result: ReturnType<typeof rescheduleRemaining>; carriedOverPaise: bigint } | null> {
   const paid = caseRow.paidCashPaise + caseRow.paidOnlinePaise;
   const remaining = caseRow.maturityAmountPaise - paid;
@@ -251,7 +254,7 @@ export async function persistReschedule({
     // Carried from the case, not re-derived: a sub-₹1-lakh maturity must not become a daily
     // one the first time its remainder is re-planned.
     cadence: caseRow.cadence as Cadence,
-    equalize: true,
+    equalize,
     payoutCount,
     maxPayoutCount: remainingPayoutParts(
       caseRow.cadence === 'ALTERNATE' ? 6 : 12,

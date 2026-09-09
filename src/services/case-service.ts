@@ -577,6 +577,9 @@ export async function rescheduleCase(actor: SessionUser, caseId: string, reason:
       caseRow: c,
       calendar: policy.calendar,
       branchDailyCashComfortPaise: policy.dailyCashComfortPaise,
+      // The operator explicitly asked to rebuild the remaining plan, so retain the case's
+      // configured rounding step. Automatic missed-day rollover still equalises the remainder.
+      equalize: false,
     });
     if (!out) throw new WorkflowError('Nothing left to reschedule — this case is fully paid.', 'NOTHING_DUE');
 
