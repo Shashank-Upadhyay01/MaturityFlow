@@ -184,11 +184,13 @@ function CustomerRow({
             inputMode="numeric"
             aria-label={`Parts for ${row.customerName}`}
             value={parts}
+            disabled={row.givenPaise > 0n}
+            title={row.givenPaise > 0n ? 'Paid dates are fixed; missed money is spread only across the original remaining slots.' : undefined}
             onChange={(e) => {
               const raw = e.target.value.replace(/[^\d]/g, '');
               onParts(raw === '' ? '' : Number(raw));
             }}
-            className="h-5 w-10 rounded-[5px] border border-[var(--input-border)] bg-[var(--input-bg)] px-1 text-center text-[0.7rem] tabular-nums"
+            className="h-5 w-10 rounded-[5px] border border-[var(--input-border)] bg-[var(--input-bg)] px-1 text-center text-[0.7rem] tabular-nums disabled:cursor-not-allowed disabled:opacity-55"
           />
           <span className="text-[0.62rem] text-[var(--faint-fg)]">
             {row.cadence === 'ALTERNATE' ? 'alternate days' : 'days'}
@@ -306,14 +308,17 @@ export function PlanBoard({
     return m;
   }, [cases]);
 
-  const pendingIn = (candidates: PlanRow[]) =>
-    candidates.filter(
-      (r) =>
-        !r.error &&
-        r.remainingPaise > 0n &&
-        REPLANNABLE.has(r.status) &&
-        r.parts !== committedParts.get(r.caseId),
-    );
+  const pendingIn = (candidates: PlanRow[]) => candidates.filter((r) => {
+    const own = rowParts[r.caseId];
+    const band = bandParts[r.band];
+    const explicitlyChosen = own === '' ? null : own ?? (band === '' || band == null ? null : band);
+    return explicitlyChosen != null &&
+      !r.error &&
+      r.givenPaise === 0n &&
+      r.remainingPaise > 0n &&
+      REPLANNABLE.has(r.status) &&
+      explicitlyChosen !== committedParts.get(r.caseId);
+  });
 
   /*
     Applying one band at a time.
@@ -333,14 +338,9 @@ export function PlanBoard({
       .map((r) => r.customerName)
       .join(', ');
     const rest = pending.length > 3 ? ` and ${pending.length - 3} more` : '';
-    const paidAlready = pending.filter((r) => r.givenPaise > 0n).length;
     const ok = window.confirm(
       `Re-plan ${pending.length} case${pending.length === 1 ? '' : 's'} under "${title}" to the ` +
         `number of parts shown?\n\n${names}${rest}\n\n` +
-        (paidAlready > 0
-          ? `${paidAlready} of them already ${paidAlready === 1 ? 'has' : 'have'} money paid out. ` +
-            'What is already given stays given; only the days still to come are re-spread.\n\n'
-          : '') +
         'Cases in the other column are not touched. Every change is recorded against the case ' +
         'and can be re-planned again.',
     );
@@ -380,7 +380,7 @@ export function PlanBoard({
     const own = rowParts[r.caseId];
     if (own !== undefined) return own;
     const col = bandParts[r.band];
-    return col === '' ? '' : (col ?? r.parts);
+    return col === '' ? '' : (col ?? committedParts.get(r.caseId) ?? r.parts);
   };
 
   const bandColumn = (

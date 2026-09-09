@@ -53,7 +53,11 @@ export async function ensureAllocatedLedgerInTx(
     const total = totals.get(row.id)!;
     if (row.paidCashPaise !== total.cash || row.paidOnlinePaise !== total.online) throw mismatch();
   }
-  const live = rows.filter((row) => row.status !== 'SUPERSEDED' && row.status !== 'CANCELLED')
+  // MISSED rows from earlier versions are historical promises whose money has already been
+  // included in the current replacement schedule. Counting them again makes a valid rollover
+  // look over-allocated the next time any payment is edited.
+  const live = rows.filter((row) => row.scheduleVersion === c.scheduleVersion &&
+      row.status !== 'SUPERSEDED' && row.status !== 'CANCELLED')
     .sort((a, b) => a.dueOn.localeCompare(b.dueOn) || a.seq - b.seq);
   const scheduled = live.reduce((sum, row) => sum + row.amountPaise, 0n);
   const legacy = receipts.filter((r) => !r.instalmentId);

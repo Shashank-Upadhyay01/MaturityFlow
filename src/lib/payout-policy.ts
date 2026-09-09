@@ -33,6 +33,14 @@ export const MIN_WINDOW_DAYS = 1;
 /** A customer must never be asked to attend for more than twelve payout days. */
 export const MAX_PAYOUT_PARTS = 12;
 
+/** Slots still available from the plan's original lifetime count. Missed dates consume slots. */
+export function remainingPayoutParts(totalParts: number, paidParts: number, missedParts: number): number {
+  if (![totalParts, paidParts, missedParts].every(Number.isInteger) || totalParts < 1 || paidParts < 0 || missedParts < 0) {
+    throw new PayoutPolicyError('Payout-part counts must be non-negative whole numbers.');
+  }
+  return Math.max(1, totalParts - paidParts - missedParts);
+}
+
 export type Cadence = 'DAILY' | 'ALTERNATE';
 
 /**

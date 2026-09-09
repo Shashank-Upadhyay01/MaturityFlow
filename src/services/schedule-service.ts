@@ -13,9 +13,9 @@ import {
 } from '@/lib/payout-engine';
 import {
   MAX_WINDOW_DAYS,
-  MAX_PAYOUT_PARTS,
   MIN_WINDOW_DAYS,
   payoutPlanFor,
+  remainingPayoutParts,
   type Cadence,
 } from '@/lib/payout-policy';
 import { rebalanceAfter, type EditableInstalment } from '@/lib/schedule-edit';
@@ -180,6 +180,20 @@ export async function persistReschedule({
       ),
     ).for('update');
 
+  // A missed promise consumes one of the case's original lifetime slots even though its money
+  // remains payable. Previous schedule versions retain those rows as MISSED history. Without
+  // counting them here, every reschedule could create the missed slots again and a 12-part case
+  // could quietly grow to 13, 14 or more dates after its deadline was edited.
+  const historicalMissed = await tx
+    .select({ id: payoutInstalments.id })
+    .from(payoutInstalments)
+    .where(and(
+      eq(payoutInstalments.caseId, caseRow.id),
+      sql`${payoutInstalments.scheduleVersion} <> ${caseRow.scheduleVersion}`,
+      eq(payoutInstalments.status, 'MISSED'),
+    ))
+    .for('update');
+
   const settled = live.filter((i) => i.paidCashPaise + i.paidOnlinePaise > 0n);
   const carriedOverPaise = remaining;
 
@@ -239,7 +253,11 @@ export async function persistReschedule({
     cadence: caseRow.cadence as Cadence,
     equalize: true,
     payoutCount,
-    maxPayoutCount: Math.max(1, MAX_PAYOUT_PARTS - settled.length),
+    maxPayoutCount: remainingPayoutParts(
+      caseRow.cadence === 'ALTERNATE' ? 6 : 12,
+      settled.length,
+      historicalMissed.length + missedIds.length,
+    ),
     allowClosedStartDate,
   });
 

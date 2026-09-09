@@ -438,8 +438,9 @@ export async function replanWithWindowAction(
  * goes through the same locked, audited, single-case path the case page uses, one at a time. A
  * batch of forty is forty of those, not one clever UPDATE.
  *
- * Cases that cannot take the change - already paid off, cancelled, outside the actor's branch -
- * fail on their own and come back named. The rest still land.
+ * Once any payment is recorded, the original lifetime part count is fixed. Missed money moves
+ * only across its remaining slots through the automatic rollover path; the planning board cannot
+ * restart that customer's count. Cancelled, settled and out-of-scope cases also fail individually.
  */
 export async function applyPlanAction(
   plans: { caseId: string; parts: number }[],
@@ -469,10 +470,15 @@ export async function applyPlanAction(
     const amounts = new Map(
       (
         await db
-          .select({ id: maturityCases.id, amount: maturityCases.maturityAmountPaise })
+          .select({
+            id: maturityCases.id,
+            amount: maturityCases.maturityAmountPaise,
+            paidCashPaise: maturityCases.paidCashPaise,
+            paidOnlinePaise: maturityCases.paidOnlinePaise,
+          })
           .from(maturityCases)
           .where(inArray(maturityCases.id, ids))
-      ).map((r) => [r.id, r.amount]),
+      ).map((r) => [r.id, r]),
     );
 
     const why = reason?.trim() || 'Re-planned from the planning board';
@@ -482,9 +488,12 @@ export async function applyPlanAction(
       assertCan(actor, 'schedule.reschedule', ref);
       const parts = wanted.get(id);
       if (parts == null) throw new Error('No part count for this row');
-      const amount = amounts.get(id);
-      if (amount == null) throw new Error('Row no longer exists');
-      const windowDays = windowDaysForPayoutCount(BigInt(amount), parts);
+      const caseMoney = amounts.get(id);
+      if (caseMoney == null) throw new Error('Row no longer exists');
+      if (caseMoney.paidCashPaise + caseMoney.paidOnlinePaise > 0n) {
+        throw new Error('This plan has recorded payments. Paid dates are fixed; missed money is redistributed automatically.');
+      }
+      const windowDays = windowDaysForPayoutCount(caseMoney.amount, parts);
       if (windowDays > MAX_WINDOW_DAYS) {
         throw new Error(
           `${parts} parts would need a ${windowDays}-working-day window; ${MAX_WINDOW_DAYS} is the most allowed.`,

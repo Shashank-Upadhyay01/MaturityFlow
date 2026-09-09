@@ -19,6 +19,7 @@ import {
   approvalDateProblem,
   paymentFollowingApproval,
   payoutPlanFor,
+  remainingPayoutParts,
   scheduleAnchorFor,
   strideFor,
   windowDaysForPayoutCount,
@@ -44,6 +45,17 @@ describe('the ₹1 lakh line', () => {
   it('maps cadence to a stride', () => {
     expect(strideFor('DAILY')).toBe(1);
     expect(strideFor('ALTERNATE')).toBe(2);
+  });
+});
+
+describe('lifetime payout slots', () => {
+  it('subtracts both paid and missed dates from the original plan', () => {
+    expect(remainingPayoutParts(12, 2, 2)).toBe(8);
+    expect(remainingPayoutParts(6, 1, 2)).toBe(3);
+  });
+
+  it('leaves one recovery payment when every promised slot has elapsed', () => {
+    expect(remainingPayoutParts(12, 2, 10)).toBe(1);
   });
 });
 

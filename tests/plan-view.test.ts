@@ -171,6 +171,14 @@ describe('a real schedule is shown as fact', () => {
     expect(buildPlanRow(mk(), mixed, cal, TODAY).days).toHaveLength(1);
   });
 
+  it('shows chronological day numbers instead of internal sequence gaps', () => {
+    const r = buildPlanRow(mk(), [
+      inst({ seq: 11, dueOn: '2026-08-20' }),
+      inst({ seq: 14, dueOn: '2026-08-26' }),
+    ], cal, TODAY);
+    expect(r.days.map((d) => d.seq)).toEqual([1, 2]);
+  });
+
   it('shows the actual cash given and preserves the unpaid tender plan', () => {
     const r = buildPlanRow(
       mk({ approvedOn: '2026-09-01', paidCashPaise: '10000000' }),
