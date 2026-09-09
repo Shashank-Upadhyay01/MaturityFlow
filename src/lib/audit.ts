@@ -72,7 +72,6 @@ export type AuditAction =
   | 'document.verified'
   | 'report.exported'
   | 'data.imported'
-  | 'data.branch_operational_purged'
   | 'schedule.adjusted'
   | 'register.day_close_requested'
   | 'register.day_closed'
