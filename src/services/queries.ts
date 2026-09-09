@@ -725,17 +725,17 @@ export async function listRegister(actor: Actor, date = todayISO(), branchId?: s
 }
 
 export async function getRegisterDesk(branchId: string, date: string) {
-  const [cash] = await db
+  const cashQuery = db
     .select()
     .from(branchCashPositions)
     .where(and(eq(branchCashPositions.branchId, branchId), eq(branchCashPositions.date, date)))
     .limit(1);
-  const [day] = await db
+  const dayQuery = db
     .select()
     .from(registerDays)
     .where(and(eq(registerDays.branchId, branchId), eq(registerDays.date, date)))
     .limit(1);
-  const [paidToday] = await db
+  const paidTodayQuery = db
     .select({
       n: sql<number>`COUNT(*)::int`,
       total: sql<string>`COALESCE(SUM(${payoutTransactions.totalPaise}),0)`,
@@ -751,6 +751,7 @@ export async function getRegisterDesk(branchId: string, date: string) {
         sql`${payoutTransactions.reversedAt} IS NULL`,
       ),
     );
+  const [[cash], [day], [paidToday]] = await Promise.all([cashQuery, dayQuery, paidTodayQuery]);
   return {
     cashInHandPaise: cash?.openingCashPaise ?? 0n,
     plannedOnlinePaise: cash?.plannedOnlinePaise ?? 0n,
@@ -1784,7 +1785,7 @@ export async function getFormOptions(actor: Actor) {
   const scope = ROLE_WRITE_SCOPE[activeRole(actor.role)];
   const branchFilter = scope === 'ALL' ? undefined : eq(branches.id, actor.branchId ?? '__none__');
 
-  const allBranches = await db
+  const branchQuery = db
     .select({
       id: branches.id,
       code: branches.code,
@@ -1805,7 +1806,7 @@ export async function getFormOptions(actor: Actor) {
         ? eq(agents.branchId, actor.branchId ?? '__none__')
         : undefined;
 
-  const agentList = await db
+  const agentQuery = db
     .select({ id: agents.id, code: agents.code, name: agents.name, branchId: agents.branchId })
     .from(agents)
     .where(and(eq(agents.isActive, true), ...(agentFilter ? [agentFilter] : [])))
@@ -1818,7 +1819,7 @@ export async function getFormOptions(actor: Actor) {
         ? eq(customers.branchId, actor.branchId ?? '__none__')
         : undefined;
 
-  const customerList = await db
+  const customerQuery = db
     .select({
       id: customers.id,
       name: customers.name,
@@ -1831,6 +1832,12 @@ export async function getFormOptions(actor: Actor) {
     .where(customerFilter)
     .orderBy(asc(customers.name))
     .limit(2000);
+
+  const [allBranches, agentList, customerList] = await Promise.all([
+    branchQuery,
+    agentQuery,
+    customerQuery,
+  ]);
 
   const branchList = allBranches.filter((b) => b.code !== 'HO' || allBranches.length === 1);
 

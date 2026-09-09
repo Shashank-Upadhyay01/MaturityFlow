@@ -102,7 +102,7 @@ export const getSession = cache(async (): Promise<SessionUser | null> => {
   if (!payload.sub || !payload.jti) return null;
 
   // The token being valid is not enough — the session must still be live.
-  const [row] = await db
+  const sessionQuery = db
     .select({
       userId: users.id,
       name: users.name,
@@ -133,9 +133,10 @@ export const getSession = cache(async (): Promise<SessionUser | null> => {
     )
     .limit(1);
 
-  if (!row || !row.isActive || row.deletedAt) return null;
+  const [sessionRows, org] = await Promise.all([sessionQuery, loadOrgSettings()]);
+  const [row] = sessionRows;
 
-  const org = await loadOrgSettings();
+  if (!row || !row.isActive || row.deletedAt) return null;
 
   return {
     id: row.userId,

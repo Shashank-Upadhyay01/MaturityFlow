@@ -61,8 +61,10 @@ export default async function MaturitiesPage({
   // This is an explicit audited write phase before the read: elapsed promises are historical
   // MISSED rows and their unpaid balance is redistributed over the remaining scheduled dates.
   if (registerDate === today && branch && canTypeRegister(session.role) && roleCan(session.role, 'schedule.reschedule')) {
-    await autoRepairUnsetSchedules(session, branch.id, today);
-    await rollOverElapsedSchedules(session, branch.id, today);
+    await Promise.all([
+      autoRepairUnsetSchedules(session, branch.id, today),
+      rollOverElapsedSchedules(session, branch.id, today),
+    ]);
   }
   const [rows, loadedDesk] = await Promise.all([
     listRegister(actor, registerDate, picked.branchId),
