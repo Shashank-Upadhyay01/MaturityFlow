@@ -993,6 +993,10 @@ export function RegisterSheet(props: {
   /** A cell the sheet has been asked to put the caret in once its row exists in the DOM. */
   const pendingFocusRef = useRef<{ r: number; column: string; shift: boolean } | null>(null);
   const draggingRef = useRef(false);
+  // Clicking either Taken/Not taken blurs the Actual paid input before the click opens its
+  // confirmation. Admins can also commit that input on blur, so without this guard one gesture
+  // first replaces today's total and then, after refresh, records the scheduled remainder too.
+  const markPointerRowRef = useRef<string | null>(null);
 
   /*
     The selected block, in sheet coordinates.
@@ -4196,6 +4200,10 @@ export function RegisterSheet(props: {
                             onChange={(v) => setDraft((s) => ({ ...s, [r.id]: { ...s[r.id], paidTodayActual: v.replace(/[^0-9]/g, '') } }))}
                             onCommit={(v) => {
                               if (!props.canCorrectPay) return;
+                              if (markPointerRowRef.current === r.id) {
+                                markPointerRowRef.current = null;
+                                return;
+                              }
                               if (v.trim() === rupeesStr(paidView.total)) return;
                               const total = tryParseRupeesToPaise(v || '0') ?? 0n;
                               const currentOnline = tryParseRupeesToPaise(
@@ -4245,7 +4253,10 @@ export function RegisterSheet(props: {
                       </td>
                     ))}
                     <td className={cn(td, 'print:hidden')} colSpan={2}>
-                      <div className="flex items-center justify-center gap-1">
+                      <div
+                        className="flex items-center justify-center gap-1"
+                        onPointerDownCapture={() => { markPointerRowRef.current = r.id; }}
+                      >
                         <TakenMark
                           state={markTarget.state}
                           canMark={props.canPay}
