@@ -25,6 +25,7 @@ import { persistSchedule, persistReschedule, persistReplanWindow } from './sched
 import { ensureAllocatedLedgerInTx } from './payout-ledger';
 import { assertCan, inScope, roleCan } from '@/lib/rbac';
 import { reconcileInstalmentLegs } from '@/lib/payment-rules';
+import { generateSchedule } from '@/lib/payout-engine';
 
 export class WorkflowError extends Error {
   constructor(
@@ -650,9 +651,22 @@ export async function rollOverElapsedSchedules(actor: SessionUser, branchId: str
         if (!elapsed.length || !future.length) return;
         const version = locked.scheduleVersion + 1;
         const remaining = locked.maturityAmountPaise - locked.paidCashPaise - locked.paidOnlinePaise;
-        const q = remaining / BigInt(future.length);
-        let residue = remaining % BigInt(future.length);
-        if (q <= 0n) throw new WorkflowError('No positive payment can be placed on the remaining dates.', 'NOT_SCHEDULABLE');
+        if (remaining <= 0n) throw new WorkflowError('No positive payment can be placed on the remaining dates.', 'NOT_SCHEDULABLE');
+        const policy = await getBranchPolicy(locked.branchId, tx);
+        // Keep the remaining dates, but derive their amounts through the same rounding engine used
+        // for every other schedule. Dividing exact paise here produced values such as ₹13,730.67
+        // while the case still advertised a ₹1,000 rounding step.
+        const redistributed = generateSchedule({
+          totalPaise: remaining,
+          days: future.length,
+          roundingPaise: locked.roundingPaise,
+          startDate: future[0].dueOn,
+          calendar: policy.calendar,
+          preservePayoutCount: true,
+        }).installments;
+        if (redistributed.length !== future.length) {
+          throw new WorkflowError('The remaining payment dates could not be preserved.', 'NOT_SCHEDULABLE');
+        }
         await tx.update(payoutInstalments).set({ status: 'MISSED', isFinal: false, updatedAt: new Date() })
           .where(inArray(payoutInstalments.id, elapsed.map((r) => r.id)));
         const paidRows = rows.filter((r) => r.status === 'PAID');
@@ -660,8 +674,7 @@ export async function rollOverElapsedSchedules(actor: SessionUser, branchId: str
           .where(inArray(payoutInstalments.id, paidRows.map((r) => r.id)));
         for (let i = 0; i < future.length; i++) {
           const row = future[i];
-          const amount = q + (residue > 0n ? 1n : 0n);
-          if (residue > 0n) residue--;
+          const amount = redistributed[i].amountPaise;
           const plannedCash = locked.cashPolicy === 'ONLINE_ONLY' ? 0n
             : locked.cashPolicy === 'CASH_CAP' ? (amount < (locked.cashCapPerDayPaise ?? 0n) ? amount : locked.cashCapPerDayPaise ?? 0n)
               : amount;
