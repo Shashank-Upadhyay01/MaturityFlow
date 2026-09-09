@@ -15,8 +15,8 @@ export default async function PurgeAzamgarhPage() {
   return <div className="space-y-5">
     <PageHeader eyebrow="Administration" title="Clear Azamgarh register" description="Prepare the Azamgarh branch for a clean customer and maturity re-import." />
     <Callout tone="danger" title="This permanently clears customer and maturity records">
-      This deletes Azamgarh customers, forecasts, cases, schedules, recorded payouts, case documents,
-      case history and saved Register days. User accounts, agent profiles, the complete Daily Cashbook,
+      This deletes Azamgarh agents, customers, forecasts, cases, schedules, recorded payouts, case documents,
+      case history and saved Register days. User login accounts, the complete Daily Cashbook,
       cash positions, holidays, branch settings and the append-only audit trail are preserved.
     </Callout>
     <Glass className="space-y-4 p-5">

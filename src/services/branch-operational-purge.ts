@@ -8,6 +8,7 @@ import { writeAudit } from '@/lib/audit';
 
 type PurgeCounts = {
   cases: number;
+  agents: number;
   customers: number;
   forecasts: number;
   transactions: number;
@@ -17,7 +18,7 @@ type PurgeCounts = {
 };
 
 /**
- * Remove only the customer/maturity register for AZM. Staff accounts, agent profiles,
+ * Remove the customer/maturity register and agent directory for AZM. Staff login accounts,
  * cashbook days and children, cash positions, holidays, branch settings and audit history stay.
  */
 export async function purgeAzamgarhOperationalData(
@@ -76,6 +77,11 @@ export async function purgeAzamgarhOperationalData(
         where branch_id = ${branch.id}
         returning id
       ),
+      deleted_agents as (
+        delete from agents
+        where branch_id = ${branch.id}
+        returning id
+      ),
       deleted_register_days as (
         delete from register_days
         where branch_id = ${branch.id}
@@ -87,6 +93,7 @@ export async function purgeAzamgarhOperationalData(
       )
       select
         (select count(*)::int from deleted_cases) as cases,
+        (select count(*)::int from deleted_agents) as agents,
         (select count(*)::int from deleted_customers) as customers,
         (select count(*)::int from deleted_forecasts) as forecasts,
         (select count(*)::int from deleted_transactions) as transactions,
@@ -97,6 +104,7 @@ export async function purgeAzamgarhOperationalData(
     const row = result.rows[0] as Record<string, number>;
     const counts: PurgeCounts = {
       cases: Number(row.cases),
+      agents: Number(row.agents),
       customers: Number(row.customers),
       forecasts: Number(row.forecasts),
       transactions: Number(row.transactions),
@@ -110,9 +118,9 @@ export async function purgeAzamgarhOperationalData(
       entity: 'Branch',
       entityId: branch.id,
       branchId: branch.id,
-      summary: `Azamgarh customer and maturity register cleared by administrator. Cashbook, users, agents and branch setup preserved.`,
+      summary: `Azamgarh agents, customers and maturity register cleared by administrator. Cashbook, user accounts and branch setup preserved.`,
       before: counts,
-      after: { cases: 0, customers: 0, forecasts: 0, transactions: 0, instalments: 0, registerDays: 0 },
+      after: { cases: 0, agents: 0, customers: 0, forecasts: 0, transactions: 0, instalments: 0, registerDays: 0 },
       ...meta,
     });
     return counts;
