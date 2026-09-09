@@ -62,8 +62,19 @@ export async function ensureAllocatedLedgerInTx(
   const scheduled = live.reduce((sum, row) => sum + row.amountPaise, 0n);
   const legacy = receipts.filter((r) => !r.instalmentId);
   const unallocated = legacy.reduce((sum, row) => sum + row.totalPaise, 0n);
+  const historicalPaid = receipts.reduce((sum, receipt) => {
+    if (!receipt.instalmentId) return sum;
+    const row = byId.get(receipt.instalmentId);
+    return row && row.scheduleVersion !== c.scheduleVersion && row.status === 'MISSED'
+      ? sum + receipt.totalPaise
+      : sum;
+  }, 0n);
   const missingHistory = c.maturityAmountPaise - scheduled;
-  if (missingHistory !== 0n && missingHistory !== unallocated) throw mismatch();
+  // A rollover carries only the unpaid balance into the new version. Money already paid against
+  // an older row remains attached to that historical MISSED promise, so it is intentionally absent
+  // from the current version's planned total. Treat it exactly like an unallocated legacy receipt
+  // when proving that the current schedule plus payment history still covers the maturity amount.
+  if (missingHistory !== 0n && missingHistory !== unallocated + historicalPaid) throw mismatch();
   const allocatedIds = new Map<string, string[]>();
   if (!legacy.length) return allocatedIds;
 
