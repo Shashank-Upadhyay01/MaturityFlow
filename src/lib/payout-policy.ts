@@ -2,7 +2,7 @@
  * payout-policy.ts — who gets paid how often.
  *
  * Deliberately NOT part of payout-engine.ts. The engine is mechanical arithmetic and must stay
- * policy-free: if the ₹1 lakh rule ever moves, that must not be able to reach the code that
+ * policy-free: if the amount bands ever move, that must not be able to reach the code that
  * splits money. Pure, no I/O, bigint-only.
  */
 
@@ -140,6 +140,19 @@ export function isPriorityCase(maturityAmountPaise: bigint): boolean {
   return maturityAmountPaise >= LARGE_CASE_THRESHOLD_PAISE;
 }
 
+/**
+ * Recommended visit count by maturity amount. A custom plan may still use any 1–12 count.
+ * The final instalment absorbs the exact paise remainder, so these bands never lose money.
+ */
+export function recommendedPayoutDaysFor(maturityAmountPaise: bigint): number {
+  if (maturityAmountPaise <= 0n) throw new PayoutPolicyError('Maturity amount must be positive.');
+  if (maturityAmountPaise <= 1_000_000n) return 1;  // ₹10,000
+  if (maturityAmountPaise <= 2_500_000n) return 2;  // ₹25,000
+  if (maturityAmountPaise <= 5_000_000n) return 3;  // ₹50,000
+  if (maturityAmountPaise < LARGE_CASE_THRESHOLD_PAISE) return 4;
+  return 12;
+}
+
 export function cadenceFor(maturityAmountPaise: bigint): Cadence {
   return isPriorityCase(maturityAmountPaise) ? 'DAILY' : 'ALTERNATE';
 }
@@ -253,7 +266,7 @@ export function payoutPlanFor(
  * Window length that yields `payoutDays` instalments at this amount's cadence.
  *
  * The sheet's Days column is the number of days the customer can withdraw, not the processing
- * gap. ₹1 lakh+ at 12 → window 15 daily; below ₹1 lakh at 6 → alternate days inside that window.
+ * gap. ₹1 lakh+ at 12 → window 15 daily; recommended smaller plans use 1–4 alternate visits.
  */
 export function windowDaysForPayoutCount(maturityAmountPaise: bigint, payoutDays: number): number {
   if (!Number.isInteger(payoutDays) || payoutDays < 1 || payoutDays > MAX_PAYOUT_PARTS) {

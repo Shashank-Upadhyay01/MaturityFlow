@@ -24,9 +24,10 @@ import { cn } from '@/lib/utils';
  * different things depending on which sheet the clerk happened to have open. Both render this
  * now; all either screen still decides is what the click does afterwards.
  *
- * Neither mark acts on the click any more. Each opens the confirmation below first, and the
- * screen's callback only runs once the clerk has confirmed it — so the guard cannot come off one
- * sheet and stay on the other, which is exactly how the two drifted the first time.
+ * An ordinary cash Taken is one deliberate click: the schedule already names the customer,
+ * date and amount, and the locked audited server path remains the authority. Online payments
+ * still open the dialog because the transfer reference is required. Not taken is reversible
+ * and also acts in one click; overdue rows are derived automatically even when it is never used.
  *
  * A recorded payout is never reversed from here. Once the day is paid both marks go inert and
  * say where the correction is made instead, because un-ticking money that has already left the
@@ -130,7 +131,8 @@ export function TakenMark({
         onClick={(event) => {
           if (isSelectionGesture(event)) return;
           if (takenOpensPaymentDialog) onTaken(null);
-          else ask('taken');
+          else if (needsReference) ask('taken');
+          else onTaken(null);
         }}
         className={cn(
           MARK,
@@ -156,7 +158,7 @@ export function TakenMark({
         }
         onClick={(event) => {
           if (isSelectionGesture(event)) return;
-          ask(notTaken ? 'clearNotTaken' : 'notTaken');
+          onNotTaken(notTaken);
         }}
         className={cn(
           MARK,

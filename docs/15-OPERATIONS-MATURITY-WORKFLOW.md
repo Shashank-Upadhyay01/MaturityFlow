@@ -1,6 +1,6 @@
 # Operations maturity workflow
 
-## The 15-day rule
+## The maturity and payout clock
 
 The customer-facing clock starts on the maturity date:
 
@@ -9,9 +9,9 @@ The customer-facing clock starts on the maturity date:
 3. Day 3 — Operations records its review. If nobody records it, the case is listed under
    **Maturities → Not reviewed** but payment is never delayed.
 4. Day 4 — first payout date.
-5. The 15-day policy window contains three processing days and twelve payout days. The existing
-   amount-based cadence still applies: cases at or above ₹1,00,000 pay every working day; smaller
-   cases pay on alternate working days inside the same window.
+5. The recommended payout count is selected from the maturity amount: one visit through ₹10,000,
+   two through ₹25,000, three through ₹50,000, four through ₹99,999, and twelve from ₹1,00,000.
+   Smaller cases pay on alternate working days; ₹1 lakh and above pays every working day.
 
 `approvedOn` is the schedule anchor retained for compatibility. It is not the Operations review
 date. Human acknowledgement lives only in `opsReviewedOn`, `opsReviewedAt`, and

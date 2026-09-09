@@ -41,7 +41,7 @@ export const TEMPLATE_DERIVED_NOTE: Record<string, string> = {
   Remaining: 'Maturity amount minus what has actually been paid. Missed days never reduce it.',
   Paid: 'Everything handed over on this case so far.',
   'Missed Amount': 'Earlier due days the customer did not collect.',
-  "Today's Amount": 'The fixed daily instalment: amount \u00f7 12 at \u20b91 lakh and over, \u00f7 6 below it.',
+  "Today's Amount": 'The scheduled instalment for this date, using the recommended amount band or an authorised custom plan.',
   'Total Amount': "Missed amount plus today's \u2014 what the customer can collect now.",
   'Actual Paid': 'What was handed over today. Typed at the counter, not here.',
 };
@@ -117,8 +117,8 @@ export async function buildRegisterTemplate({
   ]);
   ex.addRow([]);
   ex.addRow([
-    'Type only the blue columns. On \u20b91,35,000 the register splits 12 daily payouts of ' +
-      '\u20b911,250; below \u20b91 lakh it is 6 payouts on alternate days.',
+    'Type only the blue columns. Recommended visits: up to \u20b910,000 = 1; up to \u20b925,000 = 2; ' +
+      'up to \u20b950,000 = 3; below \u20b91 lakh = 4 alternate; \u20b91 lakh and above = 12 daily.',
   ]);
   ex.getRow(4).font = { italic: true, color: { argb: 'FF7F7F7F' } };
   ex.columns.forEach((c, i) => {

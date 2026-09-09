@@ -19,6 +19,7 @@ import {
   approvalDateProblem,
   paymentFollowingApproval,
   payoutPlanFor,
+  recommendedPayoutDaysFor,
   remainingPayoutParts,
   scheduleAnchorFor,
   strideFor,
@@ -56,6 +57,27 @@ describe('lifetime payout slots', () => {
 
   it('leaves one recovery payment when every promised slot has elapsed', () => {
     expect(remainingPayoutParts(12, 2, 10)).toBe(1);
+  });
+});
+
+describe('recommended payout visits by amount', () => {
+  it.each([
+    [1n, 1],
+    [1_000_000n, 1],
+    [1_000_001n, 2],
+    [2_500_000n, 2],
+    [2_500_001n, 3],
+    [5_000_000n, 3],
+    [5_000_001n, 4],
+    [9_999_999n, 4],
+    [10_000_000n, 12],
+    [10_000_001n, 12],
+  ])('maps %s paise to %s visit(s)', (amount, visits) => {
+    expect(recommendedPayoutDaysFor(amount)).toBe(visits);
+  });
+
+  it('rejects a non-positive maturity', () => {
+    expect(() => recommendedPayoutDaysFor(0n)).toThrow(PayoutPolicyError);
   });
 });
 

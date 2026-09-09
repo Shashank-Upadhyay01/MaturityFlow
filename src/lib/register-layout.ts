@@ -115,7 +115,7 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
   },
   days: {
     id: 'days', label: 'Days', excel: 'Window Days', right: true, w: 'w-[3.25rem]', priority: 6,
-    hint: 'Payout days the customer can withdraw. ₹1 lakh+ defaults to 12 daily; below that, 6 alternate. Type any count to split across that many days.',
+    hint: 'Recommended visits: ≤₹10k: 1, ≤₹25k: 2, ≤₹50k: 3, below ₹1 lakh: 4 alternate, ₹1 lakh+: 12 daily. Type any 1–12 count for a custom plan.',
   },
   perDay: {
     id: 'perDay', label: 'Recommended', excel: 'Recommended Payment', right: true, w: 'w-[6.2rem]', priority: 6,

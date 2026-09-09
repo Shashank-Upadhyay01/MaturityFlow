@@ -4077,7 +4077,7 @@ export function RegisterSheet(props: {
                             ariaLabel={`${c.label} for ${r.customerName}`}
                             className="text-center tabular-nums"
                             disabled={!edit}
-                            title="Payout days — 12 daily if ₹1 lakh+, 6 alternate if below. Type a custom count to split across that many days."
+                            title="Recommended visits — ≤₹10k: 1, ≤₹25k: 2, ≤₹50k: 3, below ₹1 lakh: 4 alternate, ₹1 lakh+: 12 daily. Type any 1–12 count for a custom plan."
                             value={d(
                               r.id,
                               'payoutDaysCount',

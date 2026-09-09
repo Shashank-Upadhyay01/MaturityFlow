@@ -28,7 +28,7 @@ describe('maturity forecast payment projection', () => {
     const daily = aggregateForecastPayments(instalments);
 
     expect(instalments.filter((row) => row.forecastId === 'large')).toHaveLength(10);
-    expect(instalments.filter((row) => row.forecastId === 'small')).toHaveLength(5);
+    expect(instalments.filter((row) => row.forecastId === 'small')).toHaveLength(4);
     expect(daily[0]!.dueOn).toBe('2026-09-01');
     expect(daily.at(-1)!.dueOn <= AUGUST_2026_PAYOUT_END).toBe(true);
     expect(daily.map((day) => day.dueOn)).not.toContain('2026-09-05');
@@ -68,17 +68,17 @@ describe('maturity forecast payment projection', () => {
       null as bigint | null,
     )!;
 
-    // Twenty small cases are split into six alternate payouts each.  The two open-day tracks
-    // overlap for the middle five dates; the edge dates carry one track only.
-    expect(instalments).toHaveLength(20 * 6);
-    expect(daily.length).toBe(7);
+    // ₹90,000 cases use the four-visit band. The two alternate-day tracks overlap in the middle
+    // and keep the first and final days at half the customer count.
+    expect(instalments).toHaveLength(20 * 4);
+    expect(daily.length).toBe(5);
     expect(daily[0]?.dueOn).toBe('2026-09-04');
-    expect(daily.at(-1)?.dueOn).toBe('2026-09-18');
+    expect(daily.at(-1)?.dueOn).toBe('2026-09-14');
     expect(daily.every((day) => day.cases > 0)).toBe(true);
     expect(daily[0]?.cases).toBe(10);
     expect(daily.at(-1)?.cases).toBe(10);
-    expect(busiest).toBe(30_000_000n);
-    expect(quietest).toBe(15_000_000n);
+    expect(busiest).toBe(46_000_000n);
+    expect(quietest).toBe(22_000_000n);
     expect(daily.reduce((sum, day) => sum + day.totalPaise, 0n)).toBe(180_000_000n);
   });
 });

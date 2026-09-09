@@ -5,15 +5,17 @@ Pure, deterministic, dependency-free, `BigInt`-only. Runs identically on client 
 
 ## September 2026 payout and override update
 
-The recommended 15-day window reserves three intake days and produces 12 daily payments
-for amounts at or above ₹1,00,000, or six payments below that threshold. Intake days are
-not added again after approval. Automatic payment starts the next open day after approval;
-an explicitly entered payment date is retained. Custom windows may contain one payment.
+The recommended plan reserves three intake days, then selects the visit count from the maturity
+amount: one visit through ₹10,000, two through ₹25,000, three through ₹50,000, four through
+₹99,999, and twelve from ₹1,00,000 upward. Sub-lakh visits remain on alternate working days;
+₹1 lakh and above pays every working day. Intake days are not added again after approval.
+Automatic payment starts the next open day after approval; an explicitly entered payment date
+is retained. An authorised custom plan may use any one to twelve payments.
 
-Alternate payments now use a two-calendar-day gap from the preceding payment, then roll
-forward to an open day. For example, ₹60,000 in six ₹10,000 payments starting Monday
-7 September 2026, with Sundays and second/fourth Saturdays closed and no holidays, falls
-on 7, 9, 11, 14, 16 and 18 September. The Sunday after Friday's payment rolls to Monday.
+Alternate payments use a two-calendar-day gap from the preceding payment, then roll forward to
+an open day. For example, ₹60,000 is recommended as four ₹15,000 payments. Starting Monday
+7 September 2026, with Sundays and second/fourth Saturdays closed and no holidays, they fall on
+7, 9, 11 and 14 September. The Sunday after Friday's payment rolls to Monday.
 ₹1,20,000 uses twelve ₹10,000 working-day payments by default. A custom one-part plan
 pays the full ₹1,20,000 on its chosen date. All three schedules sum exactly to maturity.
 
@@ -147,7 +149,7 @@ wrong, the schedule refuses to exist rather than paying out a wrong number. **IN
 ## 2a. Cadence and the processing window
 
 `src/lib/payout-policy.ts` decides the *shape* of a schedule; the engine only executes it. The
-engine never learns that the ₹1 lakh rule exists — that separation is why a change to the rule
+engine never learns that the amount-band policy exists — that separation is why a change to the rule
 cannot reach the code that splits money.
 
 Let `W0` be the anchor from `scheduleAnchorFor()` — already rolled onto a working day. Working days are counted
@@ -158,19 +160,28 @@ W0  W1  W2 │ W3 ........................ W14
 └ processing┘ └──── 12 withdrawal days ────┘   deadline = W14
 ```
 
-- The window is **15 working days**: 3 processing + 12 payout. Since ADR 0005 the three
+- A large-case default window is **15 working days**: 3 processing + 12 payout. Since ADR 0005 the three
   processing days are spent as *calendar* days before the anchor, by `scheduleAnchorFor()`, so the
   service passes `startOffsetWorkingDays: 0` and `W0` is the first paying day. Passing both would
-  count the same gap twice. `payoutPlanFor()` still returns 12 daily / 6 alternate — the money
-  split is unchanged.
-- **`>= ₹1,00,000`** — `DAILY`, stride 1: payouts on `W3…W14`, 12 instalments.
-- **`< ₹1,00,000`** — `ALTERNATE`, stride 2: payouts on `W3, W5, W7, W9, W11, W13`, 6 instalments,
-  finishing one working day inside the same deadline.
+  count the same gap twice.
+
+Recommended visit counts now follow the maturity amount:
+
+| Maturity | Recommended visits | Cadence |
+|---|---:|---|
+| Up to ₹10,000 | 1 | one full payment |
+| ₹10,001–₹25,000 | 2 | alternate working days |
+| ₹25,001–₹50,000 | 3 | alternate working days |
+| ₹50,001–₹99,999.99 | 4 | alternate working days |
+| ₹1,00,000 and above | 12 | every working day |
+
+`recommendedPayoutDaysFor()` owns these bands. `windowDaysForPayoutCount()` turns the visit count
+into its stored working-day window, and `payoutPlanFor()` decodes that window. Administrators may
+still select any custom count from 1 through 12; the bands are recommendations, not locks.
 
 The threshold is inclusive: exactly ₹1,00,000 is a large case. `windowDays` is the **total**
-window, not the payout count — `payoutDays = windowDays - 3`, so a 20-day window gives 17 daily
-payouts or 9 alternate ones. The shortest usable window is `MIN_WINDOW_DAYS` (4); anything less
-leaves no day to pay on and `payoutPlanFor` throws rather than inventing a one-day schedule.
+window, not the payout count. The shortest custom window is one day, which supports paying the
+entire balance at once when an authorised operator chooses it.
 
 Cadence is persisted on `maturity_cases.cadence` when the case is scheduled and never re-derived, because the
 maturity amount is editable and a later correction must not move a live case onto a different

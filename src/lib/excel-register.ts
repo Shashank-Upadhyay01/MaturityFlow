@@ -2,7 +2,7 @@
  * Parse / emit the branch maturity register (the Excel they use today).
  * Dates are India (day/month/year). Money is rupees as number, converted to paise by the caller.
  */
-import { isPriorityCase, windowDaysForPayoutCount } from './payout-policy';
+import { recommendedPayoutDaysFor, windowDaysForPayoutCount } from './payout-policy';
 import { DEFAULT_REGISTER_LAYOUT, excelHeadersForLayout } from './register-layout';
 import { parseISODate, type ISODate } from './working-days';
 import { parseRupeesToPaise } from './money';
@@ -55,13 +55,13 @@ export const REGISTER_IMPORT_HEADERS = REGISTER_TEMPLATE_HEADERS;
 /**
  * Payout days a maturity gets when the sheet does not say.
  *
- * The office rule, and the only one: ₹1 lakh and over pays every working day for twelve days;
- * below that, six payouts on alternate days. The template carries no Window Days column at all —
+ * Small maturities use fewer visits; above ₹1 lakh uses twelve working-day payments. The
+ * template carries no Window Days column at all —
  * the amount already decides it, and a column the branch has to fill in is one they can fill in
  * wrongly.
  */
 export function defaultPayoutDaysFor(maturityPaise: bigint): number {
-  return isPriorityCase(maturityPaise) ? 12 : 6;
+  return recommendedPayoutDaysFor(maturityPaise);
 }
 
 /** The working-day window that yields those payouts, from a rupee figure off the sheet. */

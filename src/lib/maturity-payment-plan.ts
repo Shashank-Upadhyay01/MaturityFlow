@@ -9,6 +9,8 @@ import {
   firstPayoutOn,
   isPriorityCase,
   payoutPlanFor,
+  recommendedPayoutDaysFor,
+  windowDaysForPayoutCount,
 } from './payout-policy';
 import {
   addDays,
@@ -167,17 +169,20 @@ export function projectForecastPayments(
         `No open payout day remains for ${forecast.id} inside ${window.startsOn}–${window.endsOn}.`,
       );
     }
-    // A forecast follows the same fixed customer rule as an activated case: twelve payouts at
-    // or above ₹1 lakh, six on alternate working days below it.  The cohort window may contain
-    // fewer eligible slots (the August test window intentionally has only ten/five), so shorten
-    // the plan to fit rather than silently turning a small case into fifteen payments.
-    const policyPlan = payoutPlanFor(forecast.amountPaise, 15);
+    // A forecast follows the same amount-band recommendation as an activated case. The cohort
+    // window may contain fewer eligible slots (the August test window is deliberately short),
+    // so shorten the plan to fit rather than extending the authorised deadline.
+    const recommendedDays = recommendedPayoutDaysFor(forecast.amountPaise);
+    const policyPlan = payoutPlanFor(
+      forecast.amountPaise,
+      windowDaysForPayoutCount(forecast.amountPaise, recommendedDays),
+    );
     let availablePayoutSlots = availableWorkingDays;
     if (!isPriorityCase(forecast.amountPaise)) {
       availablePayoutSlots = 0;
       for (
         let date = startDate;
-        date <= window.endsOn && availablePayoutSlots < 6;
+        date <= window.endsOn && availablePayoutSlots < recommendedDays;
         date = nextWorkingDay(addDays(date, 2), policy.calendar)
       ) {
         availablePayoutSlots += 1;
