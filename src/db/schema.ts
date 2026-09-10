@@ -417,7 +417,7 @@ export const maturityCases = pgTable(
     paidOnlinePaise: bigint('paid_online_paise', { mode: 'bigint' }).notNull().default(sql`0`),
 
     /**
-     * A final balance of at most ₹100 that the bank explicitly waives. This is not a payout:
+     * The maturity amount's final remainder below ₹100 that the bank explicitly waives. This is not a payout:
      * actual cash/online totals remain receipt-derived, while settlement still reconciles as
      * paid + adjustment = maturity.
      */

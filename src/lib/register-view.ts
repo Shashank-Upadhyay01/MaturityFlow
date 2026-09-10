@@ -59,7 +59,7 @@ export const TAB_HINT: Record<RegisterTab, string> = {
   due: 'Customers the schedule expects at the counter today',
   today: 'Every case that still owes money',
   missed: 'Customers carrying a missed amount — days that came due and were not collected',
-  settled: 'Completed cases where ₹100 or less was waived as an audited rounding settlement',
+  settled: 'Completed cases where the maturity remainder below ₹100 was waived as an audited rounding settlement',
   pending: 'Rows typed into the sheet that have not been submitted, so nothing is scheduled yet',
   all: 'Every row in the register, settled or not',
 };

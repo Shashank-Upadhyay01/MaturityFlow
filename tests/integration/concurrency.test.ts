@@ -162,12 +162,12 @@ async function caseRow(caseId: string) {
 }
 
 describe('two cashiers, one instalment', () => {
-  it('completes a case with an audited small-balance adjustment without inventing a receipt', async () => {
-    const caseId = await makeApprovedCase('1000', 4);
+  it('waives only the maturity remainder below ₹100 without inventing a receipt', async () => {
+    const caseId = await makeApprovedCase('1037', 4);
     const inst = await firstInstalment(caseId);
     const result = await recordPayout(cashierA, {
       instalmentId: inst.id,
-      cashPaise: rupees('950'),
+      cashPaise: rupees('1000'),
       onlinePaise: 0n,
     });
     const c = await caseRow(caseId);
@@ -178,9 +178,9 @@ describe('two cashiers, one instalment', () => {
     expect(result.caseCompleted).toBe(true);
     expect(result.remainingPaise).toBe(0n);
     expect(c.status).toBe('COMPLETED');
-    expect(c.paidCashPaise).toBe(rupees('950'));
-    expect(c.settlementAdjustmentPaise).toBe(rupees('50'));
-    expect(BigInt(receiptTotal.total)).toBe(rupees('950'));
+    expect(c.paidCashPaise).toBe(rupees('1000'));
+    expect(c.settlementAdjustmentPaise).toBe(rupees('37'));
+    expect(BigInt(receiptTotal.total)).toBe(rupees('1000'));
   });
 
   it('cannot both pay the same instalment in full', async () => {

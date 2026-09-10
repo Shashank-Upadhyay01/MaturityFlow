@@ -26,7 +26,7 @@ import { ensureAllocatedLedgerInTx } from './payout-ledger';
 import { assertCan, inScope, roleCan } from '@/lib/rbac';
 import { reconcileInstalmentLegs } from '@/lib/payment-rules';
 import { generateSchedule } from '@/lib/payout-engine';
-import { SMALL_BALANCE_SETTLEMENT_PAISE, settlementState } from '@/lib/settlement';
+import { SETTLEMENT_ROUNDING_UNIT_PAISE, settlementState } from '@/lib/settlement';
 
 export class WorkflowError extends Error {
   constructor(
@@ -727,7 +727,7 @@ export async function rollOverElapsedSchedules(actor: SessionUser, branchId: str
 }
 
 /**
- * Close legacy/live cases whose only outstanding amount is the approved ≤₹100 rounding residue.
+ * Close legacy/live cases whose only outstanding amount is the maturity's sub-₹100 remainder.
  * This is idempotent and audited; actual receipt totals are never changed.
  */
 export async function settleSmallBalances(actor: SessionUser, branchId: string) {
@@ -738,7 +738,8 @@ export async function settleSmallBalances(actor: SessionUser, branchId: string) 
     eq(maturityCases.branchId, branchId),
     inArray(maturityCases.status, ['APPROVED', 'IN_PROGRESS']),
     eq(maturityCases.settlementAdjustmentPaise, 0n),
-    sql`${maturityCases.maturityAmountPaise} - ${maturityCases.paidCashPaise} - ${maturityCases.paidOnlinePaise} BETWEEN 1 AND ${SMALL_BALANCE_SETTLEMENT_PAISE}`,
+    sql`${maturityCases.maturityAmountPaise} % ${SETTLEMENT_ROUNDING_UNIT_PAISE} > 0`,
+    sql`${maturityCases.maturityAmountPaise} - ${maturityCases.paidCashPaise} - ${maturityCases.paidOnlinePaise} = ${maturityCases.maturityAmountPaise} % ${SETTLEMENT_ROUNDING_UNIT_PAISE}`,
   ));
   let changed = 0;
   let failed = 0;

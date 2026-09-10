@@ -1,27 +1,35 @@
 import { describe, expect, it } from 'vitest';
 
-import { SMALL_BALANCE_SETTLEMENT_PAISE, settlementState } from '../src/lib/settlement';
+import { settlementState } from '../src/lib/settlement';
 
 describe('small balance settlement', () => {
-  it('waives a positive residue of ₹100 or less without changing the paid total', () => {
-    expect(settlementState(100_000n, 90_000n)).toEqual({
+  it('waives only the maturity amount remainder below ₹100 at final settlement', () => {
+    expect(settlementState(12_903_700n, 12_900_000n)).toEqual({
       complete: true,
-      adjustmentPaise: SMALL_BALANCE_SETTLEMENT_PAISE,
+      adjustmentPaise: 3_700n,
       remainingPaise: 0n,
     });
-    expect(settlementState(100_000n, 99_999n)).toEqual({
+    expect(settlementState(12_999_200n, 12_990_000n)).toEqual({
       complete: true,
-      adjustmentPaise: 1n,
+      adjustmentPaise: 9_200n,
       remainingPaise: 0n,
     });
   });
 
-  it('does not waive ₹100.01 or a zero balance', () => {
-    expect(settlementState(100_001n, 90_000n)).toEqual({
+  it('does not waive a temporary small balance or any amount from an exact ₹100 maturity', () => {
+    expect(settlementState(12_903_700n, 12_900_100n)).toEqual({
       complete: false,
       adjustmentPaise: 0n,
-      remainingPaise: 10_001n,
+      remainingPaise: 3_600n,
     });
+    expect(settlementState(100_000n, 99_999n)).toEqual({
+      complete: false,
+      adjustmentPaise: 0n,
+      remainingPaise: 1n,
+    });
+  });
+
+  it('completes an exact maturity only after the whole amount is paid', () => {
     expect(settlementState(100_000n, 100_000n)).toEqual({
       complete: true,
       adjustmentPaise: 0n,

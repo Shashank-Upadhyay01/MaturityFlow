@@ -24,7 +24,9 @@ overrides and paid-total corrections remain permission checked and audited. The 
 sum assertion and bigint paise representation remain mandatory.
 
 
-A positive final balance of ₹100 or less is closed as a separately stored settlement adjustment.
+A maturity amount's positive remainder below ₹100 is closed as a separately stored settlement
+adjustment only when that exact remainder is all that remains. Exact ₹100 multiples must be paid
+in full; an arbitrary temporary balance of ₹100 or less is never waived.
 It is never inserted into the cash or online receipt ledger. The case reconciles as maturity =
 actual receipts + settlement adjustment, appears under Small Balance Settled, and retains the
 exact adjustment, actor and timestamp in the audit trail.
