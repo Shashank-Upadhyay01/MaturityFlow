@@ -91,6 +91,7 @@ async function findTargets(): Promise<Target[]> {
       paymentOn: maturityCases.paymentOn,
       firstPayoutOn: maturityCases.firstPayoutOn,
       biggest: sql<string>`max(${payoutInstalments.amountPaise})::text`,
+      scheduled: sql<string>`sum(${payoutInstalments.amountPaise})::text`,
       dueDates: sql<string[]>`array_agg(${payoutInstalments.dueOn}::text)`,
     })
     .from(maturityCases)
@@ -126,8 +127,22 @@ async function findTargets(): Promise<Target[]> {
       ? (row.dueDates ?? []).filter((d) => d >= today && !isWorkingDay(d, calendar))
       : [];
 
+    const parts = rolloverPartsFor(row.maturityAmountPaise, remaining, windowDays);
+    const scheduled = BigInt(row.scheduled ?? '0');
+    const livePartCount = (row.dueDates ?? []).length;
+
     const reasons: string[] = [];
+    /*
+      The check that matters most: what the days still to come ADD UP TO.
+
+      A row whose open instalments total more than the balance sends a customer to the counter
+      for money they do not have coming. AZM/2026/000001 owed ₹5,143 and was still asking for
+      ₹13,795. Nothing about the day-size or the calendar catches that, so test it directly.
+    */
+    if (scheduled !== remaining) reasons.push('total off by ' + formatPaise(scheduled - remaining));
     if (biggestPaise > ceiling) reasons.push('lump sum');
+    // One day of slack: rounding can legitimately shave a day off the end of a plan.
+    if (livePartCount < parts - 1) reasons.push(`${livePartCount} of ${parts} days`);
     if (row.windowDays !== windowDays) reasons.push(`window ${row.windowDays}`);
     if (closedDays.length > 0) reasons.push(`closed day ${closedDays.join(', ')}`);
     if (reasons.length === 0) return [];
@@ -159,7 +174,7 @@ async function findTargets(): Promise<Target[]> {
         perDayPaise,
         storedWindowDays: row.windowDays,
         windowDays,
-        parts: rolloverPartsFor(row.maturityAmountPaise, remaining, windowDays),
+        parts,
         from,
         why: reasons.join(' · '),
       },
