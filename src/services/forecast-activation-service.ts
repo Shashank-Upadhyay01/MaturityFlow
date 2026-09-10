@@ -22,7 +22,7 @@ import {
   august2026PaymentPolicy,
 } from '@/lib/maturity-payment-plan';
 import { formatPaise } from '@/lib/money';
-import { recommendedPayoutDaysFor, windowDaysForPayoutCount } from '@/lib/payout-policy';
+import { recommendedWindowDaysFor } from '@/lib/payout-policy';
 import { assertCan } from '@/lib/rbac';
 import { todayISO } from '@/lib/working-days';
 import { createCase } from '@/services/case-service';
@@ -209,10 +209,7 @@ export async function activateForecastMonthForTesting(
           schemeName: row.planName ?? row.productName,
           policyNumber: row.accountNumber,
           instrumentMaturityOn: row.maturityOn,
-          windowDays: windowDaysForPayoutCount(
-            row.currentMaturityPaise,
-            recommendedPayoutDaysFor(row.currentMaturityPaise),
-          ),
+          windowDays: recommendedWindowDaysFor(row.currentMaturityPaise),
           roundingPaise: policy.defaultRoundingPaise,
           distribution: 'FRONT_LOADED',
           cashPolicy: 'CASH_CAP',

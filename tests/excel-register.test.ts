@@ -252,7 +252,7 @@ describe('branch template', () => {
   });
 });
 
-describe('recommended visit bands', () => {
+describe('recommended ₹1 lakh policy', () => {
   it('gives a lakh and over twelve daily payouts', () => {
     const window = defaultWindowDaysFor(135000);
     expect(window).toBe(15);
@@ -268,12 +268,12 @@ describe('recommended visit bands', () => {
     expect(plan.payoutDays).toBe(12);
   });
 
-  it('gives ₹50,000 three payouts on alternate days', () => {
+  it('gives ₹50,000 six payouts on alternate days in the shared window', () => {
     const window = defaultWindowDaysFor(50000);
-    expect(window).toBe(8);
+    expect(window).toBe(15);
     const plan = payoutPlanFor(5_000_000n, window);
     expect(plan.cadence).toBe('ALTERNATE');
-    expect(plan.payoutDays).toBe(3);
+    expect(plan.payoutDays).toBe(6);
     expect(plan.stride).toBe(2);
   });
 
@@ -284,14 +284,14 @@ describe('recommended visit bands', () => {
       ['2', 'Small', 'A', 50000, '', '', '', '', '', '', '', '', '', ''],
     ]);
     expect(rows[0].windowDays).toBe(15);
-    expect(rows[1].windowDays).toBe(8);
+    expect(rows[1].windowDays).toBe(15);
   });
 
   it.each([
-    [9000, 4, 1],
-    [24000, 6, 2],
-    [45000, 8, 3],
-    [80000, 10, 4],
+    [9000, 15, 6],
+    [24000, 15, 6],
+    [45000, 15, 6],
+    [80000, 15, 6],
     [120000, 15, 12],
   ])('recommends the right stored window for ₹%s', (rupees, window, visits) => {
     const actualWindow = defaultWindowDaysFor(rupees);

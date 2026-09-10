@@ -20,6 +20,7 @@ import {
   paymentFollowingApproval,
   payoutPlanFor,
   recommendedPayoutDaysFor,
+  recommendedWindowDaysFor,
   remainingPayoutParts,
   scheduleAnchorFor,
   strideFor,
@@ -62,14 +63,11 @@ describe('lifetime payout slots', () => {
 
 describe('recommended payout visits by amount', () => {
   it.each([
-    [1n, 1],
-    [1_000_000n, 1],
-    [1_000_001n, 2],
-    [2_500_000n, 2],
-    [2_500_001n, 3],
-    [5_000_000n, 3],
-    [5_000_001n, 4],
-    [9_999_999n, 4],
+    [1n, 6],
+    [1_000_000n, 6],
+    [2_500_000n, 6],
+    [5_000_000n, 6],
+    [9_999_999n, 6],
     [10_000_000n, 12],
     [10_000_001n, 12],
   ])('maps %s paise to %s visit(s)', (amount, visits) => {
@@ -86,6 +84,11 @@ describe('payoutPlanFor', () => {
     expect(windowDaysForPayoutCount(LAKH, 12)).toBe(15);
     expect(payoutPlanFor(LAKH, windowDaysForPayoutCount(LAKH, 12)).payoutDays).toBe(12);
     expect(payoutPlanFor(LAKH - 1n, windowDaysForPayoutCount(LAKH - 1n, 6)).payoutDays).toBe(6);
+  });
+
+  it('uses the same 15-day recommended window on both sides of ₹1 lakh', () => {
+    expect(recommendedWindowDaysFor(LAKH)).toBe(15);
+    expect(recommendedWindowDaysFor(LAKH - 1n)).toBe(15);
   });
 
   it('gives a large case 12 daily payouts in a 15-day window', () => {

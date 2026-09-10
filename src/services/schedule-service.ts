@@ -83,7 +83,7 @@ export async function persistSchedule({
 
   // `windowDays` is the TOTAL working-day window, not the payout count. The policy decides how
   // many of those days carry a payout and how far apart they sit: ₹1 lakh and over pays every
-  // working day, while smaller bands use one to four alternate-day visits.
+  // working day, while sub-₹1-lakh cases use six alternate-day visits.
   const plan = payoutPlanFor(caseRow.maturityAmountPaise, caseRow.windowDays);
 
   const result = generateSchedule({

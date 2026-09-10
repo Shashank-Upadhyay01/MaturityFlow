@@ -2,7 +2,7 @@
  * Parse / emit the branch maturity register (the Excel they use today).
  * Dates are India (day/month/year). Money is rupees as number, converted to paise by the caller.
  */
-import { recommendedPayoutDaysFor, windowDaysForPayoutCount } from './payout-policy';
+import { recommendedPayoutDaysFor, recommendedWindowDaysFor } from './payout-policy';
 import { DEFAULT_REGISTER_LAYOUT, excelHeadersForLayout } from './register-layout';
 import { parseISODate, type ISODate } from './working-days';
 import { parseRupeesToPaise } from './money';
@@ -67,7 +67,7 @@ export function defaultPayoutDaysFor(maturityPaise: bigint): number {
 /** The working-day window that yields those payouts, from a rupee figure off the sheet. */
 export function defaultWindowDaysFor(maturityRupees: number): number {
   const paise = BigInt(Math.round((Number.isFinite(maturityRupees) ? maturityRupees : 0) * 100));
-  return windowDaysForPayoutCount(paise, defaultPayoutDaysFor(paise));
+  return recommendedWindowDaysFor(paise);
 }
 
 export interface RegisterRow {

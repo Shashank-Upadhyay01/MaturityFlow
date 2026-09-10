@@ -17,7 +17,7 @@ import { formatCaseNumber, newId } from '@/lib/id';
 import { DEFAULT_CASH_CAP_PAISE } from '@/lib/org-settings';
 import { loadOrgSettings } from '@/services/org-settings';
 import { parseRupeesToPaise } from '@/lib/money';
-import { MAX_WINDOW_DAYS, MIN_WINDOW_DAYS, paymentFollowingApproval, recommendedPayoutDaysFor, windowDaysForPayoutCount } from '@/lib/payout-policy';
+import { MAX_WINDOW_DAYS, MIN_WINDOW_DAYS, paymentFollowingApproval, recommendedWindowDaysFor } from '@/lib/payout-policy';
 import { firstPayoutOn } from '@/lib/payout-policy';
 import { bulkTodayAmount, type BulkTodayMode } from '@/lib/register-view';
 import { parseRegisterDate } from '@/lib/excel-register';
@@ -251,10 +251,10 @@ export async function updateRegisterRow(
       if (amount <= 0n) throw new Error('Maturity amount must be greater than zero');
       setCase.maturityAmountPaise = amount;
       // A newly typed register row starts with the branch's generic window before its amount is
-      // known. Once the amount arrives, replace that placeholder with the approved amount-band
+      // known. Once the amount arrives, replace that placeholder with the approved amount-based
       // recommendation. An explicitly typed Days value remains an operator override.
       if (row.scheduleVersion === 0 && patch.windowDays === undefined) {
-        setCase.windowDays = windowDaysForPayoutCount(amount, recommendedPayoutDaysFor(amount));
+        setCase.windowDays = recommendedWindowDaysFor(amount);
       }
     }
 

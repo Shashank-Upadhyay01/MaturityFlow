@@ -117,8 +117,8 @@ export async function buildRegisterTemplate({
   ]);
   ex.addRow([]);
   ex.addRow([
-    'Type only the blue columns. Recommended visits: up to \u20b910,000 = 1; up to \u20b925,000 = 2; ' +
-      'up to \u20b950,000 = 3; below \u20b91 lakh = 4 alternate; \u20b91 lakh and above = 12 daily.',
+    'Type only the blue columns. Recommended visits: below \u20b91 lakh = 6 alternate-day payments; ' +
+      '\u20b91 lakh and above = 12 daily payments.',
   ]);
   ex.getRow(4).font = { italic: true, color: { argb: 'FF7F7F7F' } };
   ex.columns.forEach((c, i) => {

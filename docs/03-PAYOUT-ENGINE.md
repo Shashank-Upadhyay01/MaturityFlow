@@ -5,17 +5,15 @@ Pure, deterministic, dependency-free, `BigInt`-only. Runs identically on client 
 
 ## September 2026 payout and override update
 
-The recommended plan reserves three intake days, then selects the visit count from the maturity
-amount: one visit through ₹10,000, two through ₹25,000, three through ₹50,000, four through
-₹99,999, and twelve from ₹1,00,000 upward. Sub-lakh visits remain on alternate working days;
-₹1 lakh and above pays every working day. Intake days are not added again after approval.
+The recommended plan reserves three intake days followed by a twelve-working-day payout window.
+Maturities below ₹1,00,000 receive six payments on alternate working days inside that window;
+₹1,00,000 and above receive twelve payments on consecutive working days. Intake days are not
+added again after approval.
 Automatic payment starts the next open day after approval; an explicitly entered payment date
 is retained. An authorised custom plan may use any one to twelve payments.
 
 Alternate payments use a two-calendar-day gap from the preceding payment, then roll forward to
-an open day. For example, ₹60,000 is recommended as four ₹15,000 payments. Starting Monday
-7 September 2026, with Sundays and second/fourth Saturdays closed and no holidays, they fall on
-7, 9, 11 and 14 September. The Sunday after Friday's payment rolls to Monday.
+an open day. The Sunday after a Friday payment rolls the next visit to Monday.
 ₹1,20,000 uses twelve ₹10,000 working-day payments by default. A custom one-part plan
 pays the full ₹1,20,000 on its chosen date. All three schedules sum exactly to maturity.
 
@@ -177,15 +175,13 @@ Recommended visit counts now follow the maturity amount:
 
 | Maturity | Recommended visits | Cadence |
 |---|---:|---|
-| Up to ₹10,000 | 1 | one full payment |
-| ₹10,001–₹25,000 | 2 | alternate working days |
-| ₹25,001–₹50,000 | 3 | alternate working days |
-| ₹50,001–₹99,999.99 | 4 | alternate working days |
+| Below ₹1,00,000 | 6 | alternate working days |
 | ₹1,00,000 and above | 12 | every working day |
 
-`recommendedPayoutDaysFor()` owns these bands. `windowDaysForPayoutCount()` turns the visit count
-into its stored working-day window, and `payoutPlanFor()` decodes that window. Administrators may
-still select any custom count from 1 through 12; the bands are recommendations, not locks.
+`recommendedPayoutDaysFor()` owns the ₹1 lakh split. `recommendedWindowDaysFor()` gives both
+groups the shared fifteen-day stored window (three processing plus twelve payout working days),
+and `payoutPlanFor()` decodes that window. Administrators may still select any custom count from
+1 through 12.
 
 The threshold is inclusive: exactly ₹1,00,000 is a large case. `windowDays` is the **total**
 window, not the payout count. The shortest custom window is one day, which supports paying the

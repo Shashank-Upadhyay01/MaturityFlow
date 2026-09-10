@@ -141,16 +141,19 @@ export function isPriorityCase(maturityAmountPaise: bigint): boolean {
 }
 
 /**
- * Recommended visit count by maturity amount. A custom plan may still use any 1–12 count.
- * The final instalment absorbs the exact paise remainder, so these bands never lose money.
+ * Recommended visit count under the bank's ₹1 lakh policy. A custom plan may still use any
+ * 1–12 count. Smaller maturities use six visits on alternate working days inside the same
+ * twelve-working-day payout window used by large maturities.
  */
 export function recommendedPayoutDaysFor(maturityAmountPaise: bigint): number {
   if (maturityAmountPaise <= 0n) throw new PayoutPolicyError('Maturity amount must be positive.');
-  if (maturityAmountPaise <= 1_000_000n) return 1;  // ₹10,000
-  if (maturityAmountPaise <= 2_500_000n) return 2;  // ₹25,000
-  if (maturityAmountPaise <= 5_000_000n) return 3;  // ₹50,000
-  if (maturityAmountPaise < LARGE_CASE_THRESHOLD_PAISE) return 4;
-  return 12;
+  return isPriorityCase(maturityAmountPaise) ? 12 : 6;
+}
+
+/** Recommended total window: three processing days plus twelve payout working days. */
+export function recommendedWindowDaysFor(maturityAmountPaise: bigint): number {
+  recommendedPayoutDaysFor(maturityAmountPaise);
+  return PROCESSING_WORKING_DAYS + MAX_PAYOUT_PARTS;
 }
 
 export function cadenceFor(maturityAmountPaise: bigint): Cadence {
@@ -266,7 +269,8 @@ export function payoutPlanFor(
  * Window length that yields `payoutDays` instalments at this amount's cadence.
  *
  * The sheet's Days column is the number of days the customer can withdraw, not the processing
- * gap. ₹1 lakh+ at 12 → window 15 daily; recommended smaller plans use 1–4 alternate visits.
+ * gap. ₹1 lakh+ at 12 → window 15 daily; six alternate visits mathematically need 14 days.
+ * Recommended plans use `recommendedWindowDaysFor()` so both groups share the same window.
  */
 export function windowDaysForPayoutCount(maturityAmountPaise: bigint, payoutDays: number): number {
   if (!Number.isInteger(payoutDays) || payoutDays < 1 || payoutDays > MAX_PAYOUT_PARTS) {
