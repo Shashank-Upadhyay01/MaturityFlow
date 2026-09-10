@@ -15,13 +15,13 @@ import {
   MAX_WINDOW_DAYS,
   MIN_WINDOW_DAYS,
   payoutPlanFor,
-  remainingPayoutParts,
+  rolloverPartsFor,
   type Cadence,
 } from '@/lib/payout-policy';
 import { rebalanceAfter, type EditableInstalment } from '@/lib/schedule-edit';
 import { reconcileInstalmentLegs } from '@/lib/payment-rules';
-import type { WorkingDayCalendar } from '@/lib/working-days';
-import { todayISO } from '@/lib/working-days';
+import type { ISODate, WorkingDayCalendar } from '@/lib/working-days';
+import { addDays, nextWorkingDay, todayISO } from '@/lib/working-days';
 
 /** Rebuild the engine's cash policy from the persisted case columns. */
 export function cashPolicyOf(c: {
@@ -183,20 +183,6 @@ export async function persistReschedule({
       ),
     ).for('update');
 
-  // A missed promise consumes one of the case's original lifetime slots even though its money
-  // remains payable. Previous schedule versions retain those rows as MISSED history. Without
-  // counting them here, every reschedule could create the missed slots again and a 12-part case
-  // could quietly grow to 13, 14 or more dates after its deadline was edited.
-  const historicalMissed = await tx
-    .select({ id: payoutInstalments.id })
-    .from(payoutInstalments)
-    .where(and(
-      eq(payoutInstalments.caseId, caseRow.id),
-      sql`${payoutInstalments.scheduleVersion} <> ${caseRow.scheduleVersion}`,
-      eq(payoutInstalments.status, 'MISSED'),
-    ))
-    .for('update');
-
   const settled = live.filter((i) => i.paidCashPaise + i.paidOnlinePaise > 0n);
   const carriedOverPaise = remaining;
 
@@ -242,10 +228,26 @@ export async function persistReschedule({
     caseRow.deadlineOn ??
     deriveDeadline(caseRow.approvedOn ?? today, caseRow.windowDays, calendar, caseRow.startOnNextWorkingDay);
 
+  // What the band says this balance is worth per day, and how many days that is. The promise
+  // above is what a breach is measured against; it is NOT a lid the balance gets crushed under.
+  const plan = payoutPlanFor(caseRow.maturityAmountPaise, caseRow.windowDays);
+  const rolloverParts = rolloverPartsFor(caseRow.maturityAmountPaise, remaining, caseRow.windowDays);
+  // Two slots of slack so the engine's own day-walk can never come up short of `rolloverParts`
+  // and silently hand back a bigger instalment; `maxPayoutCount` below is the real limit.
+  const horizon = payoutHorizon(today, rolloverParts + 2, plan.stride, calendar);
+  // An operator who typed a completion date, or asked for an exact number of days, gets exactly
+  // that. Everything else — above all the automatic missed-day rollover — plans on the band.
+  const planningDeadline =
+    finishOnDeadline || payoutCount !== undefined
+      ? deadline
+      : horizon > deadline
+        ? horizon
+        : deadline;
+
   const result = rescheduleRemaining({
     remainingPaise: remaining,
     fromDate: today,
-    deadlineDate: deadline,
+    deadlineDate: planningDeadline,
     roundingPaise: caseRow.roundingPaise,
     calendar,
     distribution: caseRow.distribution,
@@ -256,11 +258,10 @@ export async function persistReschedule({
     cadence: caseRow.cadence as Cadence,
     equalize,
     payoutCount,
-    maxPayoutCount: remainingPayoutParts(
-      payoutPlanFor(caseRow.maturityAmountPaise, caseRow.windowDays).payoutDays,
-      settled.length,
-      historicalMissed.length + missedIds.length,
-    ),
+    // Missed days no longer burn slots. The balance is what decides how many days it needs, and
+    // the band's part count is the ceiling — a ₹40,000 remainder on a six-part case takes three
+    // alternate days, not one lump, and not six token ones.
+    maxPayoutCount: rolloverParts,
     allowClosedStartDate,
   });
 
@@ -277,6 +278,18 @@ export async function persistReschedule({
     const final = result.installments[result.installments.length - 1];
     final.dueDate = deadline;
     result.lastPayoutDate = deadline;
+  }
+
+  // `rescheduleRemaining` measured the breach against `planningDeadline`. The customer was
+  // promised `deadline`, so say so when the honest plan runs past it. Nothing is hidden by
+  // spreading the balance properly — it is flagged here instead of buried in one unpayable row.
+  if (!result.slaBreachUnavoidable && result.lastPayoutDate > deadline) {
+    result.slaBreachUnavoidable = true;
+    result.warnings.unshift({
+      code: 'SLA_BREACH_UNAVOIDABLE',
+      severity: 'CRITICAL',
+      message: `The remaining amount cannot be cleared by ${deadline} on this plan.`,
+    });
   }
 
   const version = caseRow.scheduleVersion + 1;
@@ -323,6 +336,25 @@ export async function persistReschedule({
     .where(eq(maturityCases.id, caseRow.id));
 
   return { result, carriedOverPaise };
+}
+
+/**
+ * The date the `parts`-th payout lands on, counting from `from` at the band's stride.
+ *
+ * Mirrors the engine's own day-walk: alternate cases skip one CALENDAR day and then roll onto an
+ * open one, so a Friday payout's partner is the following Monday rather than the Tuesday after.
+ */
+function payoutHorizon(
+  from: ISODate,
+  parts: number,
+  stride: 1 | 2,
+  calendar: WorkingDayCalendar,
+): ISODate {
+  let date = nextWorkingDay(from, calendar);
+  for (let i = 1; i < parts; i += 1) {
+    date = nextWorkingDay(addDays(date, stride), calendar);
+  }
+  return date;
 }
 
 /**
@@ -486,9 +518,12 @@ export async function persistReplanWindow({
   const remaining = caseRow.maturityAmountPaise - caseRow.paidCashPaise - caseRow.paidOnlinePaise;
   if (remaining <= 0n) return null;
   const plan = payoutPlanFor(caseRow.maturityAmountPaise, windowDays);
+  // The window says how the days are shaped; the balance says how many of them are needed. A
+  // case with one instalment left must not be promised a date twelve days out.
+  const parts = rolloverPartsFor(caseRow.maturityAmountPaise, remaining, windowDays);
   const deadline = generateSchedule({
     totalPaise: remaining,
-    days: plan.payoutDays, roundingPaise: caseRow.roundingPaise, startDate: fromDate,
+    days: parts, roundingPaise: caseRow.roundingPaise, startDate: fromDate,
     calendar, stride: plan.stride, calendarDayGap: plan.calendarDayGap,
     allowClosedStartDate: Boolean(caseRow.paymentOn && caseRow.paymentOn === fromDate),
     preservePayoutCount: true,
@@ -508,7 +543,7 @@ export async function persistReplanWindow({
     calendar,
     fromDate,
     branchDailyCashComfortPaise,
-    payoutCount: plan.payoutDays,
+    payoutCount: parts,
     allowClosedStartDate: Boolean(caseRow.paymentOn && caseRow.paymentOn === fromDate),
   });
 }

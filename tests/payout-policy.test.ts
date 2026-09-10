@@ -18,6 +18,7 @@ import {
   isPriorityCase,
   approvalDateProblem,
   paymentFollowingApproval,
+  rolloverPartsFor,
   payoutPlanFor,
   recommendedPayoutDaysFor,
   recommendedWindowDaysFor,
@@ -368,5 +369,47 @@ describe('applying a part count from the planning board', () => {
   it('never returns a window shorter than the processing gap allows', () => {
     expect(windowDaysForPayoutCount(LAKH, 1)).toBeGreaterThanOrEqual(PROCESSING_WORKING_DAYS + 1);
     expect(windowDaysForPayoutCount(LAKH - 1n, 1)).toBeGreaterThanOrEqual(PROCESSING_WORKING_DAYS + 1);
+  });
+});
+
+describe('rolloverPartsFor — a missed day moves the tail, it does not create a lump sum', () => {
+  const LAKH = 10_000_000n;
+  const bigWindow = recommendedWindowDaysFor(LAKH);
+  const smallWindow = recommendedWindowDaysFor(LAKH - 1n);
+
+  it('gives an untouched case its full band count', () => {
+    expect(rolloverPartsFor(LAKH * 4n, LAKH * 4n, bigWindow)).toBe(12);
+    expect(rolloverPartsFor(LAKH - 1n, LAKH - 1n, smallWindow)).toBe(6);
+  });
+
+  it('keeps the day-size the band implies instead of cramming the balance', () => {
+    // ₹3,98,738 over twelve is ₹33,229 a day. ₹3,18,738 left is ten of those days, not one.
+    const maturity = 39_873_800n;
+    expect(rolloverPartsFor(maturity, 31_873_800n, bigWindow)).toBe(10);
+    // ₹78,643 over six alternate visits is ₹13,108. ₹38,643 left is three visits, not one.
+    const small = 7_864_366n;
+    expect(rolloverPartsFor(small, 3_864_366n, smallWindow)).toBe(3);
+  });
+
+  it('never exceeds the band count and never drops below one', () => {
+    for (const maturity of [LAKH, LAKH - 1n, LAKH * 40n, 100_000n]) {
+      const window = recommendedWindowDaysFor(maturity);
+      const band = payoutPlanFor(maturity, window).payoutDays;
+      for (const left of [1n, maturity / 7n, maturity, maturity * 2n]) {
+        const parts = rolloverPartsFor(maturity, left, window);
+        expect(parts).toBeGreaterThanOrEqual(1);
+        expect(parts).toBeLessThanOrEqual(band);
+      }
+    }
+  });
+
+  it('asks for a single day once only a rounding remainder is left', () => {
+    expect(rolloverPartsFor(39_873_800n, 100n, bigWindow)).toBe(1);
+    expect(rolloverPartsFor(7_864_366n, 100n, smallWindow)).toBe(1);
+  });
+
+  it('treats a settled balance as one day rather than throwing', () => {
+    expect(rolloverPartsFor(39_873_800n, 0n, bigWindow)).toBe(1);
+    expect(rolloverPartsFor(39_873_800n, -500n, bigWindow)).toBe(1);
   });
 });

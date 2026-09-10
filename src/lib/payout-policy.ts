@@ -266,6 +266,35 @@ export function payoutPlanFor(
 }
 
 /**
+ * How many payout days the unpaid balance still needs, at the instalment size the band implies.
+ *
+ * The twelve-day rule fixes the SIZE of a day's payout, not the length of whatever is left of
+ * the original window. ₹1 lakh and over is the maturity split twelve ways and handed over on
+ * twelve working days from the payment date; below it is the same maturity split six ways across
+ * six alternate days inside those twelve. A day nobody came to the counter does not shrink the
+ * plan — it moves the tail out.
+ *
+ * Squeezing the balance into the days left before the original deadline is what turned a
+ * ₹3,98,738 case with ₹3,18,738 outstanding into a single ₹3,18,738 row due today: a sum no
+ * counter can pay and a figure that made the register's daily total meaningless. This returns
+ * the honest count instead — the balance at the band's daily instalment, never more than the
+ * band's own part count, never fewer than one.
+ */
+export function rolloverPartsFor(
+  maturityAmountPaise: bigint,
+  remainingPaise: bigint,
+  windowDays: number,
+): number {
+  const parts = payoutPlanFor(maturityAmountPaise, windowDays).payoutDays;
+  if (remainingPaise <= 0n) return 1;
+  // Ceiling division, in bigint: a rounded-up instalment can never leave a stray thirteenth day.
+  const perDay = (maturityAmountPaise + BigInt(parts) - 1n) / BigInt(parts);
+  if (perDay <= 0n) return parts;
+  const needed = Number((remainingPaise + perDay - 1n) / perDay);
+  return Math.max(1, Math.min(parts, needed));
+}
+
+/**
  * Window length that yields `payoutDays` instalments at this amount's cadence.
  *
  * The sheet's Days column is the number of days the customer can withdraw, not the processing

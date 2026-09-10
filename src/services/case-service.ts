@@ -564,8 +564,20 @@ export async function cancelCase(actor: SessionUser, caseId: string, reason: str
   });
 }
 
-/** Re-plan the unpaid remainder over the days that are left. */
-export async function rescheduleCase(actor: SessionUser, caseId: string, reason: string, meta = {}) {
+/**
+ * Re-plan the unpaid remainder over the days that are left.
+ *
+ * `fromDate` defaults to today, which is what the counter wants. A repair pass may pass the
+ * case's own next promised day instead, so that fixing the SHAPE of a plan never drags a payout
+ * the customer was told to come for tomorrow onto today's cash requirement.
+ */
+export async function rescheduleCase(
+  actor: SessionUser,
+  caseId: string,
+  reason: string,
+  meta = {},
+  fromDate?: string,
+) {
   return db.transaction(async (tx) => {
     const c = await lockCase(tx, caseId);
     if (!['APPROVED', 'IN_PROGRESS', 'ON_HOLD'].includes(c.status)) {
@@ -577,6 +589,7 @@ export async function rescheduleCase(actor: SessionUser, caseId: string, reason:
       tx,
       caseRow: c,
       calendar: policy.calendar,
+      ...(fromDate ? { fromDate } : {}),
       branchDailyCashComfortPaise: policy.dailyCashComfortPaise,
       // The operator explicitly asked to rebuild the remaining plan, so retain the case's
       // configured rounding step. Automatic missed-day rollover still equalises the remainder.
@@ -863,13 +876,36 @@ export async function autoRepairUnsetSchedules(actor: SessionUser, branchId: str
   return { changed, failed };
 }
 
-/** Type a new day-count; remaining money is rebuilt from today over that many working days. */
+/**
+ * Where a re-plan picks up: the payment date the customer was given, unless it has passed.
+ *
+ * `paymentOn` is day one of the twelve — that is what the Payment Date column has always meant.
+ * Anchoring a re-plan on `todayISO()` instead is how the planning board's Apply button moved a
+ * whole cohort forward by a day, and pulled one case dated the 11th back onto the 10th.
+ */
+function replanStartFor(
+  c: Pick<MaturityCase, 'paymentOn' | 'firstPayoutOn'>,
+  today = todayISO(),
+): string {
+  const promised = c.paymentOn ?? c.firstPayoutOn;
+  return promised && promised > today ? promised : today;
+}
+
+/**
+ * Type a new day-count; remaining money is rebuilt from today over that many working days.
+ *
+ * `fromDate` defaults to the case's own payment date, or today when that date has already
+ * passed. Re-planning is a change of SHAPE, not of promise: a customer told to come on the 11th
+ * must not be moved to the 10th because somebody pressed Apply on the planning board on the 10th,
+ * and a day that is already behind us cannot be handed back.
+ */
 export async function replanWithWindow(
   actor: SessionUser,
   caseId: string,
   windowDays: number,
   reason: string,
   meta = {},
+  fromDate?: string,
 ) {
   return db.transaction(async (tx) => {
     const c = await lockCase(tx, caseId);
@@ -883,7 +919,7 @@ export async function replanWithWindow(
       caseRow: c,
       calendar: policy.calendar,
       windowDays,
-      fromDate: todayISO(),
+      fromDate: fromDate ?? replanStartFor(c),
       branchDailyCashComfortPaise: policy.dailyCashComfortPaise,
     });
     if (!out) throw new WorkflowError('Nothing left to re-plan — this case is fully paid.', 'NOTHING_DUE');
