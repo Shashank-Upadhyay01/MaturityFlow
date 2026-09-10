@@ -1345,6 +1345,17 @@ export function RegisterSheet(props: {
    * agent to check something.
    */
   const dueStats = useMemo(() => summariseDueToday(props.rows, props.today), [props.rows, props.today]);
+  const missedStats = useMemo(() => {
+    let count = 0;
+    let total = 0n;
+    for (const row of props.rows) {
+      const missed = missedAmountPaise(row, props.today);
+      if (missed <= 0n) continue;
+      count += 1;
+      total += missed;
+    }
+    return { count, total };
+  }, [props.rows, props.today]);
 
   const paidTodayP = BigInt(props.paidTodayPaise);
   // summariseDueToday already excludes paid amounts; subtracting receipts again understates cash needed.
@@ -3031,7 +3042,7 @@ export function RegisterSheet(props: {
           takes a defined share of the width and the label/value rows inside justify to both of
           its edges, so the figures line up in a readable right-hand column.
         */}
-        <div className="grid grid-cols-1 gap-x-2 gap-y-1 border-t border-[var(--hairline)] px-2 py-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <div className="grid grid-cols-1 gap-x-2 gap-y-1 border-t border-[var(--hairline)] px-2 py-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <button
             type="button"
             onClick={() => applyFilter({ tab: 'due', range: EMPTY_RANGE })}
@@ -3056,6 +3067,33 @@ export function RegisterSheet(props: {
             </span>
             <span className="block truncate text-[0.65rem] leading-tight text-[var(--faint-fg)]">
               cash ₹{inr(dueStats.cash)} · online ₹{inr(dueStats.online)}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => applyFilter({ tab: 'missed', range: EMPTY_RANGE })}
+            title="Show every customer carrying an unpaid amount from an earlier date"
+            className={cn(
+              'min-w-0 rounded-[10px] px-2.5 py-1.5 text-left transition-colors',
+              missedStats.count > 0
+                ? 'bg-[var(--row-missed)] hover:brightness-95'
+                : 'hover:bg-[var(--glass-bg-subtle)]',
+            )}
+          >
+            <span className="mb-1 flex h-4 items-center">
+              <span className="text-[0.6rem] font-semibold uppercase tracking-[0.07em] text-[var(--row-missed-fg)]">
+                Total missed
+              </span>
+            </span>
+            <span className="block truncate text-[1.35rem] font-semibold leading-none tabular-nums text-[var(--page-fg)]">
+              ₹{inr(missedStats.total)}
+            </span>
+            <span className="mt-1 block truncate text-[0.68rem] leading-tight text-[var(--muted-fg)]">
+              {missedStats.count} {missedStats.count === 1 ? 'customer' : 'customers'}
+            </span>
+            <span className="block truncate text-[0.65rem] leading-tight text-[var(--faint-fg)]">
+              unpaid from earlier dates
             </span>
           </button>
 
