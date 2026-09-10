@@ -64,9 +64,10 @@ describe('lifetime payout slots', () => {
 
 describe('recommended payout visits by amount', () => {
   it.each([
-    [1n, 6],
-    [1_000_000n, 6],
-    [2_500_000n, 6],
+    [1n, 3],
+    [1_000_000n, 3],
+    [2_500_000n, 3],
+    [2_500_001n, 6],
     [5_000_000n, 6],
     [9_999_999n, 6],
     [10_000_000n, 12],
@@ -87,9 +88,10 @@ describe('payoutPlanFor', () => {
     expect(payoutPlanFor(LAKH - 1n, windowDaysForPayoutCount(LAKH - 1n, 6)).payoutDays).toBe(6);
   });
 
-  it('uses the same 15-day recommended window on both sides of ₹1 lakh', () => {
+  it('sizes the recommended window for 3, 6, and 12 payments', () => {
     expect(recommendedWindowDaysFor(LAKH)).toBe(15);
     expect(recommendedWindowDaysFor(LAKH - 1n)).toBe(15);
+    expect(recommendedWindowDaysFor(2_500_000n)).toBe(8);
   });
 
   it('gives a large case 12 daily payouts in a 15-day window', () => {

@@ -62,9 +62,10 @@ describe('the ₹1 lakh band', () => {
     expect(bandOf(LAKH - 1n)).toBe('SMALL');
   });
 
-  it('defaults to 12 parts above the line and 6 below it', () => {
+  it('defaults to 12, 6, or 3 parts according to the amount band', () => {
     expect(defaultPartsFor(LAKH, 15)).toBe(12);
     expect(defaultPartsFor(LAKH - 1n, 15)).toBe(6);
+    expect(defaultPartsFor(2_500_000n, 8)).toBe(3);
   });
 });
 

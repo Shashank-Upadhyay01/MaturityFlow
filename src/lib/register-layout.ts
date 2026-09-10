@@ -115,7 +115,7 @@ export const REGISTER_COL_DEFS: Record<RegisterColId, RegisterColDef> = {
   },
   days: {
     id: 'days', label: 'Days', excel: 'Window Days', right: true, w: 'w-[3.25rem]', priority: 6,
-    hint: 'Recommended: below ₹1 lakh pays 6 times on alternate working days; ₹1 lakh and above pays 12 times daily. Type any 1–12 count for a custom plan.',
+    hint: 'Recommended: up to ₹25,000 pays 3 times on alternate working days; below ₹1 lakh pays 6 times on alternate working days; ₹1 lakh and above pays 12 times daily. Type any 1–12 count for a custom plan.',
   },
   perDay: {
     id: 'perDay', label: 'Recommended', excel: 'Recommended Payment', right: true, w: 'w-[6.2rem]', priority: 6,

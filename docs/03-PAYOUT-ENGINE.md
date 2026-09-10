@@ -5,10 +5,10 @@ Pure, deterministic, dependency-free, `BigInt`-only. Runs identically on client 
 
 ## September 2026 payout and override update
 
-The recommended plan reserves three intake days followed by a twelve-working-day payout window.
-Maturities below ₹1,00,000 receive six payments on alternate working days inside that window;
-₹1,00,000 and above receive twelve payments on consecutive working days. Intake days are not
-added again after approval.
+The recommended plan reserves three intake days. Maturities up to ₹25,000 receive three payments
+on alternate working days; maturities from ₹25,000.01 through ₹99,999.99 receive six alternate-day
+payments; ₹1,00,000 and above receive twelve consecutive working-day payments. Intake days are
+not added again after approval.
 Automatic payment starts the next open day after approval; an explicitly entered payment date
 is retained. An authorised custom plan may use any one to twelve payments.
 
@@ -175,12 +175,13 @@ Recommended visit counts now follow the maturity amount:
 
 | Maturity | Recommended visits | Cadence |
 |---|---:|---|
-| Below ₹1,00,000 | 6 | alternate working days |
+| Up to ₹25,000 | 3 | alternate working days |
+| ₹25,000.01–₹99,999.99 | 6 | alternate working days |
 | ₹1,00,000 and above | 12 | every working day |
 
-`recommendedPayoutDaysFor()` owns the ₹1 lakh split. `recommendedWindowDaysFor()` gives both
-groups the shared fifteen-day stored window (three processing plus twelve payout working days),
-and `payoutPlanFor()` decodes that window. Administrators may still select any custom count from
+`recommendedPayoutDaysFor()` owns the amount bands. `recommendedWindowDaysFor()` stores the
+recommended window: 8 working days for three alternate payments, and the shared 15-working-day
+window for six alternate or twelve daily payments. `payoutPlanFor()` decodes that window. Administrators may still select any custom count from
 1 through 12.
 
 The threshold is inclusive: exactly ₹1,00,000 is a large case. `windowDays` is the **total**

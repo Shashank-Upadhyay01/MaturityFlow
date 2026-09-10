@@ -197,18 +197,31 @@ function CustomerRow({
           </span>
           {row.isProjection && <Badge tone="neutral">projected</Badge>}
         </div>
-        <div className="mt-1.5 grid grid-cols-3 gap-1 pl-5" aria-label={`Payout comparisons for ${row.customerName}`}>
+        <div className="mt-1.5 grid grid-cols-3 gap-1 pl-5" aria-label={`Choose payout parts for ${row.customerName}`}>
           {[12, 6, 3].map((count) => {
             const amount = row.remainingPaise > 0n
               ? (row.remainingPaise + BigInt(count) - 1n) / BigInt(count)
               : 0n;
             return (
-              <span key={count} className="rounded-[6px] border border-[var(--hairline)] bg-[var(--glass-bg-subtle)] px-1.5 py-1 text-center">
+              <button
+                key={count}
+                type="button"
+                disabled={row.givenPaise > 0n}
+                onClick={() => onParts(count)}
+                aria-pressed={parts === count}
+                title={row.givenPaise > 0n ? 'Recorded payments are preserved; this plan cannot be reset.' : `Split this maturity into ${count} parts`}
+                className={cn(
+                  'rounded-[6px] border px-1.5 py-1 text-center transition-colors disabled:cursor-not-allowed disabled:opacity-55',
+                  parts === count
+                    ? 'border-[var(--color-brand-500)] bg-[color-mix(in_oklab,var(--color-brand-500)_14%,transparent)] text-[var(--color-brand-700)] dark:text-[var(--color-brand-300)]'
+                    : 'border-[var(--hairline)] bg-[var(--glass-bg-subtle)] hover:border-[var(--color-brand-500)]',
+                )}
+              >
                 <span className="block text-[0.56rem] font-semibold uppercase tracking-wide text-[var(--faint-fg)]">{count} parts</span>
                 <span className="block truncate text-[0.66rem] font-semibold tabular-nums" title="Approximate amount; the final part carries any exact remainder">
                   ≈ {inr(amount)}
                 </span>
-              </span>
+              </button>
             );
           })}
         </div>

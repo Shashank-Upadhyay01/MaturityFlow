@@ -4117,7 +4117,7 @@ export function RegisterSheet(props: {
                             ariaLabel={`${c.label} for ${r.customerName}`}
                             className="text-center tabular-nums"
                             disabled={!edit}
-                            title="Recommended visits — below ₹1 lakh: 6 alternate-day payments; ₹1 lakh and above: 12 daily payments. Type any 1–12 count for a custom plan."
+                            title="Recommended visits — up to ₹25,000: 3 alternate-day payments; below ₹1 lakh: 6 alternate-day payments; ₹1 lakh and above: 12 daily payments. Type any 1–12 count for a custom plan."
                             value={d(
                               r.id,
                               'payoutDaysCount',

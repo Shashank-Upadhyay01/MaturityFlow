@@ -16,6 +16,9 @@ import { addDays, nextWorkingDay, type ISODate, type WorkingDayCalendar } from '
  */
 export const LARGE_CASE_THRESHOLD_PAISE = 10_000_000n;
 
+/** At or below ₹25,000, the recommended plan uses three alternate-day visits. */
+export const THREE_PART_THRESHOLD_PAISE = 2_500_000n;
+
 /**
  * The three intake days in the recommended window: maturity, form submission, approval.
  * These are already spent before payout day one; never add them after approval.
@@ -141,19 +144,22 @@ export function isPriorityCase(maturityAmountPaise: bigint): boolean {
 }
 
 /**
- * Recommended visit count under the bank's ₹1 lakh policy. A custom plan may still use any
- * 1–12 count. Smaller maturities use six visits on alternate working days inside the same
- * twelve-working-day payout window used by large maturities.
+ * Recommended visit count under the bank's three-band policy. A custom plan may still use any
+ * 1–12 count. Maturities up to ₹25,000 use three alternate visits, other sub-lakh maturities use
+ * six alternate visits, and ₹1 lakh or more uses twelve daily visits.
  */
 export function recommendedPayoutDaysFor(maturityAmountPaise: bigint): number {
   if (maturityAmountPaise <= 0n) throw new PayoutPolicyError('Maturity amount must be positive.');
-  return isPriorityCase(maturityAmountPaise) ? 12 : 6;
+  if (isPriorityCase(maturityAmountPaise)) return 12;
+  return maturityAmountPaise <= THREE_PART_THRESHOLD_PAISE ? 3 : 6;
 }
 
-/** Recommended total window: three processing days plus twelve payout working days. */
+/** Recommended window sized for the amount band's 3, 6, or 12 payment cadence. */
 export function recommendedWindowDaysFor(maturityAmountPaise: bigint): number {
-  recommendedPayoutDaysFor(maturityAmountPaise);
-  return PROCESSING_WORKING_DAYS + MAX_PAYOUT_PARTS;
+  const parts = recommendedPayoutDaysFor(maturityAmountPaise);
+  return parts === 3
+    ? windowDaysForPayoutCount(maturityAmountPaise, parts)
+    : PROCESSING_WORKING_DAYS + MAX_PAYOUT_PARTS;
 }
 
 export function cadenceFor(maturityAmountPaise: bigint): Cadence {
