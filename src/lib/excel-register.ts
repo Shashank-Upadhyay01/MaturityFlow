@@ -259,7 +259,15 @@ export function parseRegisterGrid(grid: unknown[][]): { rows: RegisterRow[]; err
     try {
       const moneyAt = (column: number) => parseRupeesToPaise((column < 0 ? '' : excelCellRaw(line[column])) as string | number || '0');
       maturityPaise = moneyAt(iAmt);
+      const paidRaw = iPaid < 0 ? '' : excelCellRaw(line[iPaid]);
+      const remainingRaw = iRem < 0 ? '' : excelCellRaw(line[iRem]);
       paidPaise = moneyAt(iPaid);
+      if (String(paidRaw ?? '').trim() === '' && String(remainingRaw ?? '').trim() !== '') {
+        const suppliedRemaining = moneyAt(iRem);
+        if (suppliedRemaining > maturityPaise) throw new Error('Remaining exceeds Maturity Amount.');
+        paidPaise = maturityPaise - suppliedRemaining;
+        warnings.push('Paid was blank; it was derived from Maturity Amount − Remaining.');
+      }
       todayPaise = moneyAt(iToday);
       if (maturityPaise <= 0n) throw new Error('Maturity Amount must be greater than zero.');
       if (paidPaise > maturityPaise) throw new Error('Paid exceeds Maturity Amount.');

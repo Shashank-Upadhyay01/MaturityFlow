@@ -113,6 +113,26 @@ describe('parseRegisterGrid', () => {
     expect(rows[0].warnings.some((w) => w.includes('Remaining'))).toBe(true);
   });
 
+  it('derives paid from a supplied remaining balance when Paid is blank', () => {
+    const { rows, errors } = parseRegisterGrid([
+      header,
+      ['1', 'Asha', '2026-06-01', '2026-06-10', '2026-06-12', 27773, '', 2773, 'Agent', ''],
+    ]);
+    expect(errors).toEqual([]);
+    expect(rows[0].paidRupees).toBe(25000);
+    expect(rows[0].remainingRupees).toBe(2773);
+    expect(rows[0].warnings.some((w) => w.includes('Paid was blank'))).toBe(true);
+  });
+
+  it('rejects a supplied remaining balance above maturity when Paid is blank', () => {
+    const { rows, errors } = parseRegisterGrid([
+      header,
+      ['1', 'Asha', '2026-06-01', '2026-06-10', '2026-06-12', 10000, '', 10001, 'Agent', ''],
+    ]);
+    expect(rows).toEqual([]);
+    expect(errors[0]).toContain('Remaining exceeds Maturity Amount');
+  });
+
   it('rejects a sheet without the required headers', () => {
     const { rows, errors } = parseRegisterGrid([['Foo', 'Bar'], ['x', 'y']]);
     expect(rows).toEqual([]);
