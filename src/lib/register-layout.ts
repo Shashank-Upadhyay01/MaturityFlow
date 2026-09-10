@@ -48,6 +48,8 @@ export interface RegisterColDef {
    * and agent — get truncated to "Rajendra Na" while Days sits in an empty 90px cell.
    */
   w?: string;
+  /** Admin-selected width in rem. Applied inline so arbitrary saved widths survive Tailwind builds. */
+  widthRem?: number;
   /**
    * What gets sacrificed first when the sheet is too narrow. Lower survives longer.
    *
@@ -151,9 +153,10 @@ export interface RegisterLayout {
   version: number;
   order: RegisterColId[];
   hidden: RegisterColId[];
+  widths: Partial<Record<RegisterColId, number>>;
 }
 
-export const REGISTER_LAYOUT_VERSION = 3;
+export const REGISTER_LAYOUT_VERSION = 4;
 
 export const DEFAULT_REGISTER_LAYOUT: RegisterLayout = {
   version: REGISTER_LAYOUT_VERSION,
@@ -163,6 +166,7 @@ export const DEFAULT_REGISTER_LAYOUT: RegisterLayout = {
     'formDate', 'perDay', 'paidCashToday', 'paidOnlineToday', 'cash', 'online', 'days',
   ],
   hidden: ['formDate', 'perDay', 'paidCashToday', 'paidOnlineToday', 'cash', 'online', 'days'],
+  widths: {},
 };
 
 const ID_SET = new Set<string>(REGISTER_COL_IDS);
@@ -171,7 +175,7 @@ export function parseRegisterLayout(raw: unknown): RegisterLayout {
   const order: RegisterColId[] = [];
   const hidden: RegisterColId[] = [];
   const seen = new Set<string>();
-  const o = raw && typeof raw === 'object' ? (raw as { order?: unknown; hidden?: unknown }) : {};
+  const o = raw && typeof raw === 'object' ? (raw as { order?: unknown; hidden?: unknown; widths?: unknown }) : {};
   const version = raw && typeof raw === 'object' ? (raw as { version?: unknown }).version : undefined;
   const hideSet = new Set(
     Array.isArray(o.hidden) ? o.hidden.filter((x): x is string => typeof x === 'string') : [],
@@ -179,11 +183,12 @@ export function parseRegisterLayout(raw: unknown): RegisterLayout {
 
   // Every saved layout predating the corrected cashier sheet is upgraded once. The version is
   // persisted when Admin next saves Columns, so later custom layouts remain exactly as chosen.
-  if (version !== REGISTER_LAYOUT_VERSION) {
+  if (version !== REGISTER_LAYOUT_VERSION && version !== 3) {
     return {
       version: REGISTER_LAYOUT_VERSION,
       order: [...DEFAULT_REGISTER_LAYOUT.order],
       hidden: [...DEFAULT_REGISTER_LAYOUT.hidden],
+      widths: {},
     };
   }
 
@@ -199,14 +204,27 @@ export function parseRegisterLayout(raw: unknown): RegisterLayout {
     for (const id of o.order) if (typeof id === 'string') take(id);
   }
   for (const id of REGISTER_COL_IDS) take(id);
-  return { version: REGISTER_LAYOUT_VERSION, order, hidden };
+  const widths: Partial<Record<RegisterColId, number>> = {};
+  if (o.widths && typeof o.widths === 'object' && !Array.isArray(o.widths)) {
+    for (const [id, value] of Object.entries(o.widths)) {
+      if (ID_SET.has(id) && typeof value === 'number' && Number.isFinite(value)) {
+        widths[id as RegisterColId] = Math.min(20, Math.max(3, Math.round(value * 4) / 4));
+      }
+    }
+  }
+  return { version: REGISTER_LAYOUT_VERSION, order, hidden, widths };
 }
 
 export function visibleRegisterCols(layout: RegisterLayout): RegisterColDef[] {
   const hide = new Set(layout.hidden);
   return layout.order
     .filter((id) => !hide.has(id) || REGISTER_COL_DEFS[id].required)
-    .map((id) => REGISTER_COL_DEFS[id]);
+    .map((id) => ({ ...REGISTER_COL_DEFS[id], widthRem: layout.widths[id] }));
+}
+
+/** Every exportable column in the saved order, including columns hidden from the screen. */
+export function allRegisterCols(layout: RegisterLayout): RegisterColDef[] {
+  return layout.order.map((id) => ({ ...REGISTER_COL_DEFS[id], widthRem: layout.widths[id] }));
 }
 
 export function excelHeadersForLayout(layout: RegisterLayout): string[] {
@@ -217,6 +235,7 @@ export function excelHeadersForLayout(layout: RegisterLayout): string[] {
 
 /** The declared width in rem. `w-[6.25rem]` → 6.25. Falls back to a sane default. */
 export function colWidthRem(col: RegisterColDef): number {
+  if (col.widthRem) return col.widthRem;
   const m = /\[([\d.]+)rem\]/.exec(col.w ?? '');
   return m ? Number(m[1]) : 5;
 }

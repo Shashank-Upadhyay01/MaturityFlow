@@ -43,7 +43,6 @@ import {
   removeRegisterRowsAction,
   reopenDayAction,
   requestCloseDayAction,
-  saveDayCashAction,
   saveRegisterFieldsAction,
   saveRegisterPaidTotalAction,
   settleRegisterRowAction,
@@ -127,6 +126,8 @@ import {
 } from '@/lib/register-view';
 import {
   columnsThatFit,
+  allRegisterCols,
+  colWidthRem,
   visibleRegisterCols,
   REGISTER_GUTTER_REM,
   type RegisterColDef,
@@ -221,6 +222,7 @@ function SortTh({
   onSort,
   right,
   className,
+  widthRem,
 }: {
   label: string;
   /** The spreadsheet letter for this column — A, B, C — shown above the heading. */
@@ -239,10 +241,15 @@ function SortTh({
   onSort: (col: SortKey) => void;
   right?: boolean;
   className?: string;
+  widthRem?: number;
 }) {
   const active = sortKey === col;
   return (
-    <th className={cn(th, right && num, className)} title={hint}>
+    <th
+      className={cn(th, right && num, className)}
+      title={hint}
+      style={widthRem ? { width: `${widthRem}rem` } : undefined}
+    >
       {letter && (
         <span
           className={cn(
@@ -488,7 +495,6 @@ function isDailyRegisterRow(row: RegisterRow): boolean {
   return isOnTodaysList(row) || BigInt(row.paidTodayActualPaise || '0') > 0n;
 }
 
-type ExtraMode = 'today' | 'all';
 
 /** Which bulk popover is open, if any. */
 type BulkMenu = 'today' | 'agent' | 'remove' | null;
@@ -972,7 +978,6 @@ export function RegisterSheet(props: {
   // payout date that made a successful import look like it had vanished from the Register.
   const initialTab: Tab = props.canPay && props.rows.some(isDailyRegisterRow) ? 'due' : 'all';
   const [tab, setTab] = useState<Tab>(initialTab);
-  const [extraMode, setExtraMode] = useState<ExtraMode>('today');
   const [agentId, setAgentId] = useState('');
   const [range, setRange] = useState<DateRange>(EMPTY_RANGE);
   const [dateField, setDateField] = useState<DateField>('payment');
@@ -987,8 +992,6 @@ export function RegisterSheet(props: {
   const [printScope, setPrintScope] = useState<'view' | 'selection' | null>(null);
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
-  const [cashHand, setCashHand] = useState(rupeesStr(BigInt(props.cashInHandPaise)));
-  const [onlinePlan, setOnlinePlan] = useState(rupeesStr(BigInt(props.plannedOnlinePaise)));
   const [draft, setDraft] = useState<Record<string, Partial<Record<string, string>>>>({});
   const restoreFocusRef = useRef<{ row: string; column: string } | null>(null);
   /** A cell the sheet has been asked to put the caret in once its row exists in the DOM. */
@@ -1028,6 +1031,7 @@ export function RegisterSheet(props: {
   const [addCount, setAddCount] = useState('5');
   const [draftLayout, setDraftLayout] = useState<RegisterLayout>(props.columnLayout);
   const visCols = visibleRegisterCols(props.columnLayout);
+  const exportCols = allRegisterCols(props.columnLayout);
 
   useEffect(() => {
     const target = restoreFocusRef.current;
@@ -1363,11 +1367,6 @@ export function RegisterSheet(props: {
   const todaysListCount = props.rows.filter(isDailyRegisterRow).length;
 
   const allRemaining = props.rows.reduce((a, r) => a + BigInt(r.remainingPaise), 0n);
-  const cashHandP = tryParseRupeesToPaise(cashHand) ?? 0n;
-  const onlineP = tryParseRupeesToPaise(onlinePlan) ?? 0n;
-  const need = extraMode === 'today' ? totals.today : dateFilterOn ? totals.remaining : allRemaining;
-  const extraAfterCash = need > cashHandP ? need - cashHandP : 0n;
-  const extraOpening = extraAfterCash > onlineP ? extraAfterCash - onlineP : 0n;
 
   /*
    * Cover: what the branch can actually pay out today against what it owes today.
@@ -1375,9 +1374,6 @@ export function RegisterSheet(props: {
    * thing the clerk used to have to compute in their head before opening the till.
    * Ratio is taken in paise and only then narrowed to a Number, so no money touches float.
    */
-  const coverHave = cashHandP + onlineP;
-  const covered = coverHave >= need;
-  const coverPct = need > 0n ? Math.min(100, Number((coverHave * 1000n) / need) / 10) : 100;
 
   const agentTotals = useMemo(() => {
     if (!agentId) return null;
@@ -2003,8 +1999,8 @@ export function RegisterSheet(props: {
   function exportCsv(scope: 'view' | 'selection') {
     const { list, name } = exportScope(scope);
     if (list.length === 0) return toast.error('Nothing to export');
-    const header = visCols.map((c) => c.excel);
-    const body = list.map((r) => visCols.map((c) => exportValue(c.id, r)));
+    const header = exportCols.map((c) => c.excel);
+    const body = list.map((r) => exportCols.map((c) => exportValue(c.id, r)));
     const csv = [header, ...body]
       .map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
       .join('\r\n');
@@ -2029,14 +2025,14 @@ export function RegisterSheet(props: {
       const wb = new ExcelJS.Workbook();
       wb.creator = PRODUCT_NAME;
       const ws = wb.addWorksheet('Register', { views: [{ state: 'frozen', ySplit: 1 }] });
-      const header = visCols.map((c) => c.excel);
+      const header = exportCols.map((c) => c.excel);
       ws.addRow(header);
       ws.getRow(1).font = { bold: true };
       ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E7FF' } };
-      for (const r of list) ws.addRow(visCols.map((c) => exportValue(c.id, r)));
+      for (const r of list) ws.addRow(exportCols.map((c) => exportValue(c.id, r)));
       ws.columns.forEach((col, i) => {
         col.width = Math.max(12, (header[i]?.length ?? 10) + 4);
-        if (visCols[i]?.right) col.numFmt = '#,##,##0';
+        if (exportCols[i]?.right) col.numFmt = '#,##,##0';
       });
       ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: header.length } };
       const buf = await wb.xlsx.writeBuffer();
@@ -2580,12 +2576,6 @@ export function RegisterSheet(props: {
   });
 
   /** Both desk money fields write the same row, so they commit through one call. */
-  async function commitDayCash() {
-    const r = await saveDayCashAction(props.branchId, props.today, cashHand, onlinePlan);
-    if (!r.ok) toast.error(r.error);
-    else router.refresh();
-  }
-
   const liveCount = props.rows.filter((r) => BigInt(r.remainingPaise) > 0n).length;
 
   return (
@@ -2607,6 +2597,17 @@ export function RegisterSheet(props: {
           }
         `}</style>
       )}
+      <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
+        <span className="mr-1 text-[0.72rem] text-[var(--faint-fg)]">
+          {selCount > 0 ? `${selCount} selected` : `${visible.length} rows in view`}
+        </span>
+        <Button variant="glass" size="sm" loading={busy === 'export'} onClick={() => void exportXlsx(selCount > 0 ? 'selection' : 'view')}>
+          <Download className="h-3.5 w-3.5" /> {selCount > 0 ? 'Export selected' : 'Export register'}
+        </Button>
+        <Button variant="glass" size="sm" onClick={() => doPrint(selCount > 0 ? 'selection' : 'view')}>
+          <Printer className="h-3.5 w-3.5" /> {selCount > 0 ? 'Print selected' : 'Print register'}
+        </Button>
+      </div>
       {/*
         One command bar, where there used to be three bands under a mostly-empty app bar.
         Identity moved up into the top bar (topbar.tsx prints the page name now), so what is
@@ -2985,27 +2986,6 @@ export function RegisterSheet(props: {
                     </a>
                   </Button>
                 )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  loading={busy === 'export'}
-                  onClick={() => void exportXlsx('view')}
-                  title={`Export these ${visible.length} rows to Excel — tick rows to export just those`}
-                  aria-label="Export this view to Excel"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={() => doPrint('view')}
-                  title={`Print these ${visible.length} rows`}
-                  aria-label="Print this view"
-                >
-                  <Printer className="h-3.5 w-3.5" />
-                </Button>
                 {props.canLayout && (
                   <Button
                     variant={colsOpen ? 'glass' : 'ghost'}
@@ -3042,7 +3022,7 @@ export function RegisterSheet(props: {
           takes a defined share of the width and the label/value rows inside justify to both of
           its edges, so the figures line up in a readable right-hand column.
         */}
-        <div className="grid grid-cols-1 gap-x-2 gap-y-1 border-t border-[var(--hairline)] px-2 py-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <div className="grid grid-cols-1 gap-x-2 gap-y-1 border-t border-[var(--hairline)] px-2 py-2 sm:grid-cols-2 lg:grid-cols-4">
           <button
             type="button"
             onClick={() => applyFilter({ tab: 'due', range: EMPTY_RANGE })}
@@ -3136,126 +3116,6 @@ export function RegisterSheet(props: {
             />
           </DeskZone>
 
-          <DeskZone title="Cash to pay with">
-            <DeskInputRow
-              label="In hand"
-              value={cashHand}
-              onChange={setCashHand}
-              onCommit={commitDayCash}
-              disabled={!props.canSetCash || locked}
-              title="Cash the branch is opening with today (approximate)"
-            />
-            <DeskInputRow
-              label="Online"
-              value={onlinePlan}
-              onChange={setOnlinePlan}
-              onCommit={commitDayCash}
-              disabled={!props.canSetCash || locked}
-              title="Amount planned to go out by online transfer"
-            />
-            <DeskRow
-              label="Total to hand"
-              value={`₹${inr(coverHave)}`}
-              title="Cash in hand plus the planned online transfer"
-            />
-          </DeskZone>
-
-          <DeskZone
-            title="Shortfall"
-            extra={
-              /*
-                What the shortfall is measured against, and it has to look like a choice.
-
-                It was two words in the faintest grey the palette has, inside a hairline box, at
-                the size the column labels use - so it read as a caption rather than a switch, and
-                the branch did not know the figure beneath it could be asked a different question.
-                The selected side now carries the brand fill it deserves as the thing that decides
-                what a money figure means, and the other side is legible rather than a ghost.
-              */
-              <span
-                className="ml-auto flex shrink-0 items-center rounded-[7px] border border-[var(--input-border)] bg-[var(--glass-bg-subtle)] p-px"
-                role="group"
-                aria-label="Measure the shortfall against"
-              >
-                {(['today', 'all'] as ExtraMode[]).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    aria-pressed={extraMode === m}
-                    title={
-                      m === 'today'
-                        ? "Measure against this view's total for today"
-                        : 'Measure against everything still outstanding'
-                    }
-                    className={cn(
-                      'rounded-[6px] px-2 py-px text-[0.65rem] font-semibold leading-none transition-colors',
-                      extraMode === m
-                        ? 'bg-[var(--color-brand-600)] text-white shadow-sm'
-                        : 'text-[var(--muted-fg)] hover:bg-[var(--glass-bg-strong)] hover:text-[var(--page-fg)]',
-                    )}
-                    onClick={() => setExtraMode(m)}
-                  >
-                    {m === 'today' ? 'Today' : 'All'}
-                  </button>
-                ))}
-              </span>
-            }
-          >
-            <DeskRow
-              label="Short of cash"
-              tone={extraAfterCash > 0n ? 'warn' : 'plain'}
-              value={`₹${inr(extraAfterCash)}`}
-              title={`${extraMode === 'today' ? "This view's total for today" : dateFilterOn ? "This view's remaining" : 'All remaining'} less cash in hand`}
-            />
-            <DeskRow
-              label="After online"
-              tone={extraOpening > 0n ? 'warn' : 'plain'}
-              value={`₹${inr(extraOpening)}`}
-              title="Still to arrange once the planned online transfer lands"
-            />
-            {/*
-              Cover, sitting under the two figures it settles. Amber only when the branch is
-              genuinely short — an amber bar every morning is a bar nobody reads — and no bar at
-              all when nothing is due, because a full green track would read as a full till.
-            */}
-            <div
-              className="flex items-center gap-1.5 pt-0.5"
-              title={
-                need === 0n
-                  ? 'Nothing is due in this view.'
-                  : `₹${inr(coverHave)} to hand against ₹${inr(need)} due.`
-              }
-            >
-              {need > 0n && (
-                <span
-                  role="progressbar"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(coverPct)}
-                  aria-label="Cash and online transfer against what is due"
-                  className="h-1.5 min-w-[1.5rem] flex-1 overflow-hidden rounded-full bg-[var(--glass-bg-subtle)] ring-1 ring-inset ring-[var(--hairline)]"
-                >
-                  <span
-                    className={cn(
-                      'block h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none',
-                      covered ? 'bg-[var(--color-money-500)]' : 'bg-[var(--color-warn-500)]',
-                    )}
-                    style={{ width: `${coverPct}%` }}
-                  />
-                </span>
-              )}
-              <span className="shrink-0 whitespace-nowrap text-[0.65rem] font-semibold tabular-nums">
-                {need === 0n ? (
-                  <span className="text-[var(--faint-fg)]">Nothing due</span>
-                ) : covered ? (
-                  <span className="text-[var(--color-money-500)]">Covered</span>
-                ) : (
-                  <span className="text-[var(--color-warn-600)]">{Math.round(coverPct)}% covered</span>
-                )}
-              </span>
-            </div>
-          </DeskZone>
-
           {agentTotals ? (
             <DeskZone title={props.agents.find((a) => a.id === agentId)?.name ?? 'Agent'}>
               <DeskRow label="Live" value={`${agentTotals.live} / ${agentTotals.n}`} />
@@ -3275,7 +3135,7 @@ export function RegisterSheet(props: {
       {colsOpen && props.canLayout && (
         <Glass className="px-3 py-3 print:hidden">
           <p className="mb-2 text-[0.75rem] text-[var(--muted-fg)]">
-            Drag the order with the arrows. Untick to hide. The Excel template follows this layout.
+            Reorder, show or hide, and resize each register column. Exports always include every column.
           </p>
           <ol className="space-y-1">
             {draftLayout.order.map((id, i) => {
@@ -3300,6 +3160,22 @@ export function RegisterSheet(props: {
                     {def.label}
                     <span className="ml-2 text-[0.7rem] text-[var(--faint-fg)]">{def.excel}</span>
                   </span>
+                  <label className="flex items-center gap-1 text-[0.68rem] text-[var(--muted-fg)]">
+                    Width
+                    <input
+                      type="number"
+                      min="3"
+                      max="20"
+                      step="0.25"
+                      value={draftLayout.widths[id] ?? colWidthRem(def)}
+                      onChange={(e) => setDraftLayout((cur) => ({
+                        ...cur,
+                        widths: { ...cur.widths, [id]: Number(e.target.value) },
+                      }))}
+                      className="mf-input !h-7 !w-16 !px-1 !py-0 text-right text-[0.72rem]"
+                      aria-label={`${def.label} width in rem`}
+                    />
+                  </label>
                   <button
                     type="button"
                     className="rounded p-1 text-[var(--muted-fg)] disabled:opacity-30"
@@ -3339,7 +3215,7 @@ export function RegisterSheet(props: {
               variant="primary"
               size="sm"
               onClick={async () => {
-                const r = await saveRegisterLayoutAction(props.branchId, draftLayout.order, draftLayout.hidden);
+                const r = await saveRegisterLayoutAction(props.branchId, draftLayout.order, draftLayout.hidden, draftLayout.widths);
                 if (!r.ok) toast.error(r.error);
                 else {
                   toast.success('Column layout saved — template will match');
@@ -3518,20 +3394,6 @@ export function RegisterSheet(props: {
               </span>
             )}
           </span>
-
-          <span className="h-6 w-px shrink-0 bg-[var(--hairline)]" aria-hidden />
-
-          <Button className="shrink-0" variant="ghost" size="sm" onClick={() => void exportXlsx('selection')} loading={busy === 'export'}>
-            <Download className="h-3.5 w-3.5" />
-            Excel
-          </Button>
-          <Button className="shrink-0" variant="ghost" size="sm" onClick={() => exportCsv('selection')}>
-            CSV
-          </Button>
-          <Button className="shrink-0" variant="ghost" size="sm" onClick={() => doPrint('selection')}>
-            <Printer className="h-3.5 w-3.5" />
-            Print
-          </Button>
 
           {props.canEdit && !locked && (
             <div className="relative shrink-0">
@@ -3791,6 +3653,7 @@ export function RegisterSheet(props: {
                     sortDir={sortDir}
                     onSort={toggleSort}
                     right={c.right}
+                    widthRem={c.widthRem}
                     className={cn(c.w, pinned && colIndex === 0 && cn(PIN_HEAD, 'left-[3.75rem]'))}
                   />
                 ))}

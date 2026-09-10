@@ -82,7 +82,7 @@
 
      Only the light values change here — `.dark` redefines every one of these below.
   */
-  --page-bg: #dfe5ee;
+  --page-bg: #d8dee8;
   --page-fg: #172033;
   --muted-fg: #3d4552;
   --faint-fg: #555d6b;
@@ -92,10 +92,10 @@
      somebody reads for eight hours; at 96% luminance the page still looks white but stops
      burning. --glass-bg-strong keeps real white for the few surfaces that must pop.
   */
-  --glass-bg: #fafbfd;
-  --glass-bg-strong: #ffffff;
-  --glass-bg-subtle: #dce0e7;
-  --glass-border: #a4aebe;
+  --glass-bg: #f5f6f8;
+  --glass-bg-strong: #eceff3;
+  --glass-bg-subtle: #d8dde5;
+  --glass-border: #929dae;
   --glass-border-quiet: #c6cdda;
   --glass-highlight: transparent;
   --glass-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
@@ -108,7 +108,7 @@
      beside it — the register's selection bar parks over the table's sticky header, and at any
      translucency the column headings read straight through the totals printed on it.
   */
-  --surface-solid: #fafbfd;
+  --surface-solid: #f5f6f8;
 
   /*
      Grid lines a clerk can actually follow across a 16-column row.
@@ -119,9 +119,9 @@
      WCAG 1.4.11 asks that of a control boundary, and a field you cannot find is worse than an
      ugly one.
   */
-  --hairline: #b1b9c7;
-  --input-bg: #ffffff;
-  --input-border: #8693a8;
+  --hairline: #9ba5b5;
+  --input-bg: #eef1f5;
+  --input-border: #6f7d92;
   --ring: rgba(37, 99, 235, 0.42);
 
   /*
@@ -687,6 +687,23 @@ table th {
 @media print {
   aside, header, footer, .print\:hidden { display: none !important; }
   main { max-width: none !important; padding: 0 !important; }
+  [data-register-sheet="true"] {
+    max-height: none !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+  [data-register-sheet="true"] table {
+    width: 100% !important;
+    table-layout: fixed !important;
+    font-size: 7px !important;
+  }
+  [data-register-sheet="true"] th,
+  [data-register-sheet="true"] td {
+    overflow: hidden !important;
+    overflow-wrap: anywhere;
+    padding: 2px !important;
+  }
+  [data-register-sheet="true"] thead { position: static !important; }
   .glass { background: white !important; box-shadow: none !important; backdrop-filter: none !important; }
   input[data-register-cell] {
     border: none !important;

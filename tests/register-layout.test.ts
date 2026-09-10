@@ -34,6 +34,19 @@ describe('register layout', () => {
     expect(vis).not.toContain('agent');
   });
 
+  it('keeps safe admin column widths and clamps invalid extremes', () => {
+    const layout = parseRegisterLayout({
+      version: REGISTER_LAYOUT_VERSION,
+      order: ['customer', 'amount'],
+      hidden: [],
+      widths: { customer: 12.25, amount: 99, paid: 1 },
+    });
+    expect(layout.widths.customer).toBe(12.25);
+    expect(layout.widths.amount).toBe(20);
+    expect(layout.widths.paid).toBe(3);
+    expect(visibleRegisterCols(layout).find((c) => c.id === 'customer')?.widthRem).toBe(12.25);
+  });
+
   it('template headers follow the visible order', () => {
     const layout = parseRegisterLayout({
       version: REGISTER_LAYOUT_VERSION,

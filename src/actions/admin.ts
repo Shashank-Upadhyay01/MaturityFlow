@@ -266,13 +266,14 @@ export async function saveRegisterLayoutAction(
   branchId: string,
   order: string[],
   hidden: string[],
+  widths: Record<string, number>,
 ): Promise<ActionResult> {
   try {
     const { session, actor } = await requireActor();
     assertCan(actor, 'settings.manage', { branchId });
     if (!branchId) return fail('No branch', 'VALIDATION');
     const { parseRegisterLayout, REGISTER_LAYOUT_VERSION } = await import('@/lib/register-layout');
-    const layout = parseRegisterLayout({ version: REGISTER_LAYOUT_VERSION, order, hidden });
+    const layout = parseRegisterLayout({ version: REGISTER_LAYOUT_VERSION, order, hidden, widths });
     await db.transaction(async (tx) => {
       await tx
         .update(branches)
