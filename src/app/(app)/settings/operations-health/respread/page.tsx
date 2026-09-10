@@ -35,6 +35,19 @@ import { getBranchPolicy } from '@/services/calendar-service';
 import { isWorkingDay, todayISO, type WorkingDayCalendar } from '@/lib/working-days';
 
 export const dynamic = 'force-dynamic';
+/* A hundred-odd locked re-plans do not fit in one request. Ask for the time, then batch anyway. */
+export const maxDuration = 300;
+
+/**
+ * How many plans one press repairs.
+ *
+ * Each re-plan takes the case lock, rewrites its instalments and writes an audit row, in its own
+ * transaction. Trying all of them in a single request ran past the function's time limit and
+ * committed nothing. A small batch always finishes; the page reloads with what is left, and
+ * pressing again picks up where it stopped. The work is idempotent, so a stopped run is never a
+ * half-repaired case - only fewer repaired cases.
+ */
+const BATCH_SIZE = 15;
 
 /** A final instalment may legitimately carry a rounding remainder; a fifth of slack absorbs it. */
 const TOLERANCE_NUMERATOR = 12n;
@@ -158,7 +171,7 @@ async function respread() {
   'use server';
   const { session, actor } = await requireActor();
   if (activeRole(actor.role) !== 'ADMIN') throw new Error('Admin only');
-  const targets = await findTargets();
+  const targets = (await findTargets()).slice(0, BATCH_SIZE);
   const meta = await requestMeta();
   let changed = 0;
   const failed: string[] = [];
@@ -180,7 +193,7 @@ async function respread() {
   if (failed.length > 0) {
     throw new Error(`${changed} re-spread; ${failed.length} failed — ${failed.join(' | ')}`);
   }
-  redirect(`/maturities?respread=${changed}`);
+  redirect(`/settings/operations-health/respread?done=${changed}`);
 }
 
 export default async function RespreadPage() {
@@ -235,7 +248,7 @@ export default async function RespreadPage() {
           </table>
           <form action={respread} className="mt-6">
             <button type="submit" className="rounded bg-black px-4 py-2 text-sm text-white">
-              Re-spread {targets.length} plan{targets.length === 1 ? '' : 's'}
+              Re-spread {Math.min(BATCH_SIZE, targets.length)} of {targets.length}
             </button>
           </form>
         </>
