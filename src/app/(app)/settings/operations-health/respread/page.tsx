@@ -119,7 +119,22 @@ async function findTargets(): Promise<Target[]> {
     if (closedDays.length > 0) reasons.push(`closed day ${closedDays.join(', ')}`);
     if (reasons.length === 0) return [];
 
+    /*
+      Where the repaired plan picks up.
+
+      A payment date still ahead of us is day one and is restored — that is how a case dated the
+      11th, which an earlier Apply dragged onto the 10th, gets its own date back. Once that date
+      has passed, day one is spent, and the next promised day is left exactly where it is: a
+      customer told to come on Monday must not be pulled onto Friday because their plan is being
+      reshaped. Only a plan that already starts today, or earlier, restarts today.
+    */
     const promised = row.paymentOn ?? row.firstPayoutOn;
+    const nextDue = (row.dueDates ?? []).reduce<string | null>(
+      (min, d) => (min === null || d < min ? d : min),
+      null,
+    );
+    const from =
+      promised && promised > today ? promised : nextDue && nextDue > today ? nextDue : today;
     return [
       {
         id: row.id,
@@ -132,7 +147,7 @@ async function findTargets(): Promise<Target[]> {
         storedWindowDays: row.windowDays,
         windowDays,
         parts: rolloverPartsFor(row.maturityAmountPaise, remaining, windowDays),
-        from: promised && promised > today ? promised : today,
+        from,
         why: reasons.join(' · '),
       },
     ];
