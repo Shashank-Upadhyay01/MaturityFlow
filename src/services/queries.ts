@@ -2108,6 +2108,89 @@ export async function listNotTakenToday(actor: Actor, asOf: string) {
 }
 
 /**
+ * Everyone who actually took money on one day, one row per person.
+ *
+ * The source is the transaction ledger, not the schedule: a day's truth is what left the drawer,
+ * including a payment nobody had planned and excluding one that was later reversed. A customer
+ * who came to the counter twice is ONE person on this list with two payments against their name,
+ * which is the difference between this and the desk's `withdrawalsToday` — that counts receipts.
+ *
+ * `valueDate` is the business day the money belongs to, so a late entry typed the next morning
+ * still lands on the day it was actually paid.
+ */
+export async function listPaidOn(actor: Actor, on: string, branchId?: string | null) {
+  const scope = caseScope(actor);
+  return db
+    .select({
+      caseId: maturityCases.id,
+      caseNumber: maturityCases.caseNumber,
+      customerName: customers.name,
+      accountNumber: customers.accountNumber,
+      agentName: agents.name,
+      branchCode: branches.code,
+      maturityAmountPaise: maturityCases.maturityAmountPaise,
+      paidCashPaise: sql<string>`SUM(${payoutTransactions.cashPaise})`,
+      paidOnlinePaise: sql<string>`SUM(${payoutTransactions.onlinePaise})`,
+      paidPaise: sql<string>`SUM(${payoutTransactions.totalPaise})`,
+      payments: sql<number>`COUNT(*)::int`,
+      firstPaidAt: sql<string>`MIN(${payoutTransactions.paidAt})`,
+      // Blank rather than a bare comma when only some of the day's legs carried a reference.
+      reference: sql<string | null>`NULLIF(STRING_AGG(DISTINCT ${payoutTransactions.reference}, ', '), '')`,
+      /** What the whole case still owes after the day — context for whether they are finished. */
+      remainingPaise: sql<string>`${maturityCases.maturityAmountPaise} - ${maturityCases.paidCashPaise} - ${maturityCases.paidOnlinePaise} - ${maturityCases.settlementAdjustmentPaise}`,
+    })
+    .from(payoutTransactions)
+    .innerJoin(maturityCases, eq(maturityCases.id, payoutTransactions.caseId))
+    .innerJoin(customers, eq(customers.id, maturityCases.customerId))
+    .innerJoin(agents, eq(agents.id, maturityCases.agentId))
+    .innerJoin(branches, eq(branches.id, maturityCases.branchId))
+    .where(
+      and(
+        eq(payoutTransactions.valueDate, on),
+        isNull(payoutTransactions.reversedAt),
+        ...(branchId ? [eq(maturityCases.branchId, branchId)] : []),
+        ...(scope ? [scope] : []),
+      ),
+    )
+    .groupBy(
+      maturityCases.id,
+      customers.name,
+      customers.accountNumber,
+      agents.name,
+      branches.code,
+    )
+    .orderBy(desc(sql`SUM(${payoutTransactions.totalPaise})`));
+}
+
+/**
+ * How many people were promised money on a day and have not been handed it.
+ *
+ * Counts PEOPLE, not instalments, so it sits beside the paid list as the same kind of number.
+ * Only the case's current schedule version counts — superseded rows are old plans, not debts.
+ */
+export async function countStillDueOn(actor: Actor, on: string, branchId?: string | null) {
+  const scope = caseScope(actor);
+  const [row] = await db
+    .select({
+      people: sql<number>`COUNT(DISTINCT ${maturityCases.id})::int`,
+      duePaise: sql<string>`COALESCE(SUM(${payoutInstalments.amountPaise} - ${payoutInstalments.paidCashPaise} - ${payoutInstalments.paidOnlinePaise}), 0)`,
+    })
+    .from(payoutInstalments)
+    .innerJoin(maturityCases, eq(maturityCases.id, payoutInstalments.caseId))
+    .where(
+      and(
+        eq(payoutInstalments.dueOn, on),
+        eq(payoutInstalments.scheduleVersion, maturityCases.scheduleVersion),
+        isNull(payoutInstalments.supersededAt),
+        inArray(payoutInstalments.status, ['PENDING', 'PARTIAL']),
+        ...(branchId ? [eq(maturityCases.branchId, branchId)] : []),
+        ...(scope ? [scope] : []),
+      ),
+    );
+  return { people: row?.people ?? 0, duePaise: big(row?.duePaise) };
+}
+
+/**
  * Live cases at or above the ₹1 lakh line — the ones paid every working day.
  *
  * The threshold is the policy's, not a literal repeated here: change LARGE_CASE_THRESHOLD_PAISE

@@ -97,6 +97,9 @@ export default async function MaturitiesPage({
       <RegisterDayNav date={registerDate} today={today} status={desk.dayStatus} />
       <RegisterTabs
         showPlan={registerDate === today}
+        date={registerDate}
+        today={today}
+        branchId={compiledView ? null : picked.branchId}
         sheet={
           <RegisterSheet
             key={compiledView ? 'all' : picked.branchId ?? 'none'}

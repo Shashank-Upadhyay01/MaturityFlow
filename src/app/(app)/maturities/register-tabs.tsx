@@ -1,15 +1,16 @@
 'use client';
 
-import { LayoutGrid, Loader2, RefreshCw, Table2 } from 'lucide-react';
+import { HandCoins, LayoutGrid, Loader2, RefreshCw, Table2 } from 'lucide-react';
 import { useCallback, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Glass } from '@/components/ui/glass';
 import type { PlanCase, PlanInstalment } from '@/lib/plan-view';
 import { cn } from '@/lib/utils';
+import { PaidBoard, type PaidPayload } from './paid-board';
 import { PlanBoard, type CalendarSnapshot } from './plan-board';
 
-type View = 'sheet' | 'plan';
+type View = 'sheet' | 'plan' | 'paid';
 interface PlanPayload {
   cases: PlanCase[];
   instalments: PlanInstalment[];
@@ -24,9 +25,24 @@ interface PlanPayload {
  * The initial Register request no longer runs three queries and serialises every schedule for a
  * panel most clerks do not open.
  */
-export function RegisterTabs({ sheet, showPlan = true }: { sheet: ReactNode; showPlan?: boolean }) {
+export function RegisterTabs({
+  sheet,
+  showPlan = true,
+  date,
+  today,
+  branchId,
+}: {
+  sheet: ReactNode;
+  showPlan?: boolean;
+  /** The day the sheet is showing — the Paid tab answers for this day, not for today. */
+  date: string;
+  today: string;
+  /** Null on HQ's compiled all-branches view, where the list is not narrowed. */
+  branchId?: string | null;
+}) {
   const [view, setView] = useState<View>('sheet');
   const [plan, setPlan] = useState<PlanPayload | null>(null);
+  const [paid, setPaid] = useState<PaidPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,9 +63,37 @@ export function RegisterTabs({ sheet, showPlan = true }: { sheet: ReactNode; sho
     }
   }, []);
 
+  const loadPaid = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ on: date });
+      if (branchId) params.set('branch', branchId);
+      const response = await fetch(`/api/register/paid?${params.toString()}`, { cache: 'no-store' });
+      const payload = (await response.json()) as PaidPayload | { error?: string };
+      if (!response.ok || !('people' in payload)) {
+        throw new Error(
+          'error' in payload && payload.error ? payload.error : 'Could not load the day’s payments',
+        );
+      }
+      setPaid(payload);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not load the day’s payments');
+    } finally {
+      setLoading(false);
+    }
+  }, [branchId, date]);
+
   const open = (next: View) => {
     setView(next);
     if (next === 'plan' && !plan && !loading) void loadPlan();
+    /*
+      The loaded payload carries the day it was loaded for, so the test is "is this the day on
+      screen" rather than "is anything loaded". Clearing it from an effect instead would leave a
+      moment with no payload, no request in flight and no error - which renders as a failure
+      message with nothing in it.
+    */
+    if (next === 'paid' && paid?.on !== date && !loading) void loadPaid();
   };
 
   const tab = (next: View, label: string, Icon: typeof Table2, hint: string) => (
@@ -75,9 +119,32 @@ export function RegisterTabs({ sheet, showPlan = true }: { sheet: ReactNode; sho
       <div className="glass flex w-fit items-center gap-1 p-1 print:hidden">
         {tab('sheet', 'Sheet', Table2, 'The register, row by row')}
         {showPlan && tab('plan', 'Plan', LayoutGrid, 'Today, and how every maturity is split into days')}
+        {tab('paid', 'Paid', HandCoins, 'Everyone who took money on this day')}
       </div>
 
       <div className={cn(view !== 'sheet' && 'hidden')}>{sheet}</div>
+      {view === 'paid' && (
+        paid ? (
+          <PaidBoard payload={paid} today={today} />
+        ) : (
+          <Glass className="flex min-h-72 items-center justify-center p-8 text-center">
+            {loading ? (
+              <div>
+                <Loader2 className="mx-auto h-6 w-6 animate-spin text-[var(--color-brand-600)]" />
+                <p className="mt-3 text-[0.875rem] font-medium">Loading the day’s payments…</p>
+              </div>
+            ) : (
+              <div>
+                <p className="text-[0.875rem] font-medium">The day’s payments could not be loaded</p>
+                <p className="mt-1 text-[0.8125rem] text-[var(--muted-fg)]">{error}</p>
+                <Button className="mt-4" size="sm" onClick={() => void loadPaid()}>
+                  <RefreshCw className="h-3.5 w-3.5" /> Retry
+                </Button>
+              </div>
+            )}
+          </Glass>
+        )
+      )}
       {view === 'plan' && (
         plan ? (
           <PlanBoard {...plan} onApplied={() => void loadPlan()} />
