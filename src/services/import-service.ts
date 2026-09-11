@@ -219,9 +219,26 @@ export async function importRegisterRows(
 
         const [inserted] = await tx.select().from(maturityCases).where(eq(maturityCases.id, caseId)).limit(1);
         if (!inserted) throw new Error('Imported case could not be read back.');
-        const { anchor } = await approveAndScheduleInTx(tx, actor, inserted, policy.calendar);
+        /*
+          An imported row can arrive carrying months of payments already made at the counter, and
+          the days still to come must add up to what is LEFT, not to the amount the customer
+          started with. Without this the schedule covers the full maturity a second time, and the
+          allocator below then has to bury the already-paid money in days that have not happened
+          yet - which is how a row imported on the 10th came back showing today already paid and
+          refused the real payment when the customer turned up.
 
+          A row that is settled in full keeps the old behaviour: there is nothing left to spread,
+          and the schedule exists only for the ledger to hang the history on.
+        */
         const remaining = amount - paid;
+        const { anchor } = await approveAndScheduleInTx(
+          tx,
+          actor,
+          inserted,
+          policy.calendar,
+          remaining > 0n ? remaining : undefined,
+        );
+
         const todayAmount = todayInput > remaining ? remaining : todayInput;
         const cashToday = todayAmount < cashCap ? todayAmount : cashCap;
         await tx.update(maturityCases).set({

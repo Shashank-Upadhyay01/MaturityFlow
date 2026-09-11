@@ -101,7 +101,20 @@ export async function ensureAllocatedLedgerInTx(
     } else {
       let cash = receipt.cashPaise;
       let online = receipt.onlinePaise;
-      for (const row of live) {
+      /*
+        A receipt pays days that have already come round.
+
+        Filling a future row with money handed over last week marks a day paid before anybody has
+        stood at the counter, and the register then has no room left to record what the customer
+        actually brings in on that day. So rows due on or before the receipt's own value date are
+        offered the money first, and only what will not fit there spills forward - which, with the
+        import now scheduling just the outstanding balance, is the rare case rather than the rule.
+      */
+      const order = [
+        ...live.filter((row) => row.dueOn <= receipt.valueDate),
+        ...live.filter((row) => row.dueOn > receipt.valueDate),
+      ];
+      for (const row of order) {
         const capacity = row.amountPaise - row.paidCashPaise - row.paidOnlinePaise;
         if (capacity <= 0n || cash + online <= 0n) continue;
         const take = capacity < cash + online ? capacity : cash + online;
