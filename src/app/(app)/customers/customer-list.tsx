@@ -395,11 +395,24 @@ export function CustomerList({
                                                 )}
                                               >
                                                 <td className="py-1 pr-2 tabular-nums">{d.seq}</td>
+                                                {/*
+                                                  The day the money MOVED, not the day the plan
+                                                  wanted it to. They are the same until a day is
+                                                  typed up after the fact, which settles against
+                                                  whatever instalment is still live - and a row
+                                                  that printed the plan's date would tell the
+                                                  customer they were paid on a day they were not.
+                                                */}
                                                 <td className="py-1 pr-2 whitespace-nowrap tabular-nums">
-                                                  {formatDMY(d.dueOn)}{' '}
+                                                  {formatDMY(d.paidOn ?? d.dueOn)}{' '}
                                                   <span className="text-[0.6rem] opacity-70">
-                                                    {weekdayShort(d.dueOn)}
+                                                    {weekdayShort(d.paidOn ?? d.dueOn)}
                                                   </span>
+                                                  {d.paidOn && d.paidOn !== d.dueOn ? (
+                                                    <span className="ml-1 text-[0.6rem] opacity-60">
+                                                      (sched. {formatDMY(d.dueOn)})
+                                                    </span>
+                                                  ) : null}
                                                 </td>
                                                 <td className="py-1 pr-2 text-right tabular-nums">
                                                   {inr(d.amountPaise)}
