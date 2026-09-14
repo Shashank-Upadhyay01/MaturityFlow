@@ -72,6 +72,23 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
   const currentWithdrawalDays = new Set(
     liveInstalments.map((i) => i.dueOn),
   ).size;
+
+  /*
+    When the money for each scheduled day actually came in.
+
+    The Due column is the PLAN. The two dates part company whenever a day is settled on some
+    other day - paid ahead, or a day typed up after the counter had closed - and a schedule that
+    only showed the plan left people reading a payment as though it happened on the planned day.
+    So a day that was not settled on its own date says when it was.
+  */
+  const paidOnByInstalment = new Map<string, string[]>();
+  for (const { t } of detail.transactions) {
+    if (t.reversedAt || !t.instalmentId || !t.valueDate) continue;
+    const on = toISODateString(t.valueDate) ?? String(t.valueDate);
+    const seen = paidOnByInstalment.get(t.instalmentId) ?? [];
+    if (!seen.includes(on)) seen.push(on);
+    paidOnByInstalment.set(t.instalmentId, seen);
+  }
   const canOverride = roleCan(session.role, 'schedule.override');
   const canEditDates = canOverrideDates(session.role);
 
@@ -355,7 +372,23 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
                       )}
                     </TD>
                     <TD align="right" className={instPaid > 0n ? 'bg-[var(--row-taken)] text-[var(--row-taken-fg)]' : undefined}>
-                      {instPaid > 0n ? <Money paise={instPaid} /> : '—'}
+                      {instPaid > 0n ? (
+                        <>
+                          <Money paise={instPaid} />
+                          {(() => {
+                            const elsewhere = (paidOnByInstalment.get(i.id) ?? [])
+                              .filter((on) => on !== (toISODateString(i.dueOn) ?? i.dueOn))
+                              .sort();
+                            return elsewhere.length > 0 ? (
+                              <div className="text-[0.625rem] font-normal opacity-85">
+                                paid {elsewhere.map((on) => formatISODateShort(on)).join(', ')}
+                              </div>
+                            ) : null;
+                          })()}
+                        </>
+                      ) : (
+                        '—'
+                      )}
                     </TD>
                     <TD>
                       <InstalmentStatusBadge status={i.status} />
