@@ -431,7 +431,18 @@ export function markTargetOf(
    */
   asOf: string = today,
 ): { day: PayoutDayView | null; state: DayState } {
-  const open = unpaidPayoutDays(r.payoutDays ?? [], asOf > today ? asOf : today);
+  const backfilling = asOf > today;
+  /*
+    While back-filling there is no "too early" left to protect against: the cash went out on the
+    day being typed. Most cases pay on alternate days, so the next live instalment is often the
+    day after tomorrow - capping the fallback at any date would leave those rows with nothing to
+    mark at all. What the tick then records is the VIEWED day's own planned amount, not this
+    day's, so reaching further here cannot put a later day's figure on the register.
+  */
+  const days = [...(r.payoutDays ?? [])]
+    .filter((day) => leftoverOnPayoutDay(day) > 0n)
+    .sort((a, b) => (a.dueOn < b.dueOn ? -1 : a.dueOn > b.dueOn ? 1 : 0));
+  const open = backfilling ? days : unpaidPayoutDays(r.payoutDays ?? [], today);
   const day = open.find((d) => d.dueOn === today) ?? open[0] ?? null;
   if (!day) return { day: null, state: dayStateOf(r) === 'taken' ? 'taken' : 'none' };
   return { day, state: payoutDayStateOf(day) };
