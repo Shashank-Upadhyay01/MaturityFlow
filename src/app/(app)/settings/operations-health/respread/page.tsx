@@ -25,7 +25,7 @@ import { branches, customers, maturityCases, payoutInstalments } from '@/db/sche
 import { requestMeta, requireActor } from '@/lib/auth/session';
 import { formatPaise } from '@/lib/money';
 import {
-  LARGE_CASE_THRESHOLD_PAISE,
+  recommendedPayoutDaysFor,
   recommendedWindowDaysFor,
   rolloverPartsFor,
 } from '@/lib/payout-policy';
@@ -117,7 +117,16 @@ async function findTargets(): Promise<Target[]> {
 
     // The band comes from the deposit, never from a `windowDays` an earlier rollover shrank.
     const windowDays = recommendedWindowDaysFor(row.maturityAmountPaise);
-    const bandParts = row.maturityAmountPaise >= LARGE_CASE_THRESHOLD_PAISE ? 12n : 6n;
+    /*
+      Ask the policy how many visits this amount gets — never restate the bands here.
+
+      This page did restate them, as "twelve at a lakh and over, six below", and then the policy
+      grew a third band: ₹25,000 and under is three alternate visits. Every small case was
+      therefore measured against a day-size twice what it should be, flagged as a lump sum,
+      re-planned into the three visits the policy actually wanted, and flagged again on the next
+      pass. A repair that cannot agree with the rule it repairs towards never finishes.
+    */
+    const bandParts = BigInt(recommendedPayoutDaysFor(row.maturityAmountPaise));
     const perDayPaise = (row.maturityAmountPaise + bandParts - 1n) / bandParts;
     const biggestPaise = BigInt(row.biggest);
     const ceiling = (perDayPaise * TOLERANCE_NUMERATOR) / TOLERANCE_DENOMINATOR;
