@@ -68,6 +68,8 @@ export interface PlanInstalment {
   paidCashPaise: string;
   paidOnlinePaise: string;
   status: string;
+  /** Value date of the latest receipt against this day, when it has been paid. */
+  paidOn?: string | null;
 }
 
 /** Which column a case belongs in. The ₹1 lakh line is the policy's, not a literal repeated here. */
@@ -92,6 +94,12 @@ export interface PlanDay {
   cashPaise: bigint;
   /** Remaining online leg for this day. */
   onlinePaise: bigint;
+  /**
+   * The day the money actually moved, when it has. Usually the same as `dueOn`; it differs when
+   * a day was typed up after the fact and settled against a later instalment, and a statement
+   * must print THIS, not the day the plan happened to use.
+   */
+  paidOn?: string | null;
   state: DayState;
 }
 
@@ -171,6 +179,7 @@ function dayFromStored(i: PlanInstalment, today: string): PlanDay {
     givenOnlinePaise: givenOnline,
     cashPaise: remain.cashPaise,
     onlinePaise: remain.onlinePaise,
+    paidOn: paid > 0n ? i.paidOn ?? null : null,
     state: stateOf(i.dueOn, amount, paid, today),
   };
 }
@@ -303,6 +312,7 @@ export function buildPlanRow(
         givenOnlinePaise: 0n,
         cashPaise: i.cashLegPaise,
         onlinePaise: i.onlineLegPaise,
+        paidOn: null,
         state: stateOf(i.dueDate, i.amountPaise, 0n, today),
       })),
       true,

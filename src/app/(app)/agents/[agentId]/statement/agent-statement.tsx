@@ -99,6 +99,7 @@ export function AgentStatement({
         .stmt .amt-paid { background: #bbf7d0; color: #14532d; font-weight: 700; padding: 1px 5px; }
         .stmt .amt-maturity { background: #bfdbfe; color: #1e3a8a; font-weight: 700; padding: 1px 5px; }
         .stmt .amt-left { background: #fecaca; color: #7f1d1d; font-weight: 700; padding: 1px 5px; }
+        .stmt .sched { font-size: 9px; color: #555; }
         .stmt tfoot td { background: #eee; font-weight: 700; }
         /* A customer's rows are never split across a page break. */
         .stmt tbody tr { break-inside: avoid; }
@@ -275,7 +276,7 @@ export function AgentStatement({
                   <table>
                     <thead>
                       <tr>
-                        <th>#</th><th>Payment date</th><th className="num">Scheduled</th>
+                        <th>#</th><th>Paid on</th><th className="num">Scheduled</th>
                         <th className="num">Cash</th><th className="num">By account</th>
                         <th className="num">Paid</th><th className="num">Remaining</th><th>State</th>
                       </tr>
@@ -286,7 +287,12 @@ export function AgentStatement({
                         return (
                         <tr key={`${c.caseId}-${d.seq}`} className={rowTone(d.state)}>
                           <td>{d.seq}</td>
-                          <td>{formatDMY(d.dueOn)} · {weekdayShort(d.dueOn)}</td>
+                          <td>
+                            {formatDMY(d.paidOn ?? d.dueOn)} · {weekdayShort(d.paidOn ?? d.dueOn)}
+                            {d.paidOn && d.paidOn !== d.dueOn ? (
+                              <div className="sched">scheduled {formatDMY(d.dueOn)}</div>
+                            ) : null}
+                          </td>
                           <td className="num">{money(d.amountPaise)}</td>
                           <td className={cls('paid', d.givenCashPaise)}>{money(d.givenCashPaise)}</td>
                           <td className={cls('paid', d.givenOnlinePaise)}>{money(d.givenOnlinePaise)}</td>

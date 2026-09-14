@@ -2421,6 +2421,18 @@ export async function getPlanBoardInstalments(actor: Actor) {
       paidCashPaise: payoutInstalments.paidCashPaise,
       paidOnlinePaise: payoutInstalments.paidOnlinePaise,
       status: payoutInstalments.status,
+      /**
+       * The day the money actually left the drawer, which is NOT always the day it was planned
+       * for. A day typed up after the fact settles against whatever instalment is still live,
+       * so a statement that printed `due_on` would tell the customer they were paid on a day
+       * they were not. The receipt is the record; the instalment is only the plan.
+       *
+       * Null until something is paid, and the latest receipt wins when a day took several.
+       */
+      paidOn: sql<string | null>`(
+        SELECT MAX(t.value_date)::text FROM payout_transactions t
+        WHERE t.instalment_id = ${payoutInstalments.id} AND t.reversed_at IS NULL
+      )`,
     })
     .from(payoutInstalments)
     .innerJoin(maturityCases, eq(maturityCases.id, payoutInstalments.caseId))
