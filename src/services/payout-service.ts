@@ -15,7 +15,7 @@ import { newId } from '@/lib/id';
 import { formatPaise } from '@/lib/money';
 import { planSettlement, reconcileInstalmentLegs, validatePayout } from '@/lib/payment-rules';
 import { parseISODate, todayISO } from '@/lib/working-days';
-import { canOverrideDates } from '@/lib/rbac';
+import { canBackdatePayout, canOverrideDates } from '@/lib/rbac';
 import { settlementState } from '@/lib/settlement';
 import { ensureAllocatedLedgerInTx } from './payout-ledger';
 import { persistInstalmentEdit } from './schedule-service';
@@ -63,7 +63,7 @@ function resolveValueDate(raw: string | null | undefined, allowPast: boolean): s
     throw new PayoutError('Cannot record a payment on a future date.', 'VALIDATION');
   }
   if (value !== today && !allowPast) {
-    throw new PayoutError('Only Admin, CMD or CEO can record a payment on an earlier date.', 'FORBIDDEN');
+    throw new PayoutError('You are not allowed to record a payment on an earlier date.', 'FORBIDDEN');
   }
   return value;
 }
@@ -213,7 +213,7 @@ export interface RecordPayoutInput {
   onlinePaise: bigint;
   reference?: string | null;
   remarks?: string | null;
-  valueDate?: string;
+  valueDate?: string | null;
   /** ADMIN / CEO / CMD may exceed the planned daily amount. Never the case total. */
   allowExceedInstalment?: boolean;
 }
@@ -286,7 +286,11 @@ export async function recordPayout(
     }
 
     const txnId = newId('txn');
-    const valueDate = resolveValueDate(input.valueDate, canOverrideDates(actor.role));
+    // Back-dating a RECEIPT is not the same power as rewriting a workflow date. A day that was
+    // worked but never typed up is ordinary register catch-up, so every role that may type the
+    // register may book it on the day the cash actually moved. `canOverrideDates` still guards
+    // reversals, the reason prompt and the schedule itself.
+    const valueDate = resolveValueDate(input.valueDate, canBackdatePayout(actor.role));
 
     await tx.insert(payoutTransactions).values({
       id: txnId,
@@ -438,6 +442,11 @@ export async function markInstalmentTaken(
    * none, which is why marking one is a single click and marking a transfer is not.
    */
   reference: string | null = null,
+  /**
+   * Calendar day the cash actually left. Null means today. A day that was worked but never
+   * typed up is booked on the day it happened, not on the day somebody got round to it.
+   */
+  valueDate: string | null = null,
   meta: { ip?: string | null; userAgent?: string | null } = {},
 ) {
   const [inst] = await db
@@ -474,6 +483,7 @@ export async function markInstalmentTaken(
       onlinePaise: online,
       reference: reference?.trim() || null,
       remarks: 'Register: marked taken',
+      valueDate,
     },
     meta,
   );
@@ -1193,7 +1203,7 @@ export async function settleRegisterRow(
     onlinePaise: bigint;
     reference?: string | null;
     reason?: string | null;
-    valueDate?: string;
+    valueDate?: string | null;
   },
   meta: { ip?: string | null; userAgent?: string | null } = {},
 ) {
@@ -1211,7 +1221,7 @@ export async function settleRegisterRow(
     if (!c) throw new PayoutError('Case not found', 'NOT_FOUND');
 
     await ensureAllocatedLedgerInTx(tx, actor, c, meta);
-    const valueDate = resolveValueDate(input.valueDate, canOverrideDates(actor.role));
+    const valueDate = resolveValueDate(input.valueDate, canBackdatePayout(actor.role));
 
     // The live schedule only. A superseded row is history and must never take money.
     const live = await tx
@@ -1518,7 +1528,12 @@ export async function takeRegisterDays(
     if (!c) throw new PayoutError('Case not found', 'NOT_FOUND');
 
     await ensureAllocatedLedgerInTx(tx, actor, c, meta);
-    const valueDate = resolveValueDate(input.valueDate, Boolean(input.allowPayAhead));
+    // Booking on an earlier day and ticking a day that has not arrived yet are two different
+    // permissions. `allowPayAhead` still guards the future; the past is register catch-up.
+    const valueDate = resolveValueDate(
+      input.valueDate,
+      canBackdatePayout(actor.role) || Boolean(input.allowPayAhead),
+    );
 
     const live = await tx
       .select()

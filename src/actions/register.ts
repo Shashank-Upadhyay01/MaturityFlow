@@ -8,7 +8,15 @@ import { maturityCases, payoutInstalments } from '@/db/schema';
 import { requestMeta, requireActor } from '@/lib/auth/session';
 import { tryParseRupeesToPaise } from '@/lib/money';
 import { PASTE_CHUNK_ROWS, identifiesNewRow } from '@/lib/sheet-grid';
-import { assertCan, assertCanTypeRegister, canOverrideDates, roleCan, type Actor, type ResourceRef } from '@/lib/rbac';
+import {
+  assertCan,
+  assertCanTypeRegister,
+  canBackdatePayout,
+  canOverrideDates,
+  roleCan,
+  type Actor,
+  type ResourceRef,
+} from '@/lib/rbac';
 import type { BulkTodayMode } from '@/lib/register-view';
 import { cancelCase } from '@/services/case-service';
 import {
@@ -327,6 +335,12 @@ export async function markTakenAction(
   instalmentId: string,
   tender: Tender = 'SPLIT',
   reference: string | null = null,
+  /**
+   * The register day being typed up. Null (the default) means today, so every caller that
+   * predates back-dated entry behaves exactly as it always did. The service refuses a future
+   * date for everyone and an earlier one for any role that may not back-fill.
+   */
+  valueDate: string | null = null,
 ): Promise<ActionResult> {
   try {
     const { session, actor } = await requireActor();
@@ -334,7 +348,14 @@ export async function markTakenAction(
     if (!c) return fail('Row not found', 'NOT_FOUND');
     assertCanTypeRegister(actor);
     assertCan(actor, 'payout.record', c);
-    await markInstalmentTaken(session, instalmentId, tender, reference, await requestMeta());
+    await markInstalmentTaken(
+      session,
+      instalmentId,
+      tender,
+      reference,
+      canBackdatePayout(actor.role) ? valueDate : null,
+      await requestMeta(),
+    );
     revalidate();
     return ok();
   } catch (e) {
@@ -520,7 +541,7 @@ export async function confirmRegisterTakenAction(
         reference,
         reason,
         allowPayAhead: roleCan(actor.role, 'payout.reverse'),
-        valueDate: canOverrideDates(actor.role) ? valueDate : null,
+        valueDate: canBackdatePayout(actor.role) ? valueDate : null,
       },
       await requestMeta(),
     );
@@ -537,6 +558,11 @@ export async function settleRegisterRowAction(
   onlineRupees: string,
   reference: string | null = null,
   reason: string | null = null,
+  /**
+   * The register day being typed up. Null (the default) means today, so every existing caller
+   * behaves exactly as before.
+   */
+  valueDate: string | null = null,
 ): Promise<ActionResult> {
   try {
     const { session, actor } = await requireActor();
@@ -551,7 +577,14 @@ export async function settleRegisterRowAction(
     }
     await settleRegisterRow(
       session,
-      { caseId, cashPaise, onlinePaise, reference, reason },
+      {
+        caseId,
+        cashPaise,
+        onlinePaise,
+        reference,
+        reason,
+        valueDate: canBackdatePayout(actor.role) ? valueDate : null,
+      },
       await requestMeta(),
     );
     revalidate();

@@ -283,6 +283,32 @@ export function canOverrideDates(role: Role): boolean {
 }
 
 /**
+ * Who may record a payment on a day that has already passed.
+ *
+ * The counter does not always get typed up the same evening. A day where the money genuinely
+ * went out but nobody had a free minute to enter it is ordinary register work, and the people
+ * who handle that money - the cashier and the branch manager as much as HQ - are the ones who
+ * know what happened on it. So back-filling is theirs, and the payment is stamped with the day
+ * it actually belongs to rather than the day it happened to be typed.
+ *
+ * Deliberately NOT `canOverrideDates`. That answers a different and much larger question: who
+ * may rewrite a workflow date, change an already-settled payment without giving a reason, or
+ * type on a day somebody explicitly closed. Widening it to reach back-filling would have handed
+ * a cashier all three. A future date stays refused for everyone; only the past is in question.
+ */
+export function canBackdatePayout(role: Role): boolean {
+  if (REGISTER_READ_ONLY_ROLES.has(role)) return false;
+  const current = activeRole(role);
+  return (
+    current === 'ADMIN' ||
+    current === 'CMD' ||
+    current === 'CEO' ||
+    current === 'BRANCH_MANAGER' ||
+    current === 'CASHIER'
+  );
+}
+
+/**
  * The guard every *Register* mutation starts with, alongside its usual `assertCan`.
  *
  * `assertCan` alone is not enough here: an agent holds `case.create` and `case.submit`, and with

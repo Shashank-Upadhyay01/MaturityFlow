@@ -1129,6 +1129,18 @@ export function RegisterSheet(props: {
   const closed = props.dayStatus === 'CLOSED';
   const closeRequested = props.dayStatus === 'CLOSE_REQUESTED';
   const viewingToday = props.today === props.actualToday;
+  /**
+   * The value date a payment typed on this sheet should carry.
+   *
+   * Only a day that has already passed back-dates. Today - and anything a hand-typed `?date=`
+   * puts in the future - stays null, which is exactly what every caller sent before back-dated
+   * entry existed, so typing up today's register is unchanged down to the argument list.
+   *
+   * This is register catch-up, not a date override: a day that was worked but never entered is
+   * booked on the day the cash actually moved, so the statement, the cashbook and the Paid tab
+   * all keep agreeing with each other.
+   */
+  const backdateValueDate = props.today < props.actualToday ? props.today : null;
   const viewedDayLabel = viewingToday ? 'today' : formatDMY(props.today);
 
   /** Read a cell's uncommitted draft value, falling back to what the server sent. */
@@ -1727,6 +1739,7 @@ export function RegisterSheet(props: {
       paiseToDecimalString(onlinePaise),
       reference?.trim() || null,
       reason?.trim() || null,
+      backdateValueDate,
     );
     if (!result.ok) {
       toast.error(result.error);
@@ -1852,7 +1865,7 @@ export function RegisterSheet(props: {
         }
         return;
       }
-      const result = await markTakenAction(day.id, 'SPLIT', reference?.trim() || null);
+      const result = await markTakenAction(day.id, 'SPLIT', reference?.trim() || null, backdateValueDate);
       if (!result.ok) toast.error(result.error);
       else {
         toast.success('Marked taken');
@@ -3235,7 +3248,9 @@ export function RegisterSheet(props: {
 
       {closed && (
         <Callout tone="warn" title={props.autoClosed ? 'This previous day is automatically closed' : 'This day is closed'}>
-          Admin, CMD and CEO can still make audited corrections here. Other roles see the preserved daily record as read-only.
+          {props.autoClosed
+            ? 'Payments for this day can still be typed up - they are booked on this date, not on today. Changing dates or removing rows needs Admin, CMD or CEO.'
+            : 'Admin, CMD and CEO can still make audited corrections here. Other roles see the preserved daily record as read-only.'}
           {props.canConfirmClose && !props.autoClosed && (
             <Button
               className="mt-2"
