@@ -419,8 +419,19 @@ export function payoutDayStateOf(day: PayoutDayView): DayState {
 export function markTargetOf(
   r: DayStateRow & { payoutDays?: PayoutDayView[] },
   today: string,
+  /**
+   * How far the fallback may reach. Defaults to `today`, which is the whole story on the live
+   * register: never past the day being answered.
+   *
+   * It differs only when an EARLIER day is being typed up after the fact. By then the planner
+   * has usually re-spread that day's money over the days still to come, so the sheet for it has
+   * no live instalment left to tick - and the payment is not a future one in any real sense,
+   * because the cash went out days ago. Letting the fallback reach the real today gives the
+   * mark a live day to settle while the receipt still carries the day it happened.
+   */
+  asOf: string = today,
 ): { day: PayoutDayView | null; state: DayState } {
-  const open = unpaidPayoutDays(r.payoutDays ?? [], today);
+  const open = unpaidPayoutDays(r.payoutDays ?? [], asOf > today ? asOf : today);
   const day = open.find((d) => d.dueOn === today) ?? open[0] ?? null;
   if (!day) return { day: null, state: dayStateOf(r) === 'taken' ? 'taken' : 'none' };
   return { day, state: payoutDayStateOf(day) };

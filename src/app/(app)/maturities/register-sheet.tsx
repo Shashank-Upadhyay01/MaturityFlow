@@ -1141,6 +1141,15 @@ export function RegisterSheet(props: {
    * all keep agreeing with each other.
    */
   const backdateValueDate = props.today < props.actualToday ? props.today : null;
+  /**
+   * How far the row marks may reach for a day to settle.
+   *
+   * On the live register this is the day itself. On an earlier day being typed up it is the real
+   * today, because by then the planner has usually moved that day's money onto the days still to
+   * come and the sheet would otherwise offer nothing to tick at all. The viewed day is still
+   * preferred whenever it has a live instalment of its own.
+   */
+  const markAsOf = props.today < props.actualToday ? props.actualToday : props.today;
   const viewedDayLabel = viewingToday ? 'today' : formatDMY(props.today);
 
   /** Read a cell's uncommitted draft value, falling back to what the server sent. */
@@ -3778,7 +3787,7 @@ export function RegisterSheet(props: {
                   sheet is showing today, because the settlement behind it posts against today's
                   date whichever day the money columns happen to be displaying.
                 */
-                const markTarget = markTargetOf(r, props.today);
+                const markTarget = markTargetOf(r, props.today, markAsOf);
                 const typedPaidPaise =
                   viewDay === props.today
                     ? tryParseRupeesToPaise(d(r.id, 'paidTodayActual', ''))
@@ -3787,6 +3796,41 @@ export function RegisterSheet(props: {
                   typedPaidPaise != null && typedPaidPaise > 0n && typedPaidPaise !== paidView.total
                     ? typedPaidPaise / 100n
                     : null;
+                /*
+                  The mark has had to BORROW a day from later in the plan.
+
+                  Only reachable on a sheet showing an earlier day. By the time an unrecorded day
+                  is typed up, the planner has usually re-spread its money over the days still to
+                  come, so the viewed date has no live instalment left and the fallback lands on
+                  one that belongs to a later date.
+
+                  The tick must not record that later day's figure: what the customer took is
+                  what the viewed day PLANNED, which `todayDuePaise` still reports because the
+                  row's day figures are read for the date on screen. So the tick is rebuilt
+                  against the viewed day and committed through `savePaidSplit` - the same
+                  settlement the Actual paid cell uses, which books the receipt on the viewed
+                  date and lets the server place the money on whatever days are still live.
+
+                  The cross is withdrawn entirely: a no-show on the viewed date has no instalment
+                  of its own to land on, and writing it onto the borrowed day would mark a day
+                  missed that nobody has reached yet - which the scheduler would then act on.
+                */
+                const markBorrowed = Boolean(markTarget.day && markTarget.day.dueOn > props.today);
+                const viewedDayLeftPaise = BigInt(r.todayDuePaise) - BigInt(r.todayPaidTakenPaise);
+                const viewedDayMark: PayoutDayView | null =
+                  markBorrowed && r.todayInstalmentId && viewedDayLeftPaise > 0n
+                    ? {
+                        id: r.todayInstalmentId,
+                        dueOn: props.today,
+                        amountPaise: r.todayDuePaise,
+                        cashPaise: r.todayCashDuePaise,
+                        onlinePaise: r.todayOnlineDuePaise,
+                        paidPaise: r.todayPaidTakenPaise,
+                        status: r.todayStatus ?? 'PENDING',
+                      }
+                    : null;
+                const markDay = viewedDayMark ?? markTarget.day;
+                const markPlan = markDay ? tickPlanFor(markDay, typedPaidRupees) : null;
 
                 /*
                   Exactly ONE background class, chosen here rather than layered.
@@ -4177,18 +4221,27 @@ export function RegisterSheet(props: {
                       >
                         <TakenMark
                           state={markTarget.state}
-                          canMark={props.canPay}
+                          canMark={props.canPay && (!markBorrowed || viewedDayMark != null)}
+                          canUnmark={!markBorrowed}
                           busy={Boolean(markTarget.day && marking[markTarget.day.id])}
                           customerName={r.customerName}
-                          dueOn={markTarget.day?.dueOn ?? props.today}
-                          amountPaise={markTarget.day ? tickPlanFor(markTarget.day, typedPaidRupees).totalPaise : 0n}
+                          dueOn={markDay?.dueOn ?? props.today}
+                          amountPaise={markPlan ? markPlan.totalPaise : 0n}
                           takenOpensPaymentDialog={Boolean(
-                            props.canCorrectPay && markTarget.day && markTarget.day.dueOn < props.today && typedPaidRupees == null,
+                            props.canCorrectPay && !viewedDayMark && markTarget.day
+                            && markTarget.day.dueOn < props.today && typedPaidRupees == null,
                           )}
-                          needsReference={
-                            markTarget.day ? tickPlanFor(markTarget.day, typedPaidRupees).needsReference : false
-                          }
+                          needsReference={markPlan ? markPlan.needsReference : false}
                           onTaken={(reference) => {
+                            if (viewedDayMark && markPlan) {
+                              void savePaidSplit(
+                                r,
+                                markPlan.totalPaise - markPlan.onlinePaise,
+                                markPlan.onlinePaise,
+                                reference,
+                              );
+                              return;
+                            }
                             if (!markTarget.day) return;
                             if (props.canCorrectPay && markTarget.day.dueOn < props.today && typedPaidRupees == null) {
                               openPaymentDialog(r, markTarget.day.id);

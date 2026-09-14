@@ -68,6 +68,23 @@ function resolveValueDate(raw: string | null | undefined, allowPast: boolean): s
   return value;
 }
 
+/**
+ * How far a receipt may reach down the schedule without authorising a payment ahead.
+ *
+ * Normally this is the value date, because the value date IS today. It matters when an earlier
+ * day is typed up after the fact: the planner has usually already re-spread that day's money
+ * over the days still to come, so measuring against the value date would call every one of them
+ * a future payment and refuse the entry outright. The money left the drawer days ago, so the
+ * honest horizon is the real today - arrears and today, exactly as on the live register - while
+ * the receipt keeps the date it actually happened.
+ *
+ * Genuinely future days stay out of reach for everyone: this never looks past today.
+ */
+function settlementHorizon(valueDate: string): string {
+  const today = todayISO();
+  return valueDate > today ? valueDate : today;
+}
+
 export interface SetCasePaidTotalInput {
   cashPaise: bigint;
   onlinePaise: bigint;
@@ -1314,7 +1331,7 @@ export async function settleRegisterRow(
           paidCashPaise: b.paidCashPaise,
           paidOnlinePaise: b.paidOnlinePaise,
         })),
-        today: valueDate,
+        today: settlementHorizon(valueDate),
         caseTotalPaise: c.maturityAmountPaise,
         casePaidTotalPaise: baseCaseCash + baseCaseOnline,
         caseIsPayable: PAYABLE_STATUSES.has(c.status) || c.status === 'COMPLETED',
@@ -1554,7 +1571,7 @@ export async function takeRegisterDays(
       return row;
     });
 
-    const ahead = selected.filter((row) => row.dueOn > valueDate);
+    const ahead = selected.filter((row) => row.dueOn > settlementHorizon(valueDate));
     if (ahead.length > 0 && !input.allowPayAhead) {
       throw new PayoutError('That day has not arrived yet.', 'NOT_YET_DUE');
     }
@@ -1620,7 +1637,7 @@ export async function takeRegisterDays(
           paidCashPaise: row.paidCashPaise,
           paidOnlinePaise: row.paidOnlinePaise,
         })),
-        today: valueDate,
+        today: settlementHorizon(valueDate),
         caseTotalPaise: c.maturityAmountPaise,
         casePaidTotalPaise: c.paidCashPaise + c.paidOnlinePaise,
         caseIsPayable: PAYABLE_STATUSES.has(c.status) || c.status === 'COMPLETED',

@@ -64,6 +64,7 @@ export function TakenMark({
   dueOn,
   amountPaise,
   needsReference = false,
+  canUnmark = true,
   takenOpensPaymentDialog = false,
   onTaken,
   onNotTaken,
@@ -85,6 +86,16 @@ export function TakenMark({
    * reference, so the confirmation collects one rather than letting the server bounce the click.
    */
   needsReference?: boolean;
+  /**
+   * Whether the cross is offered at all.
+   *
+   * Almost always yes. It is false only where a no-show cannot be recorded against the day on
+   * screen - typing up an earlier day whose own instalment the planner has already re-spread.
+   * The tick there still records money on the right date, but a cross would have to land on some
+   * other day's instalment, and marking a day missed that nobody has reached yet is a lie the
+   * schedule would then act on.
+   */
+  canUnmark?: boolean;
   /** Admin missed-day Taken opens the full custom-payment editor, which supplies its own confirmation. */
   takenOpensPaymentDialog?: boolean;
   /** Runs only once the clerk has confirmed. Carries the UTR when one was asked for. */
@@ -146,13 +157,15 @@ export function TakenMark({
       </button>
       <button
         type="button"
-        disabled={shut}
+        disabled={shut || !canUnmark}
         aria-label={notTaken ? 'Clear the not-taken mark' : 'Mark not taken'}
         aria-pressed={notTaken}
         aria-haspopup="dialog"
         title={
           blockedTitle ??
-          (notTaken
+          (!canUnmark
+            ? 'This day has no instalment of its own left to mark — its amount has already been re-spread over the days still to come.'
+            : notTaken
             ? 'Not taken — click again to clear this mark'
             : 'Not taken — the customer did not collect. The amount stays owed.')
         }
